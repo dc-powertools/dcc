@@ -1,6 +1,6 @@
 # Rust Style Guide
 
-Guidance for writing safe, idiomatic, readable Rust in this codebase (`acdc` — a CLI binary).
+Guidance for writing safe, idiomatic, readable Rust in this codebase.
 
 ---
 
@@ -14,7 +14,7 @@ fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
 
 Never swallow errors silently. Never convert a `Result` to `Option` unless absence genuinely means "not found" and failure is impossible.
 
-If a library crate is ever extracted from this binary, the library layer should define a typed error enum with `thiserror::Error` — using `#[from]` for transparent wrapping and `#[source]` for error chains. The binary layer stays on `anyhow` and converts at the boundary. Typed errors belong in libraries because callers can match on them; `anyhow` belongs in binaries because only humans read the output.
+When developing a library crate alongside a binary crate, the library layer should define a typed error enum with `thiserror::Error` — using `#[from]` for transparent wrapping and `#[source]` for error chains. The binary layer stays on `anyhow` and converts at the boundary. Typed errors belong in libraries because callers can match on them; `anyhow` belongs in binaries because only humans read the output.
 
 ## Ownership and Borrowing
 
@@ -59,7 +59,7 @@ Never call blocking I/O or long CPU-bound work directly inside an async function
 
 ## Logging
 
-Use `eprintln!` for user-facing CLI output now. If the codebase grows to the point where filtering, verbosity levels, or structured output matter, migrate to `tracing` (`tracing::info!`, `tracing::warn!`, `#[tracing::instrument]`). The transition is easier before `eprintln!` calls spread across many modules, so prefer consolidating output through a single layer rather than sprinkling it everywhere.
+Consolidate output through `tracing` (`tracing::info!`, `tracing::warn!`, `#[tracing::instrument]`) rather than sprinkling `eprintln!` everywhere.
 
 ## Panics
 
@@ -100,6 +100,10 @@ Use `#[tokio::test]` for async tests. Tests must exercise real behavior: don't m
 Integration tests belong in a top-level `tests/` directory, where each file is a separate crate that drives the binary through its public interface (via `std::process::Command` or the public API surface). These catch regressions that unit tests miss, particularly around argument parsing, exit codes, and cross-module interactions.
 
 For modules with non-trivial input spaces — the devcontainer.json parser, Dockerfile generation, shell-quoting — add property-based tests with `proptest`. Fuzz the input rather than hand-picking examples: `proptest` finds edge cases that example tests don't.
+
+## Minimize Dependencies with Features
+
+Always minimize project complexity by explicitly setting the `[features]` property on dependencies listed in `Cargo.toml`. Only include features that are required for the project.
 
 ## Security
 
