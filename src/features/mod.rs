@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use anyhow::Context as _;
 
@@ -13,7 +13,7 @@ pub(crate) mod oci;
 /// Returns the raw (uncompressed) tar bytes for piping to `docker build -`.
 pub(crate) async fn build_context(config: &DevcontainerConfig) -> anyhow::Result<Vec<u8>> {
     let mut client = OciClient::new().context("failed to initialize OCI HTTP client")?;
-    let mut id_map: HashMap<String, String> = HashMap::new();
+    let mut id_map: HashSet<String> = HashSet::new();
     let mut feature_contexts: Vec<FeatureContext> = Vec::new();
 
     for (reference, options) in &config.features {
@@ -39,18 +39,18 @@ pub(crate) async fn build_context(config: &DevcontainerConfig) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::context::unique_feature_id;
-    use std::collections::HashMap;
+    use std::collections::HashSet;
 
     #[test]
     fn feature_id_slug() {
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
         let id = unique_feature_id("ghcr.io/devcontainers/features/node:1", &mut seen);
         assert_eq!(id, "ghcr-io-devcontainers-features-node-1");
     }
 
     #[test]
     fn feature_id_collision_handled() {
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
         let id1 = unique_feature_id("ref-one", &mut seen);
         let id2 = unique_feature_id("ref.one", &mut seen); // same slug, different ref
         assert_eq!(id1, "ref-one");

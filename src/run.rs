@@ -85,7 +85,7 @@ pub(crate) async fn run(
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
     // Entrypoint resolution
-    let (ep_flag, post_image_args) = resolve_entrypoint(override_args, config.entrypoint.as_ref());
+    let (ep_flag, post_image_args) = resolve_entrypoint(override_args, config.entrypoint.as_deref());
     if let Some(ep) = ep_flag {
         args.extend(["--entrypoint".into(), ep]);
     }
@@ -105,19 +105,17 @@ pub(crate) async fn run(
 /// Determines (entrypoint_flag, post_image_args) from override_args and configured entrypoint.
 fn resolve_entrypoint(
     override_args: &[String],
-    configured: Option<&Vec<String>>,
+    configured: Option<&[String]>,
 ) -> (Option<String>, Vec<String>) {
-    if !override_args.is_empty() {
-        (Some(override_args[0].clone()), override_args[1..].to_vec())
-    } else if let Some(ep) = configured {
-        if !ep.is_empty() {
-            (Some(ep[0].clone()), ep[1..].to_vec())
-        } else {
-            (None, Vec::new())
-        }
+    let effective = if !override_args.is_empty() {
+        override_args
     } else {
-        (None, Vec::new())
-    }
+        match configured {
+            Some(ep) if !ep.is_empty() => ep,
+            _ => return (None, Vec::new()),
+        }
+    };
+    (Some(effective[0].clone()), effective[1..].to_vec())
 }
 
 #[cfg(test)]

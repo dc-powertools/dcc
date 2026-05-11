@@ -88,14 +88,12 @@ fn feature_slug(reference: &str) -> String {
 }
 
 /// Returns a unique slug for `reference`, avoiding collisions with `seen`.
-/// `seen` maps slug -> original reference.
 pub(crate) fn unique_feature_id(
     reference: &str,
-    seen: &mut std::collections::HashMap<String, String>,
+    seen: &mut std::collections::HashSet<String>,
 ) -> String {
     let base = feature_slug(reference);
-    if !seen.contains_key(&base) {
-        seen.insert(base.clone(), reference.to_owned());
+    if seen.insert(base.clone()) {
         return base;
     }
     // Collision: append first 4 bytes of SHA-256 as 8 hex chars
@@ -105,7 +103,7 @@ pub(crate) fn unique_feature_id(
         hash[0], hash[1], hash[2], hash[3]
     );
     let id = format!("{base}-{suffix}");
-    seen.insert(id.clone(), reference.to_owned());
+    seen.insert(id.clone());
     id
 }
 
@@ -127,7 +125,7 @@ fn add_to_tar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::HashSet;
 
     #[test]
     fn feature_slug_basic() {
@@ -144,14 +142,14 @@ mod tests {
 
     #[test]
     fn unique_feature_id_no_collision() {
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
         let id = unique_feature_id("ghcr.io/foo/bar:1", &mut seen);
         assert_eq!(id, "ghcr-io-foo-bar-1");
     }
 
     #[test]
     fn unique_feature_id_collision_appends_hash() {
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
         // First one takes the base slug
         let id1 = unique_feature_id("ref-one", &mut seen);
         // A different reference that produces the same slug (manually craft it)
