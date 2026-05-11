@@ -4,7 +4,10 @@ use anyhow::Context as _;
 
 use crate::{
     cache::CacheDir,
-    config::{self, vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE}},
+    config::{
+        self,
+        vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE},
+    },
     docker,
     profile::{ContainerName, ProfileName},
     workspace::Workspace,
@@ -70,17 +73,24 @@ pub(crate) async fn run(
 
     // workspace bind mount
     args.push("-v".into());
-    args.push(format!("{}:{CONTAINER_WORKSPACE}", workspace.root.display()));
+    args.push(format!(
+        "{}:{CONTAINER_WORKSPACE}",
+        workspace.root.display()
+    ));
 
     // cache bind mount
     args.push("-v".into());
-    args.push(format!("{}:{CONTAINER_CACHE}", cache_dir.host_path.display()));
+    args.push(format!(
+        "{}:{CONTAINER_CACHE}",
+        cache_dir.host_path.display()
+    ));
 
     // mask .dcc directory inside container
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
     // Entrypoint resolution
-    let (ep_flag, post_image_args) = resolve_entrypoint(override_args, config.entrypoint.as_deref());
+    let (ep_flag, post_image_args) =
+        resolve_entrypoint(override_args, config.entrypoint.as_deref());
     if let Some(ep) = ep_flag {
         args.extend(["--entrypoint".into(), ep]);
     }
