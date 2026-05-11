@@ -1,0 +1,14 @@
+{
+  "name": "dcc",
+  "image": "rust:1",
+  "features": {},
+  "mounts": [
+    "type=bind,dst=${containerWorkspaceFolder}/target,src=${localCacheFolder}/target"
+  ],
+  "containerEnv": {
+    "HISTFILE": "${containerCacheFolder}/.bash_history",
+    "CARGO_HOME": "${containerCacheFolder}/.cargo",
+  },
+  "postCreateCommand": "cargo build",
+  "customizations": {}
+}

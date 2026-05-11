@@ -1,0 +1,10 @@
+{
+  "extends": "base",
+  "features": {
+    "ghcr.io/dc-powertools/claude": {},
+  },
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "${containerCacheFolder}/.claude"
+  },
+  "overrideCommand": "claude"
+}
