@@ -1,4 +1,5 @@
 # bootstrapping Claude harness
+/.claude
 /docker
 PLAN.md
 
