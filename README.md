@@ -36,7 +36,11 @@ profiles to layer small changes on top of a common base configuration.
 `dcc` generally follows the outline of the proposal in
 [devcontainers/spec#22](https://github.com/devcontainers/spec/issues/22).
 Arrays and objects are combined as a union of values, while basic types are
-overwritten.
+overwritten. Exception: `entrypoint` always takes the child value (see below).
+
+The path given in "extends" is resolved relative to the file that contains it.
+Extension chains (A extends B extends C) are permitted. Circular chains are
+invalid and cause `dcc build` to exit with an error.
 
 For example:
 
@@ -53,7 +57,7 @@ For example:
 
 // .devcontainer/derived.json
 {
-    "extends": "./defaults.json",
+    "extends": "./base.json",
     "forwardPorts": [80, 2222],
     "hostRequirements": {
         "memory": "32gb"
@@ -106,9 +110,11 @@ The second is to mount a cache subdirectory at the location where state is
 stored. For example:
 ```
 "mounts": [
-  "type=bind,src=${localCacheFolder}/target,dst=${containerWorkspaceFolder}/target"
+  "type=bind,src=${localCacheFolder}/target,dst=/workspace/target"
 ]
 ```
+
+The container workspace directory is always `/workspace`.
 
 The `/workspace/.dcc` subdirectory is masked within the container by an
 empty tmpfs mount, to prevent data from leaking across profiles.
@@ -122,18 +128,21 @@ file location `.devcontainer/devcontainer.json`.
 
 ### `dcc build`
 
-Reads `.devcontainer/<profile>.json` and builds the local Docker image. Subsequent
-builds are incremental via Docker's layer cache; pass `--no-cache` to force a full
-rebuild.
+Reads `.devcontainer/<profile>.json` and builds the local Docker image. When
+`features` are specified, `dcc` generates a Dockerfile that applies them on top
+of the base image. Subsequent builds are incremental via Docker's layer cache;
+pass `--no-cache` to force a full rebuild.
 
 ### `dcc run`
 
-Starts the profile's container and executes the default launch command from the
-devcontainer's configuration. Containers are always ephemeral. `dcc run`
-terminates with an error if the profile's container is already running.
+Starts the profile's container and runs its configured `entrypoint`. Attaches
+an interactive terminal and pipes stdin/stdout until the container exits.
+Containers are always ephemeral. `dcc run` terminates with an error if the
+profile's container is already running. `dcc build` must be run before `dcc run`;
+`dcc run` never builds the image automatically.
 
 If additional arguments are present, such as `dcc run npm serve`, they override
-the devcontainer's launch command. Starting from the first non-flag argument,
+the configured entrypoint. Starting from the first non-flag argument,
 all subsequent arguments are passed through as the launch command.
 
 The argument `--` can be supplied to explicitly indicate the boundary between
@@ -142,8 +151,8 @@ be passed through to the container.
 
 ### `dcc join`
 
-Attempts to re-attach to a profile's running container. This should not normally
-be required.
+Reattaches to the original process's stdin/stdout after detaching from a running
+container via Docker's escape key sequence. This should not normally be required.
 
 ### `dcc stop`
 
@@ -163,6 +172,18 @@ This means you can run `dcc` from any subdirectory of a project.
 configurations must be located within the `.devcontainer` directory.
 
 
+### Container identity
+
+Each profile's container is identified by a name derived from the local
+workspace directory and the profile name:
+
+```
+<workspace-basename>--<profile>
+```
+
+For example, a project in `~/code/my-project` with the `claude` profile uses
+the container name `my-project--claude`.
+
 ### Supported devcontainer configuration properties
 
 | Field | Description |
@@ -171,6 +192,9 @@ configurations must be located within the `.devcontainer` directory.
 | `features` | devcontainer Features to install |
 | `containerEnv` | Environment variables set inside every container |
 | `containerUser` | Non-root user to run as inside the container (default: `dev`) |
+| `mounts` | Additional bind or volume mounts |
+| `forwardPorts` | Ports to forward from the container to the host |
+| `entrypoint` | Array of strings that override the container entrypoint. The child value always takes precedence over the parent when using `extends`. Setting this property implies `overrideCommand: true`. |
 
 Unrecognised fields produce a warning by default; pass `--strict` to treat them as errors.
 
@@ -194,7 +218,7 @@ Unrecognised fields produce a warning by default; pass `--strict` to treat them 
 `dcc run` defaults to **4 GB memory** and **4 CPUs**. Override with Docker-equivalent flags:
 
 ```sh
-dcc start --memory 8g --cpus 6
+dcc run --memory 8g --cpus 6
 dcc run --memory 512m npm test
 ```
 
