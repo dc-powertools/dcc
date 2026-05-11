@@ -66,11 +66,10 @@ pub(crate) async fn build(tag: &str, no_cache: bool, context: Vec<u8>) -> anyhow
     check_status(status, &format!("docker build --tag {tag} -"))
 }
 
-pub(crate) async fn run_container(args: &[&str]) -> anyhow::Result<ExitStatus> {
-    let mut cmd_args = vec!["run"];
-    cmd_args.extend_from_slice(args);
+pub(crate) async fn run_container(args: &[String]) -> anyhow::Result<ExitStatus> {
     Command::new("docker")
-        .args(&cmd_args)
+        .arg("run")
+        .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

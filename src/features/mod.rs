@@ -13,7 +13,7 @@ pub(crate) mod oci;
 /// Returns the raw (uncompressed) tar bytes for piping to `docker build -`.
 pub(crate) async fn build_context(config: &DevcontainerConfig) -> anyhow::Result<Vec<u8>> {
     let mut client = OciClient::new().context("failed to initialize OCI HTTP client")?;
-    let mut id_map: HashSet<String> = HashSet::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
     let mut feature_contexts: Vec<FeatureContext> = Vec::new();
 
     for (reference, options) in &config.features {
@@ -22,7 +22,7 @@ pub(crate) async fn build_context(config: &DevcontainerConfig) -> anyhow::Result
             .await
             .with_context(|| format!("failed to download feature `{reference}`"))?;
 
-        let id = context::unique_feature_id(reference, &mut id_map);
+        let id = context::unique_feature_id(reference, &mut seen_ids);
 
         feature_contexts.push(FeatureContext {
             id,

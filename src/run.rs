@@ -96,10 +96,7 @@ pub(crate) async fn run(
     // Post-image arguments
     args.extend(post_image_args);
 
-    // Convert to &str for docker::run_container
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-    docker::run_container(&arg_refs).await
+    docker::run_container(&args).await
 }
 
 /// Determines (entrypoint_flag, post_image_args) from override_args and configured entrypoint.
