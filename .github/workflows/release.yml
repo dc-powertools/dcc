@@ -45,12 +45,12 @@ jobs:
           fi
 
       - name: Package
-        run: tar -czf acdc-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release acdc
+        run: tar -czf dcc-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release dcc
 
       - uses: actions/upload-artifact@v4
         with:
-          name: acdc-${{ matrix.target }}
-          path: acdc-${{ matrix.target }}.tar.gz
+          name: dcc-${{ matrix.target }}
+          path: dcc-${{ matrix.target }}.tar.gz
 
   release:
     name: Create Release
