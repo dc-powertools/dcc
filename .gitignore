@@ -1,3 +1,6 @@
+# bootstrapping Claude harness
+/docker
+
 # Rust build artifacts
 /target/
 
