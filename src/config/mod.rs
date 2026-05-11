@@ -27,14 +27,14 @@ pub(crate) struct RawConfig {
 }
 
 #[derive(Debug)]
-pub struct DevcontainerConfig {
-    pub image: String,
-    pub features: IndexMap<String, serde_json::Value>,
-    pub container_env: HashMap<String, String>,
-    pub container_user: String,
-    pub mounts: Vec<String>,
-    pub forward_ports: Vec<u16>,
-    pub entrypoint: Option<Vec<String>>,
+pub(crate) struct DevcontainerConfig {
+    pub(crate) image: String,
+    pub(crate) features: IndexMap<String, serde_json::Value>,
+    pub(crate) container_env: HashMap<String, String>,
+    pub(crate) container_user: String,
+    pub(crate) mounts: Vec<String>,
+    pub(crate) forward_ports: Vec<u16>,
+    pub(crate) entrypoint: Option<Vec<String>>,
 }
 
 pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<RawConfig> {
@@ -63,7 +63,7 @@ fn check_extra_fields(
     Ok(())
 }
 
-pub fn load_config(
+pub(crate) fn load_config(
     path: &Path,
     workspace: &Workspace,
     cache_dir: &CacheDir,

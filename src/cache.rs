@@ -5,13 +5,13 @@ use anyhow::Context as _;
 use crate::{profile::ProfileName, workspace::Workspace};
 
 #[derive(Debug)]
-pub struct CacheDir {
-    pub host_path: PathBuf,
+pub(crate) struct CacheDir {
+    pub(crate) host_path: PathBuf,
 }
 
 impl CacheDir {
     /// Cache directory is at <workspace.root>/.dcc/<profile-name>/
-    pub fn new(workspace: &Workspace, profile: &ProfileName) -> Self {
+    pub(crate) fn new(workspace: &Workspace, profile: &ProfileName) -> Self {
         Self {
             host_path: workspace.root.join(".dcc").join(profile.as_str()),
         }
@@ -19,7 +19,7 @@ impl CacheDir {
 
     /// Creates the cache directory (and any missing intermediate dirs).
     /// Idempotent: succeeds if the directory already exists.
-    pub fn ensure_exists(&self) -> anyhow::Result<()> {
+    pub(crate) fn ensure_exists(&self) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.host_path).with_context(|| {
             format!(
                 "failed to create cache directory `{}`",

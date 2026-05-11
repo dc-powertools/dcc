@@ -36,12 +36,7 @@ pub(crate) async fn run(
     }
 
     // Ensure cache directory exists
-    cache_dir.ensure_exists().with_context(|| {
-        format!(
-            "failed to create cache directory `{}`",
-            cache_dir.host_path.display()
-        )
-    })?;
+    cache_dir.ensure_exists()?;
 
     // Build the docker run argument list
     let mut args: Vec<String> = Vec::new();

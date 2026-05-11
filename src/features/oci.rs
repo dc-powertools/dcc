@@ -81,7 +81,7 @@ impl OciClient {
             .fetch_manifest(&parsed)
             .await
             .with_context(|| format!("failed to fetch manifest for {feature_ref}"))?;
-        let (digest, _size) = find_feature_layer(&manifest).with_context(|| {
+        let digest = find_feature_layer(&manifest).with_context(|| {
             format!("failed to find feature layer in manifest for {feature_ref}")
         })?;
         let blob = self
@@ -255,7 +255,7 @@ fn parse_www_authenticate(header: &str) -> anyhow::Result<(String, String, Strin
     Ok((realm, service, scope))
 }
 
-fn find_feature_layer(manifest: &serde_json::Value) -> anyhow::Result<(String, u64)> {
+fn find_feature_layer(manifest: &serde_json::Value) -> anyhow::Result<String> {
     let layers = manifest["layers"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("manifest has no 'layers' array"))?;
@@ -269,8 +269,7 @@ fn find_feature_layer(manifest: &serde_json::Value) -> anyhow::Result<(String, u
             if !digest.starts_with("sha256:") {
                 bail!("layer digest '{}' is not a sha256 digest", digest);
             }
-            let size = layer["size"].as_u64().unwrap_or(0);
-            return Ok((digest, size));
+            return Ok(digest);
         }
     }
     let found: Vec<&str> = layers
@@ -446,9 +445,8 @@ mod tests {
                 { "mediaType": "application/vnd.devcontainers.layer.v1+tar", "digest": "sha256:def123", "size": 200 }
             ]
         });
-        let (digest, size) = find_feature_layer(&manifest).unwrap();
+        let digest = find_feature_layer(&manifest).unwrap();
         assert_eq!(digest, "sha256:def123");
-        assert_eq!(size, 200);
     }
 
     #[test]
