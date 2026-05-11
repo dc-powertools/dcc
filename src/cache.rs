@@ -27,15 +27,6 @@ impl CacheDir {
             )
         })
     }
-
-    /// The path where the cache is mounted inside the container.
-    // Not called from production code today; run.rs hard-codes "/cache" in the
-    // docker -v argument.  Keep this as the canonical source-of-truth constant
-    // so future refactors can reach for it.
-    #[allow(dead_code)]
-    pub fn container_path() -> &'static str {
-        "/cache"
-    }
 }
 
 #[cfg(test)]
@@ -64,11 +55,6 @@ mod tests {
     fn host_path_is_absolute() {
         let cache = CacheDir::new(&ws("/some/abs/path"), &ProfileName::new("dev"));
         assert!(cache.host_path.is_absolute());
-    }
-
-    #[test]
-    fn container_path_is_slash_cache() {
-        assert_eq!(CacheDir::container_path(), "/cache");
     }
 
     #[test]

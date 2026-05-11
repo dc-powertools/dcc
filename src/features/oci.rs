@@ -216,8 +216,8 @@ impl OciClient {
         let bytes = resp
             .bytes()
             .await
-            .with_context(|| format!("failed to read blob bytes from {url}"))?;
-        let bytes = bytes.to_vec();
+            .with_context(|| format!("failed to read blob bytes from {url}"))?
+            .to_vec();
 
         // Mandatory digest verification
         let computed = format!("sha256:{:x}", Sha256::digest(&bytes));
@@ -284,69 +284,47 @@ fn find_feature_layer(manifest: &serde_json::Value) -> anyhow::Result<(String, u
 }
 
 fn extract_feature(blob: &[u8]) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
-    use std::io::Read;
     // Detect gzip by magic bytes
     let is_gzip = blob.len() >= 2 && blob[0] == 0x1f && blob[1] == 0x8b;
+    if is_gzip {
+        let mut decoder = flate2::read::GzDecoder::new(blob);
+        extract_from_tar(tar::Archive::new(&mut decoder))
+    } else {
+        extract_from_tar(tar::Archive::new(std::io::Cursor::new(blob)))
+    }
+}
+
+fn extract_from_tar<R: std::io::Read>(
+    mut archive: tar::Archive<R>,
+) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
+    use std::io::Read as _;
     let mut install_sh: Option<Vec<u8>> = None;
     let mut feature_json: Option<Vec<u8>> = None;
 
-    if is_gzip {
-        let mut decoder = flate2::read::GzDecoder::new(blob);
-        let mut archive = tar::Archive::new(&mut decoder);
-        for entry in archive.entries().context("failed to read tar archive")? {
-            let mut entry = entry.context("failed to read tar entry")?;
-            let path = entry.path().context("failed to get tar entry path")?;
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_owned();
-            match name.as_str() {
-                "install.sh" => {
-                    let mut buf = Vec::new();
-                    entry
-                        .read_to_end(&mut buf)
-                        .context("failed to read install.sh")?;
-                    install_sh = Some(buf);
-                }
-                "devcontainer-feature.json" => {
-                    let mut buf = Vec::new();
-                    entry
-                        .read_to_end(&mut buf)
-                        .context("failed to read devcontainer-feature.json")?;
-                    feature_json = Some(buf);
-                }
-                _ => {}
+    for entry in archive.entries().context("failed to read tar archive")? {
+        let mut entry = entry.context("failed to read tar entry")?;
+        let path = entry.path().context("failed to get tar entry path")?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_owned();
+        match name.as_str() {
+            "install.sh" => {
+                let mut buf = Vec::new();
+                entry
+                    .read_to_end(&mut buf)
+                    .context("failed to read install.sh")?;
+                install_sh = Some(buf);
             }
-        }
-    } else {
-        let mut cursor = std::io::Cursor::new(blob);
-        let mut archive = tar::Archive::new(&mut cursor);
-        for entry in archive.entries().context("failed to read tar archive")? {
-            let mut entry = entry.context("failed to read tar entry")?;
-            let path = entry.path().context("failed to get tar entry path")?;
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_owned();
-            match name.as_str() {
-                "install.sh" => {
-                    let mut buf = Vec::new();
-                    entry
-                        .read_to_end(&mut buf)
-                        .context("failed to read install.sh")?;
-                    install_sh = Some(buf);
-                }
-                "devcontainer-feature.json" => {
-                    let mut buf = Vec::new();
-                    entry
-                        .read_to_end(&mut buf)
-                        .context("failed to read devcontainer-feature.json")?;
-                    feature_json = Some(buf);
-                }
-                _ => {}
+            "devcontainer-feature.json" => {
+                let mut buf = Vec::new();
+                entry
+                    .read_to_end(&mut buf)
+                    .context("failed to read devcontainer-feature.json")?;
+                feature_json = Some(buf);
             }
+            _ => {}
         }
     }
 

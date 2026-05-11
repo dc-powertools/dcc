@@ -1,7 +1,7 @@
 use crate::{cache::CacheDir, config::DevcontainerConfig, workspace::Workspace};
 
-const CONTAINER_WORKSPACE: &str = "/workspace";
-const CONTAINER_CACHE: &str = "/cache";
+pub(crate) const CONTAINER_WORKSPACE: &str = "/workspace";
+pub(crate) const CONTAINER_CACHE: &str = "/cache";
 
 /// Applies variable substitution to container_env values and mounts strings.
 pub(crate) fn apply_substitutions(
