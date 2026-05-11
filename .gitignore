@@ -1,5 +1,6 @@
 # bootstrapping Claude harness
 /docker
+PLAN.md
 
 # Rust build artifacts
 /target/
