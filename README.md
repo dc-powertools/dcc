@@ -114,6 +114,10 @@ stored. For example:
 ]
 ```
 
+`dcc run` automatically creates the host-side source directory for any bind
+mount whose source path lies under `${localCacheFolder}`, so the directory
+does not need to exist before the first run.
+
 The container workspace directory is always `/workspace`.
 
 The `/workspace/.dcc` subdirectory is masked within the container by an
@@ -128,10 +132,19 @@ file location `.devcontainer/devcontainer.json`.
 
 ### `dcc build`
 
-Reads `.devcontainer/<profile>.json` and builds the local Docker image. When
-`features` are specified, `dcc` generates a Dockerfile that applies them on top
-of the base image. Subsequent builds are incremental via Docker's layer cache;
-pass `--no-cache` to force a full rebuild.
+Reads `.devcontainer/<profile>.json` and builds the local Docker image.
+
+When neither `features` nor `containerUser` are set, `dcc` takes a fast path:
+it pulls the base image and retags it locally without a Dockerfile build.
+
+When `features` are set, `dcc` generates a Dockerfile that installs them on top
+of the base image. When `containerUser` is set, `dcc` adds a `RUN` step to the
+Dockerfile that creates the user if it does not already exist; this step is
+cross-distro compatible (`useradd` for Debian/Ubuntu/RHEL, `adduser` for
+Alpine). Both conditions may apply simultaneously.
+
+Subsequent builds are incremental via Docker's layer cache; pass `--no-cache`
+to force a full rebuild.
 
 ### `dcc run`
 
@@ -191,7 +204,7 @@ the container name `my-project--claude`.
 | `image` | Base Docker image |
 | `features` | devcontainer Features to install |
 | `containerEnv` | Environment variables set inside every container |
-| `containerUser` | Non-root user to run as inside the container (default: `dev`) |
+| `containerUser` | User to run as inside the container. When set, `dcc build` creates the user in the image if it does not already exist. When absent, Docker uses the image's `USER` directive. |
 | `mounts` | Additional bind or volume mounts |
 | `forwardPorts` | Ports to forward from the container to the host |
 | `entrypoint` | Array of strings that override the container entrypoint. The child value always takes precedence over the parent when using `extends`. Setting this property implies `overrideCommand: true`. |

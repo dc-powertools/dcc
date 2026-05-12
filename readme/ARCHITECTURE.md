@@ -35,6 +35,7 @@ src/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
     merge.rs          Extends merging algorithm
     resolve.rs        File-level resolution with cycle detection
+    vars.rs           Variable substitution (${localCacheFolder} etc.); container path constants
   features/
     mod.rs            Public API; orchestrates feature download and build-context generation
     oci.rs            Minimal OCI HTTP client for downloading feature artifacts
@@ -118,7 +119,7 @@ pub struct DevcontainerConfig {
     pub image: String,
     pub features: IndexMap<String, serde_json::Value>,
     pub container_env: HashMap<String, String>,
-    pub container_user: String,                    // default: "dev"
+    pub container_user: Option<String>,            // None → use image's USER directive
     pub mounts: Vec<String>,
     pub forward_ports: Vec<u16>,
     pub entrypoint: Option<Vec<String>>,
@@ -145,7 +146,7 @@ load_config(path, strict) -> anyhow::Result<DevcontainerConfig>:
   raw = load_raw(path, &mut visited, strict)
   validate and convert raw to DevcontainerConfig
     - error if image is None
-    - default container_user to "dev"
+    - container_user kept as Option<String>; None means use the image's USER directive
 
 load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
   canonical = fs::canonicalize(path)?
@@ -260,12 +261,16 @@ pub struct CacheDir {
 impl CacheDir {
     pub fn new(workspace: &Workspace, profile: &ProfileName) -> Self
     pub fn ensure_exists(&self) -> anyhow::Result<()>
-    pub fn container_path() -> &'static str  // always "/cache"
 }
 ```
 
 The cache directory is created by `ensure_exists` on `dcc run` if it does not
 already exist. It is never deleted automatically.
+
+The container-side mount path (`/cache`) is defined as the constant
+`CONTAINER_CACHE` in `config/vars.rs`, which also defines `CONTAINER_WORKSPACE`
+(`/workspace`). Both constants are shared between variable substitution and the
+`docker run` argument construction in `run.rs`.
 
 ---
 
@@ -298,7 +303,7 @@ as errors, except where noted below.
 
 ### dcc build
 
-**No features**: skip image build. Pull and retag:
+**No features AND no containerUser** (fast path): skip image build. Pull and retag:
 
 ```
 docker pull <image>
@@ -307,10 +312,11 @@ docker tag <image> <image-tag>
 
 `docker pull` fails if the image does not exist in a remote registry. Images
 that were built locally and not pushed to a registry must be handled by adding
-features to the config (even an empty set), which causes the Dockerfile path to
-be used instead. This limitation should be surfaced in user-facing documentation.
+features or a `containerUser` to the config, which causes the Dockerfile path
+to be used instead. This limitation should be surfaced in user-facing
+documentation.
 
-**With features**: pipe the in-memory build context to `docker build`:
+**With features OR containerUser**: pipe the in-memory build context to `docker build`:
 
 ```
 docker build [--no-cache] --tag <image-tag> -
@@ -329,7 +335,7 @@ docker run
   --memory <memory>          (default: 4g)
   --cpus <cpus>              (default: 4)
   -e KEY=VALUE ...           (containerEnv after variable substitution)
-  -u <containerUser>
+  [-u <containerUser>]       (omitted when containerUser is not set)
   -p <port>:<port> ...       (forwardPorts; host port == container port)
   --mount <spec> ...         (mounts after variable substitution)
   -v <workspace-root>:/workspace
@@ -341,6 +347,12 @@ docker run
   OR
   [<override-command...>]    (user-supplied command args, replaces entrypoint entirely)
 ```
+
+Before launching Docker, `dcc run` calls `fs::create_dir_all` for any bind
+mount whose `src=` path falls under the host cache directory. Docker requires
+bind mount source paths to exist on the host before the container starts;
+without this step, a config that mounts `${localCacheFolder}/node_modules`
+would fail on first run because the subdirectory does not yet exist.
 
 **Entrypoint resolution**:
 
@@ -433,13 +445,23 @@ The build context is assembled as a `Vec<u8>` using `tar::Builder`. It contains:
 **`Dockerfile`**:
 ```dockerfile
 FROM <image>
+# Only present when features are configured:
 COPY .dcc-features/ /tmp/.dcc-features/
 # Repeated for each feature in declaration order:
 RUN chmod +x /tmp/.dcc-features/<id>/install.sh \
  && OPTION_A=value OPTION_B=value ... \
     /tmp/.dcc-features/<id>/install.sh
 RUN rm -rf /tmp/.dcc-features/
+# Only present when containerUser is set and is not "root":
+RUN id '<user>' >/dev/null 2>&1 \
+ || useradd -m -s /bin/sh '<user>' \
+ || adduser -D -s /bin/sh '<user>'
 ```
+
+The user-creation step is idempotent (`id` short-circuits when the user already
+exists) and cross-distro compatible: `useradd` covers Debian/Ubuntu/RHEL/Fedora;
+`adduser -D` covers Alpine/BusyBox. It runs after features so a feature that
+already creates the user does not cause a conflict.
 
 **`.dcc-features/<id>/install.sh`** and **`.dcc-features/<id>/devcontainer-feature.json`**
 for each feature.
