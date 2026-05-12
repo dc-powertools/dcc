@@ -60,8 +60,10 @@ pub(crate) async fn run(
         args.push(format!("{k}={v}"));
     }
 
-    // containerUser
-    args.extend(["-u".into(), config.container_user.clone()]);
+    // containerUser (omitted when not set — Docker uses the image's USER directive)
+    if let Some(user) = &config.container_user {
+        args.extend(["-u".into(), user.clone()]);
+    }
 
     // forwardPorts (host port == container port)
     for port in &config.forward_ports {

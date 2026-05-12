@@ -31,7 +31,7 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) image: String,
     pub(crate) features: IndexMap<String, serde_json::Value>,
     pub(crate) container_env: HashMap<String, String>,
-    pub(crate) container_user: String,
+    pub(crate) container_user: Option<String>,
     pub(crate) mounts: Vec<String>,
     pub(crate) forward_ports: Vec<u16>,
     pub(crate) entrypoint: Option<Vec<String>>,

@@ -32,8 +32,12 @@ pub(crate) async fn build_context(config: &DevcontainerConfig) -> anyhow::Result
         });
     }
 
-    context::build_context(&config.image, &feature_contexts)
-        .context("failed to assemble Docker build context")
+    context::build_context(
+        &config.image,
+        &feature_contexts,
+        config.container_user.as_deref(),
+    )
+    .context("failed to assemble Docker build context")
 }
 
 #[cfg(test)]

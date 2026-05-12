@@ -11,8 +11,12 @@ pub(crate) struct FeatureContext {
     pub(crate) env_vars: IndexMap<String, String>,
 }
 
-pub(crate) fn build_context(image: &str, features: &[FeatureContext]) -> anyhow::Result<Vec<u8>> {
-    let dockerfile = generate_dockerfile(image, features);
+pub(crate) fn build_context(
+    image: &str,
+    features: &[FeatureContext],
+    container_user: Option<&str>,
+) -> anyhow::Result<Vec<u8>> {
+    let dockerfile = generate_dockerfile(image, features, container_user);
     let mut builder = tar::Builder::new(Vec::new());
 
     add_to_tar(&mut builder, "Dockerfile", dockerfile.as_bytes(), 0o644)?;
@@ -40,7 +44,11 @@ pub(crate) fn build_context(image: &str, features: &[FeatureContext]) -> anyhow:
         .context("failed to retrieve tar buffer")
 }
 
-fn generate_dockerfile(image: &str, features: &[FeatureContext]) -> String {
+fn generate_dockerfile(
+    image: &str,
+    features: &[FeatureContext],
+    container_user: Option<&str>,
+) -> String {
     let mut lines = Vec::new();
     lines.push(format!("FROM {image}"));
     if !features.is_empty() {
@@ -64,6 +72,18 @@ fn generate_dockerfile(image: &str, features: &[FeatureContext]) -> String {
             }
         }
         lines.push("RUN rm -rf /tmp/.dcc-features/".to_string());
+    }
+    // Ensure the container user exists. Runs after features so that a feature
+    // that already creates the user doesn't conflict (id check makes it idempotent).
+    // Skipped for root, which is guaranteed to exist in every image.
+    // useradd covers Debian/Ubuntu/RHEL/Fedora; adduser -D covers Alpine/BusyBox.
+    if let Some(user) = container_user {
+        if user != "root" {
+            let u = shell_quote(user);
+            lines.push(format!(
+                "RUN id {u} >/dev/null 2>&1 \\\n || useradd -m -s /bin/sh {u} \\\n || adduser -D -s /bin/sh {u}"
+            ));
+        }
     }
     lines.join("\n") + "\n"
 }
@@ -188,9 +208,41 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_no_features() {
-        let df = generate_dockerfile("rust:1", &[]);
+    fn dockerfile_no_features_no_user() {
+        let df = generate_dockerfile("rust:1", &[], None);
         assert_eq!(df, "FROM rust:1\n");
+    }
+
+    #[test]
+    fn dockerfile_no_features_with_user() {
+        let df = generate_dockerfile("rust:1", &[], Some("dev"));
+        assert!(df.contains("FROM rust:1"));
+        assert!(df.contains("id 'dev'"));
+        assert!(df.contains("useradd"));
+        assert!(df.contains("adduser"));
+    }
+
+    #[test]
+    fn dockerfile_root_user_skips_creation() {
+        let df = generate_dockerfile("rust:1", &[], Some("root"));
+        assert_eq!(df, "FROM rust:1\n");
+    }
+
+    #[test]
+    fn dockerfile_user_creation_after_features() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+        };
+        let df = generate_dockerfile("rust:1", &[f], Some("dev"));
+        let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
+        let id_pos = df.find("id 'dev'").unwrap();
+        assert!(
+            id_pos > rm_pos,
+            "user creation should appear after feature cleanup"
+        );
     }
 
     #[test]
@@ -201,7 +253,7 @@ mod tests {
             feature_json: vec![],
             env_vars: IndexMap::new(),
         };
-        let df = generate_dockerfile("rust:1", &[f]);
+        let df = generate_dockerfile("rust:1", &[f], None);
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("COPY .dcc-features/"));
         assert!(df.contains("chmod +x /tmp/.dcc-features/my-feature/install.sh"));
@@ -220,7 +272,7 @@ mod tests {
             feature_json: vec![],
             env_vars: env,
         };
-        let df = generate_dockerfile("rust:1", &[f]);
+        let df = generate_dockerfile("rust:1", &[f], None);
         assert!(df.contains("VERSION='20'"));
     }
 
@@ -234,7 +286,7 @@ mod tests {
             feature_json: b"{}".to_vec(),
             env_vars: env,
         };
-        let tar_bytes = build_context("rust:1", &[f]).unwrap();
+        let tar_bytes = build_context("rust:1", &[f], None).unwrap();
         assert!(!tar_bytes.is_empty());
 
         // Extract and verify

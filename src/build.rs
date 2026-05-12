@@ -22,8 +22,8 @@ pub(crate) async fn build(
     let container_name = ContainerName::new(workspace, profile);
     let image_tag = container_name.as_image_tag();
 
-    if config.features.is_empty() {
-        // No-features path: pull the base image then retag it as our local image tag.
+    if config.features.is_empty() && config.container_user.is_none() {
+        // Fast path: no features and no custom user — pull and retag without a build.
         // --no-cache is a no-op here: docker pull always contacts the registry.
         let _ = no_cache; // accepted for API uniformity; docker pull ignores it
         docker::pull(&config.image)
@@ -39,6 +39,7 @@ pub(crate) async fn build(
                 )
             })?;
     } else {
+        // Build path: install features and/or create the container user.
         let context = crate::features::build_context(&config)
             .await
             .context("failed to build feature context")?;
