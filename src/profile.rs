@@ -1,4 +1,7 @@
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use crate::workspace::Workspace;
 
@@ -28,6 +31,42 @@ impl ProfileName {
             .join(".devcontainer")
             .join(format!("{}.json", self.0))
     }
+}
+
+/// Derives a profile name from the canonicalized path to a config file.
+///
+/// If `config` falls within the workspace, the name is derived from the path
+/// relative to the workspace root. Otherwise it is derived from the absolute
+/// path. In both cases non-alphanumeric characters are replaced with `-`,
+/// the result is lowercased, and leading/trailing `-` are stripped.
+///
+/// Examples (workspace root `/proj`):
+///   `/proj/.devcontainer/claude.json` → `devcontainer-claude-json`
+///   `/proj/configs/dev.json`          → `configs-dev-json`
+///   `/shared/base.json`               → `shared-base-json`
+pub(crate) fn path_to_profile_name(config: &Path, workspace: &Workspace) -> ProfileName {
+    let path_str = if config.starts_with(&workspace.root) {
+        config
+            .strip_prefix(&workspace.root)
+            .expect("starts_with checked above")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        config.to_string_lossy().into_owned()
+    };
+    let slug: String = path_str
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    ProfileName::new(slug)
 }
 
 impl fmt::Display for ProfileName {
@@ -163,5 +202,56 @@ mod tests {
     fn display_matches_inner_string() {
         let p = ProfileName::new("claude");
         assert_eq!(format!("{}", p), "claude");
+    }
+
+    // --- path_to_profile_name ---
+
+    #[test]
+    fn path_name_inside_workspace() {
+        let ws = workspace("/proj");
+        let config = PathBuf::from("/proj/configs/dev.json");
+        assert_eq!(
+            path_to_profile_name(&config, &ws).as_str(),
+            "configs-dev-json"
+        );
+    }
+
+    #[test]
+    fn path_name_in_devcontainer_dir() {
+        // The leading '.' of '.devcontainer' becomes '-', which is then trimmed,
+        // so the result is "devcontainer-claude-json" not "-devcontainer-claude-json".
+        let ws = workspace("/proj");
+        let config = PathBuf::from("/proj/.devcontainer/claude.json");
+        assert_eq!(
+            path_to_profile_name(&config, &ws).as_str(),
+            "devcontainer-claude-json"
+        );
+    }
+
+    #[test]
+    fn path_name_outside_workspace() {
+        let ws = workspace("/proj");
+        let config = PathBuf::from("/shared/configs/base.json");
+        assert_eq!(
+            path_to_profile_name(&config, &ws).as_str(),
+            "shared-configs-base-json"
+        );
+    }
+
+    #[test]
+    fn path_name_nested_inside_workspace() {
+        let ws = workspace("/home/user/myproject");
+        let config = PathBuf::from("/home/user/myproject/a/b/c.json");
+        assert_eq!(path_to_profile_name(&config, &ws).as_str(), "a-b-c-json");
+    }
+
+    #[test]
+    fn path_name_special_chars_replaced() {
+        let ws = workspace("/proj");
+        let config = PathBuf::from("/proj/my.config/dev-2.json");
+        assert_eq!(
+            path_to_profile_name(&config, &ws).as_str(),
+            "my-config-dev-2-json"
+        );
     }
 }

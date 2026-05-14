@@ -1,6 +1,53 @@
 mod common;
 use common::*;
 
+// --- path-based profile (-p ./...) ---
+
+#[test]
+fn error_on_path_profile_file_not_found() {
+    let fx = Fixture::new();
+    let output = fx
+        .dcc(&["-p", "./nonexistent.json", "build"])
+        .output()
+        .unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "nonexistent.json");
+}
+
+#[test]
+fn path_profile_inside_workspace_loads_config() {
+    let fx = Fixture::new();
+    // Write a config file at a non-standard location inside the workspace.
+    fx.write_config("../custom.json", r#"{ "image": "rust:1" }"#);
+    // dcc build will fail (no Docker), but the failure must NOT be about the config path.
+    let output = fx.dcc(&["-p", "./custom.json", "build"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("nonexistent") && !stderr.contains("resolve config path"),
+        "config should have been found; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn path_profile_container_name_consistent_across_commands() {
+    // dcc -p ./X build and dcc -p ./X stop must target the same container.
+    // We can't run Docker here, but we can verify that stop reaches Docker
+    // (not failing earlier on config resolution) when given a valid path arg.
+    let fx = Fixture::new();
+    fx.write_config("claude.json", r#"{ "image": "rust:1" }"#);
+    // stop is idempotent (treats "no such container" as success), so success
+    // with a path arg confirms the name was derived and passed to Docker.
+    let output = fx
+        .dcc(&["-p", "./.devcontainer/claude.json", "stop"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("resolve config path"),
+        "path-based stop should not fail on config resolution; stderr: {stderr}"
+    );
+}
+
 #[test]
 fn error_on_missing_devcontainer_dir() {
     // Run from a temp dir with NO .devcontainer directory

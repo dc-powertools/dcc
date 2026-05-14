@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Context as _;
 
 use crate::{
@@ -10,13 +12,13 @@ use crate::{
 pub(crate) async fn build(
     workspace: &Workspace,
     profile: &ProfileName,
+    config_path: &Path,
     no_cache: bool,
     strict: bool,
 ) -> anyhow::Result<()> {
-    let config_path = profile.config_path(workspace);
     let cache_dir = CacheDir::new(workspace, profile);
 
-    let config = config::load_config(&config_path, workspace, &cache_dir, strict)
+    let config = config::load_config(config_path, workspace, &cache_dir, strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
     let container_name = ContainerName::new(workspace, profile);

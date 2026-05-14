@@ -17,15 +17,15 @@ use crate::{
 pub(crate) async fn run(
     workspace: &Workspace,
     profile: &ProfileName,
+    config_path: &Path,
     memory: &str,
     cpus: &str,
     override_args: &[String],
     strict: bool,
 ) -> anyhow::Result<ExitStatus> {
-    let config_path = profile.config_path(workspace);
     let cache_dir = CacheDir::new(workspace, profile);
 
-    let config = config::load_config(&config_path, workspace, &cache_dir, strict)
+    let config = config::load_config(config_path, workspace, &cache_dir, strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
     let container = ContainerName::new(workspace, profile);
