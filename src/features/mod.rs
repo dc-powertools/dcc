@@ -95,6 +95,7 @@ pub(crate) async fn build_context(
             install_sh: downloaded.install_sh,
             feature_json: downloaded.feature_json.unwrap_or_default(),
             env_vars: downloaded.env,
+            extra_files: downloaded.extra_files,
         });
     }
 

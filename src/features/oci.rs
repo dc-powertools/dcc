@@ -9,6 +9,9 @@ pub(crate) struct DownloadedFeature {
     pub(crate) install_sh: Vec<u8>,
     pub(crate) feature_json: Option<Vec<u8>>,
     pub(crate) env: IndexMap<String, String>, // uppercased option name -> string value
+    /// Additional files from the feature directory beyond install.sh and devcontainer-feature.json.
+    /// Each entry is (filename, content, unix_mode). Empty for OCI features.
+    pub(crate) extra_files: Vec<(String, Vec<u8>, u32)>,
 }
 
 pub(crate) struct OciClient {
@@ -96,6 +99,7 @@ impl OciClient {
             install_sh,
             feature_json: feature_json_bytes,
             env,
+            extra_files: vec![],
         })
     }
 

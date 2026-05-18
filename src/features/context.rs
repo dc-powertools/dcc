@@ -9,6 +9,9 @@ pub(crate) struct FeatureContext {
     pub(crate) install_sh: Vec<u8>,
     pub(crate) feature_json: Vec<u8>,
     pub(crate) env_vars: IndexMap<String, String>,
+    /// Additional files from the feature directory (e.g. helper scripts).
+    /// Each entry is (filename, content, unix_mode).
+    pub(crate) extra_files: Vec<(String, Vec<u8>, u32)>,
 }
 
 pub(crate) fn build_context(
@@ -34,6 +37,14 @@ pub(crate) fn build_context(
             &feature.feature_json,
             0o644,
         )?;
+        for (name, content, mode) in &feature.extra_files {
+            add_to_tar(
+                &mut builder,
+                &format!(".dcc-features/{}/{name}", feature.id),
+                content,
+                *mode,
+            )?;
+        }
     }
 
     builder
@@ -235,6 +246,7 @@ mod tests {
             install_sh: vec![],
             feature_json: vec![],
             env_vars: IndexMap::new(),
+            extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[f], Some("dev"));
         let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
@@ -252,6 +264,7 @@ mod tests {
             install_sh: vec![],
             feature_json: vec![],
             env_vars: IndexMap::new(),
+            extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[f], None);
         assert!(df.contains("FROM rust:1"));
@@ -271,6 +284,7 @@ mod tests {
             install_sh: vec![],
             feature_json: vec![],
             env_vars: env,
+            extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[f], None);
         assert!(df.contains("VERSION='20'"));
@@ -285,6 +299,7 @@ mod tests {
             install_sh: b"#!/bin/sh\necho hello\n".to_vec(),
             feature_json: b"{}".to_vec(),
             env_vars: env,
+            extra_files: vec![],
         };
         let tar_bytes = build_context("rust:1", &[f], None).unwrap();
         assert!(!tar_bytes.is_empty());
@@ -307,5 +322,32 @@ mod tests {
         assert!(found_dockerfile, "Dockerfile missing from tar");
         assert!(found_install, "install.sh missing from tar");
         assert!(found_json, "devcontainer-feature.json missing from tar");
+    }
+
+    #[test]
+    fn extra_files_included_in_tar() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: b"#!/bin/sh\n./helper.sh\n".to_vec(),
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            extra_files: vec![(
+                "helper.sh".to_string(),
+                b"#!/bin/sh\necho hi\n".to_vec(),
+                0o755,
+            )],
+        };
+        let tar_bytes = build_context("rust:1", &[f], None).unwrap();
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
+        let mut found_helper = false;
+        for entry in archive.entries().unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path().unwrap().to_str().unwrap().to_owned();
+            if path == ".dcc-features/feat/helper.sh" {
+                found_helper = true;
+            }
+        }
+        assert!(found_helper, "helper.sh should be present in the tar");
     }
 }

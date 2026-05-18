@@ -4,6 +4,59 @@ use anyhow::Context as _;
 
 use super::oci::DownloadedFeature;
 
+/// Returns the Unix permission bits for `path`, or 0o644 on error or non-Unix platforms.
+fn file_mode(path: &Path) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::metadata(path)
+            .map(|m| m.permissions().mode())
+            .unwrap_or(0o644)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        0o644
+    }
+}
+
+/// Reads all regular files in `feature_dir` except `install.sh` and
+/// `devcontainer-feature.json` (which are handled separately by the caller).
+/// Returns `(filename, content, unix_mode)` triples.
+/// Non-regular entries (symlinks, subdirectories) are skipped.
+fn collect_extra_files(feature_dir: &Path) -> anyhow::Result<Vec<(String, Vec<u8>, u32)>> {
+    let mut extra = Vec::new();
+    for entry in std::fs::read_dir(feature_dir).with_context(|| {
+        format!(
+            "failed to read feature directory `{}`",
+            feature_dir.display()
+        )
+    })? {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read entry in feature directory `{}`",
+                feature_dir.display()
+            )
+        })?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "install.sh" || name == "devcontainer-feature.json" {
+            continue;
+        }
+        if !entry
+            .file_type()
+            .with_context(|| format!("failed to get file type for `{name}`"))?
+            .is_file()
+        {
+            continue;
+        }
+        let path = entry.path();
+        let content = std::fs::read(&path)
+            .with_context(|| format!("failed to read `{name}` from local feature"))?;
+        extra.push((name, content, file_mode(&path)));
+    }
+    Ok(extra)
+}
+
 /// Loads a feature from a local directory on disk.
 ///
 /// `reference` is a relative path (starting with `./` or `../`) resolved relative
@@ -27,11 +80,18 @@ pub(super) fn load_local_feature(
     let feature_json = std::fs::read(feature_dir.join("devcontainer-feature.json")).ok();
 
     let env = super::build_env(feature_json.as_deref(), user_options);
+    let extra_files = collect_extra_files(&feature_dir).with_context(|| {
+        format!(
+            "failed to collect files from local feature `{}`",
+            feature_dir.display()
+        )
+    })?;
 
     Ok(DownloadedFeature {
         install_sh,
         feature_json,
         env,
+        extra_files,
     })
 }
 
@@ -124,6 +184,36 @@ mod tests {
 
         let result = load_local_feature("../shared-feature", &config_dir, &json!({})).unwrap();
         assert_eq!(result.install_sh, b"#!/bin/sh\n");
+    }
+
+    #[test]
+    fn extra_files_are_collected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let feature_dir = tmp.path().join("feat");
+        std::fs::create_dir(&feature_dir).unwrap();
+        write(&feature_dir, "install.sh", b"#!/bin/sh\n./helper.sh\n");
+        write(&feature_dir, "helper.sh", b"#!/bin/sh\necho hello\n");
+
+        let result = load_local_feature("./feat", tmp.path(), &json!({})).unwrap();
+        assert_eq!(result.extra_files.len(), 1);
+        let (name, content, _mode) = &result.extra_files[0];
+        assert_eq!(name, "helper.sh");
+        assert_eq!(content.as_slice(), b"#!/bin/sh\necho hello\n");
+    }
+
+    #[test]
+    fn install_sh_and_feature_json_not_in_extra_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let feature_dir = tmp.path().join("feat");
+        std::fs::create_dir(&feature_dir).unwrap();
+        write(&feature_dir, "install.sh", b"#!/bin/sh");
+        write(&feature_dir, "devcontainer-feature.json", br#"{}"#);
+
+        let result = load_local_feature("./feat", tmp.path(), &json!({})).unwrap();
+        assert!(
+            result.extra_files.is_empty(),
+            "install.sh and devcontainer-feature.json must not appear in extra_files"
+        );
     }
 
     #[test]
