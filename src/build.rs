@@ -30,7 +30,10 @@ pub(crate) async fn build(
     // there are none).
     cache_dir.ensure_exists()?;
 
-    let runtime = if config.features.is_empty() && config.container_user.is_none() {
+    let runtime = if config.features.is_empty()
+        && config.container_user.is_none()
+        && config.container_env.is_empty()
+    {
         // Fast path: no features and no custom user — pull and retag without a build.
         // --no-cache is a no-op here: docker pull always contacts the registry.
         let _ = no_cache; // accepted for API uniformity; docker pull ignores it

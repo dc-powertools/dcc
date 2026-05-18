@@ -10,6 +10,7 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         image: child.image.or(parent.image),
         features: merge_option_index_maps(parent.features, child.features),
         container_env: merge_option_hash_maps(parent.container_env, child.container_env),
+        remote_env: merge_option_hash_maps(parent.remote_env, child.remote_env),
         container_user: child.container_user.or(parent.container_user),
         mounts: merge_option_vecs(parent.mounts, child.mounts),
         forward_ports: merge_option_vecs(parent.forward_ports, child.forward_ports),
@@ -93,6 +94,7 @@ mod tests {
             image: None,
             features: None,
             container_env: None,
+            remote_env: None,
             container_user: None,
             mounts: None,
             forward_ports: None,
@@ -233,6 +235,32 @@ mod tests {
     }
 
     #[test]
+    fn remote_env_union() {
+        let mut parent_env = HashMap::new();
+        parent_env.insert("FOO".to_string(), "parent".to_string());
+        parent_env.insert("BAR".to_string(), "bar".to_string());
+        let mut child_env = HashMap::new();
+        child_env.insert("FOO".to_string(), "child".to_string());
+        child_env.insert("BAZ".to_string(), "baz".to_string());
+        let parent = RawConfig {
+            remote_env: Some(parent_env),
+            ..empty()
+        };
+        let child = RawConfig {
+            remote_env: Some(child_env),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        let env = result.remote_env.unwrap();
+        // child wins on conflict
+        assert_eq!(env["FOO"], "child");
+        // parent-only key preserved
+        assert_eq!(env["BAR"], "bar");
+        // child-only key present
+        assert_eq!(env["BAZ"], "baz");
+    }
+
+    #[test]
     fn container_user_child_wins() {
         let parent = RawConfig {
             container_user: Some("root".to_string()),
@@ -339,6 +367,7 @@ mod tests {
                 m.insert("K".to_string(), "V".to_string());
                 m
             }),
+            remote_env: None,
             mounts: Some(vec!["m".to_string()]),
             forward_ports: Some(vec![8080]),
             extends: None,
@@ -375,6 +404,7 @@ mod tests {
                 m.insert("K".to_string(), "V".to_string());
                 m
             }),
+            remote_env: None,
             mounts: Some(vec!["m".to_string()]),
             forward_ports: Some(vec![8080]),
             extends: None,

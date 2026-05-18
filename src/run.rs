@@ -76,6 +76,18 @@ pub(crate) async fn run(
 
     ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
 
+    // Substitute local variables in feature remoteEnv templates
+    let feature_remote_env: Vec<(String, String)> = feature_runtime
+        .remote_env
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                config::vars::apply_substitution(v, &local_workspace, &local_cache),
+            )
+        })
+        .collect();
+
     // Build the docker run argument list
     let mut args: Vec<String> = Vec::new();
 
@@ -85,15 +97,21 @@ pub(crate) async fn run(
     args.extend(["--memory".into(), memory.to_owned()]);
     args.extend(["--cpus".into(), cpus.to_owned()]);
 
-    // containerEnv
-    for (k, v) in &config.container_env {
+    // containerUser (omitted when not set — Docker uses the image's USER directive)
+    if let Some(user) = &config.container_user {
+        args.extend(["-u".into(), user.clone()]);
+    }
+
+    // remoteEnv: passed as runtime flags (substitution already applied at config-load time)
+    for (k, v) in &config.remote_env {
         args.push("-e".into());
         args.push(format!("{k}={v}"));
     }
 
-    // containerUser (omitted when not set — Docker uses the image's USER directive)
-    if let Some(user) = &config.container_user {
-        args.extend(["-u".into(), user.clone()]);
+    // feature remoteEnv: passed as runtime flags (substituted from templates above)
+    for (k, v) in &feature_remote_env {
+        args.push("-e".into());
+        args.push(format!("{k}={v}"));
     }
 
     // forwardPorts (host port == container port)

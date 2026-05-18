@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use indexmap::IndexMap;
 
-use crate::config::DevcontainerConfig;
+use crate::config::{vars::apply_container_env_substitution, DevcontainerConfig};
 
 use self::{context::FeatureContext, oci::OciClient};
 
@@ -27,6 +27,9 @@ struct FeatureMeta {
     /// Environment variables to bake into the image via Dockerfile `ENV` before
     /// this feature's install script runs.
     container_env: IndexMap<String, String>,
+    /// Environment variables passed as runtime flags to `docker run`.
+    /// Stored as raw templates; substitution is applied at `dcc run` time.
+    remote_env: IndexMap<String, String>,
     /// Additional mounts to attach when the container starts.
     mounts: Vec<FeatureMount>,
     /// Soft ordering hint: install this feature after the listed feature IDs
@@ -71,6 +74,11 @@ pub(crate) struct FeatureRuntimeConfig {
     /// entrypoint, the last one in installation order wins (with a warning).
     /// `None` when no installed feature declares an entrypoint.
     pub(crate) entrypoint: Option<Vec<String>>,
+    /// Environment variables to pass as `-e KEY=VALUE` flags to `docker run`.
+    /// Stored as raw templates; `${localWorkspaceFolder}` and
+    /// `${localCacheFolder}` are substituted at `dcc run` time.
+    #[serde(default)]
+    pub(crate) remote_env: IndexMap<String, String>,
 }
 
 /// Return value of `build_context`.
@@ -132,20 +140,41 @@ pub(crate) async fn build_context(
             runtime.mounts.push(mount.to_mount_string());
         }
 
+        // remoteEnv: store raw templates (substitution happens at dcc run time)
+        for (k, v) in &entry.meta.remote_env {
+            runtime.remote_env.insert(k.clone(), v.clone());
+        }
+
         let id = context::unique_feature_id(reference, &mut seen_ids);
+
+        // containerEnv: apply container-only substitution (no local vars)
+        let container_env = entry
+            .meta
+            .container_env
+            .iter()
+            .map(|(k, v)| (k.clone(), apply_container_env_substitution(v)))
+            .collect();
 
         feature_contexts.push(FeatureContext {
             id,
             install_sh: entry.downloaded.install_sh.clone(),
             feature_json: entry.downloaded.feature_json.clone().unwrap_or_default(),
             env_vars: entry.downloaded.env.clone(),
-            container_env: entry.meta.container_env.clone(),
+            container_env,
             extra_files: entry.downloaded.extra_files.clone(),
         });
     }
 
+    let mut devcontainer_env: Vec<(String, String)> = config
+        .container_env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    devcontainer_env.sort_by(|a, b| a.0.cmp(&b.0));
+
     let context_tar = context::build_context(
         &config.image,
+        &devcontainer_env,
         &feature_contexts,
         config.container_user.as_deref(),
     )
@@ -599,5 +628,235 @@ mod tests {
         all.insert("b:1".into(), entry(b_meta));
 
         assert!(topological_sort(&all).is_err());
+    }
+
+    // Helper: extract the Dockerfile from a tar build context.
+    fn extract_dockerfile(tar_bytes: &[u8]) -> String {
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().to_str().unwrap().to_owned();
+            if path == "Dockerfile" {
+                let mut contents = String::new();
+                std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+                return contents;
+            }
+        }
+        panic!("Dockerfile not found in tar");
+    }
+
+    #[tokio::test]
+    async fn container_env_variables_substituted_in_build_context() {
+        use crate::config::DevcontainerConfig;
+        use std::collections::HashMap;
+
+        // A feature with containerEnv that uses ${localWorkspaceFolder} (unknown in
+        // container-only context) and ${containerCacheFolder} (known).
+        let feature_json = serde_json::json!({
+            "containerEnv": {
+                "PROJECT_ROOT": "${localWorkspaceFolder}/src",
+                "CACHE_DIR": "${containerCacheFolder}/data"
+            }
+        });
+        let feature_json_bytes = serde_json::to_vec(&feature_json).unwrap();
+
+        let mut features = IndexMap::new();
+        features.insert("./local-feat".to_string(), serde_json::json!({}));
+
+        let config = DevcontainerConfig {
+            image: "rust:1".to_string(),
+            features,
+            container_env: HashMap::new(),
+            remote_env: HashMap::new(),
+            container_user: None,
+            mounts: vec![],
+            forward_ports: vec![],
+            entrypoint: None,
+        };
+
+        // Manually build the FeatureEntry to avoid downloading
+        let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
+        let meta = parse_feature_meta(Some(&feature_json_bytes));
+        all.insert(
+            "./local-feat".to_string(),
+            FeatureEntry {
+                user_options: serde_json::json!({}),
+                downloaded: oci::DownloadedFeature {
+                    install_sh: b"#!/bin/sh\n".to_vec(),
+                    feature_json: Some(feature_json_bytes),
+                    env: IndexMap::new(),
+                    extra_files: vec![],
+                },
+                meta,
+            },
+        );
+
+        let order = topological_sort(&all).unwrap();
+
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut feature_contexts: Vec<context::FeatureContext> = Vec::new();
+        let mut runtime = FeatureRuntimeConfig::default();
+
+        for reference in &order {
+            let entry_ref = &all[reference];
+            if let Some(ep) = &entry_ref.meta.entrypoint {
+                runtime.entrypoint = Some(ep.clone());
+            }
+            for mount in &entry_ref.meta.mounts {
+                runtime.mounts.push(mount.to_mount_string());
+            }
+            for (k, v) in &entry_ref.meta.remote_env {
+                runtime.remote_env.insert(k.clone(), v.clone());
+            }
+            let id = context::unique_feature_id(reference, &mut seen_ids);
+            let container_env = entry_ref
+                .meta
+                .container_env
+                .iter()
+                .map(|(k, v)| (k.clone(), apply_container_env_substitution(v)))
+                .collect();
+            feature_contexts.push(context::FeatureContext {
+                id,
+                install_sh: entry_ref.downloaded.install_sh.clone(),
+                feature_json: entry_ref
+                    .downloaded
+                    .feature_json
+                    .clone()
+                    .unwrap_or_default(),
+                env_vars: entry_ref.downloaded.env.clone(),
+                container_env,
+                extra_files: entry_ref.downloaded.extra_files.clone(),
+            });
+        }
+
+        let mut devcontainer_env: Vec<(String, String)> = config
+            .container_env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        devcontainer_env.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let tar_bytes = context::build_context(
+            &config.image,
+            &devcontainer_env,
+            &feature_contexts,
+            config.container_user.as_deref(),
+        )
+        .unwrap();
+
+        let dockerfile = extract_dockerfile(&tar_bytes);
+
+        // ${localWorkspaceFolder} is unknown in container-only context — left as-is
+        assert!(
+            dockerfile.contains("PROJECT_ROOT='${localWorkspaceFolder}/src'"),
+            "expected literal PROJECT_ROOT in dockerfile, got:\n{dockerfile}"
+        );
+        // ${containerCacheFolder} is always substituted
+        assert!(
+            dockerfile.contains("CACHE_DIR='/cache/data'"),
+            "expected substituted CACHE_DIR in dockerfile, got:\n{dockerfile}"
+        );
+    }
+
+    #[tokio::test]
+    async fn feature_remote_env_stored_as_raw_templates() {
+        use crate::config::DevcontainerConfig;
+        use std::collections::HashMap;
+
+        let feature_json = serde_json::json!({
+            "remoteEnv": {
+                "TOKEN": "${localCacheFolder}/tok"
+            }
+        });
+        let feature_json_bytes = serde_json::to_vec(&feature_json).unwrap();
+
+        let mut features = IndexMap::new();
+        features.insert("./local-feat".to_string(), serde_json::json!({}));
+
+        let config = DevcontainerConfig {
+            image: "rust:1".to_string(),
+            features,
+            container_env: HashMap::new(),
+            remote_env: HashMap::new(),
+            container_user: None,
+            mounts: vec![],
+            forward_ports: vec![],
+            entrypoint: None,
+        };
+
+        let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
+        let meta = parse_feature_meta(Some(&feature_json_bytes));
+        all.insert(
+            "./local-feat".to_string(),
+            FeatureEntry {
+                user_options: serde_json::json!({}),
+                downloaded: oci::DownloadedFeature {
+                    install_sh: b"#!/bin/sh\n".to_vec(),
+                    feature_json: Some(feature_json_bytes),
+                    env: IndexMap::new(),
+                    extra_files: vec![],
+                },
+                meta,
+            },
+        );
+
+        let order = topological_sort(&all).unwrap();
+
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut feature_contexts: Vec<context::FeatureContext> = Vec::new();
+        let mut runtime = FeatureRuntimeConfig::default();
+
+        for reference in &order {
+            let entry_ref = &all[reference];
+            if let Some(ep) = &entry_ref.meta.entrypoint {
+                runtime.entrypoint = Some(ep.clone());
+            }
+            for mount in &entry_ref.meta.mounts {
+                runtime.mounts.push(mount.to_mount_string());
+            }
+            for (k, v) in &entry_ref.meta.remote_env {
+                runtime.remote_env.insert(k.clone(), v.clone());
+            }
+            let id = context::unique_feature_id(reference, &mut seen_ids);
+            let container_env = entry_ref
+                .meta
+                .container_env
+                .iter()
+                .map(|(k, v)| (k.clone(), apply_container_env_substitution(v)))
+                .collect();
+            feature_contexts.push(context::FeatureContext {
+                id,
+                install_sh: entry_ref.downloaded.install_sh.clone(),
+                feature_json: entry_ref
+                    .downloaded
+                    .feature_json
+                    .clone()
+                    .unwrap_or_default(),
+                env_vars: entry_ref.downloaded.env.clone(),
+                container_env,
+                extra_files: entry_ref.downloaded.extra_files.clone(),
+            });
+        }
+
+        let mut devcontainer_env: Vec<(String, String)> = config
+            .container_env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        devcontainer_env.sort_by(|a, b| a.0.cmp(&b.0));
+
+        context::build_context(
+            &config.image,
+            &devcontainer_env,
+            &feature_contexts,
+            config.container_user.as_deref(),
+        )
+        .unwrap();
+
+        // remoteEnv is stored as raw template — not substituted
+        assert_eq!(
+            runtime.remote_env.get("TOKEN"),
+            Some(&"${localCacheFolder}/tok".to_string())
+        );
     }
 }

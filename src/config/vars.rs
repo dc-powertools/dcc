@@ -3,7 +3,7 @@ use crate::{cache::CacheDir, config::DevcontainerConfig, workspace::Workspace};
 pub(crate) const CONTAINER_WORKSPACE: &str = "/workspace";
 pub(crate) const CONTAINER_CACHE: &str = "/cache";
 
-/// Applies variable substitution to container_env values and mounts strings.
+/// Applies variable substitution to container_env, remote_env, and mounts strings.
 pub(crate) fn apply_substitutions(
     config: DevcontainerConfig,
     workspace: &Workspace,
@@ -18,13 +18,23 @@ pub(crate) fn apply_substitutions(
         container_env: config
             .container_env
             .into_iter()
-            .map(|(k, v)| (k, apply_to_string(&v, &local_workspace, &local_cache)))
+            .map(|(k, v)| (k, apply_to_string(&v, None, None)))
+            .collect(),
+        remote_env: config
+            .remote_env
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    apply_to_string(&v, Some(&local_workspace), Some(&local_cache)),
+                )
+            })
             .collect(),
         container_user: config.container_user,
         mounts: config
             .mounts
             .into_iter()
-            .map(|m| apply_to_string(&m, &local_workspace, &local_cache))
+            .map(|m| apply_to_string(&m, Some(&local_workspace), Some(&local_cache)))
             .collect(),
         forward_ports: config.forward_ports,
         entrypoint: config.entrypoint,
@@ -34,10 +44,16 @@ pub(crate) fn apply_substitutions(
 /// Substitutes all variable occurrences in `s`. Emits tracing::warn! for unknowns.
 /// Exported for use by `run.rs` when applying substitution to feature mounts.
 pub(crate) fn apply_substitution(s: &str, local_workspace: &str, local_cache: &str) -> String {
-    apply_to_string(s, local_workspace, local_cache)
+    apply_to_string(s, Some(local_workspace), Some(local_cache))
 }
 
-fn apply_to_string(s: &str, local_workspace: &str, local_cache: &str) -> String {
+/// Applies only container-side variable substitution (no local variables).
+/// Used for `containerEnv` values in both devcontainer.json and feature metadata.
+pub(crate) fn apply_container_env_substitution(s: &str) -> String {
+    apply_to_string(s, None, None)
+}
+
+fn apply_to_string(s: &str, local_workspace: Option<&str>, local_cache: Option<&str>) -> String {
     let (result, unknowns) = substitute(s, local_workspace, local_cache);
     for u in unknowns {
         tracing::warn!(variable = %u, "unknown variable reference left as-is");
@@ -47,7 +63,11 @@ fn apply_to_string(s: &str, local_workspace: &str, local_cache: &str) -> String 
 
 /// Pure substitution: returns (substituted_string, list_of_unknown_variable_names).
 /// Unknowns are returned rather than warned here so the function is testable without tracing.
-fn substitute(s: &str, local_workspace: &str, local_cache: &str) -> (String, Vec<String>) {
+fn substitute(
+    s: &str,
+    local_workspace: Option<&str>,
+    local_cache: Option<&str>,
+) -> (String, Vec<String>) {
     let mut result = String::with_capacity(s.len());
     let mut unknowns = Vec::new();
     let mut i = 0;
@@ -58,18 +78,27 @@ fn substitute(s: &str, local_workspace: &str, local_cache: &str) -> (String, Vec
             // Find closing '}'
             if let Some(end_offset) = s[i + 2..].find('}') {
                 let name = &s[i + 2..i + 2 + end_offset];
-                let replacement = match name {
+                let replacement: Option<Option<&str>> = match name {
                     "localCacheFolder" => Some(local_cache),
-                    "containerCacheFolder" => Some(CONTAINER_CACHE),
+                    "containerCacheFolder" => Some(Some(CONTAINER_CACHE)),
                     "localWorkspaceFolder" => Some(local_workspace),
-                    "containerWorkspaceFolder" => Some(CONTAINER_WORKSPACE),
+                    "containerWorkspaceFolder" => Some(Some(CONTAINER_WORKSPACE)),
                     _ => None,
                 };
-                if let Some(r) = replacement {
-                    result.push_str(r);
-                } else {
-                    unknowns.push(format!("${{{name}}}"));
-                    result.push_str(&s[i..i + 2 + end_offset + 1]);
+                match replacement {
+                    Some(Some(r)) => {
+                        result.push_str(r);
+                    }
+                    Some(None) => {
+                        // Known variable name but not available in this context — leave as-is
+                        unknowns.push(format!("${{{name}}}"));
+                        result.push_str(&s[i..i + 2 + end_offset + 1]);
+                    }
+                    None => {
+                        // Completely unknown variable
+                        unknowns.push(format!("${{{name}}}"));
+                        result.push_str(&s[i..i + 2 + end_offset + 1]);
+                    }
                 }
                 i += 2 + end_offset + 1;
             } else {
@@ -78,7 +107,10 @@ fn substitute(s: &str, local_workspace: &str, local_cache: &str) -> (String, Vec
                 i += 1;
             }
         } else {
-            let ch = s[i..].chars().next().expect("i < s.len() guaranteed by while condition");
+            let ch = s[i..]
+                .chars()
+                .next()
+                .expect("i < s.len() guaranteed by while condition");
             result.push(ch);
             i += ch.len_utf8();
         }
@@ -92,12 +124,12 @@ mod tests {
     use super::*;
 
     fn sub(s: &str, ws: &str, cache: &str) -> String {
-        let (r, _) = substitute(s, ws, cache);
+        let (r, _) = substitute(s, Some(ws), Some(cache));
         r
     }
 
     fn unknowns(s: &str) -> Vec<String> {
-        let (_, u) = substitute(s, "/ws", "/cache");
+        let (_, u) = substitute(s, Some("/ws"), Some("/cache"));
         u
     }
 
@@ -183,5 +215,18 @@ mod tests {
     fn all_four_variables_in_one_string() {
         let s = "${localCacheFolder} ${containerCacheFolder} ${localWorkspaceFolder} ${containerWorkspaceFolder}";
         assert_eq!(sub(s, "/ws", "/lc"), "/lc /cache /ws /workspace");
+    }
+
+    #[test]
+    fn local_var_in_container_env_context_is_unknown() {
+        // When local vars are None (container-only context), local vars are left as-is
+        let result = apply_container_env_substitution("${localCacheFolder}/x");
+        assert_eq!(result, "${localCacheFolder}/x");
+    }
+
+    #[test]
+    fn container_var_in_container_env_context_is_substituted() {
+        let result = apply_container_env_substitution("${containerCacheFolder}/x");
+        assert_eq!(result, "/cache/x");
     }
 }

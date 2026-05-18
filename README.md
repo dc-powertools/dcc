@@ -124,6 +124,17 @@ The `/workspace/.dcc` subdirectory is masked within the container by an
 empty tmpfs mount, to prevent data from leaking across profiles.
 
 
+## `containerEnv` and `remoteEnv`
+
+`dcc` makes a strict distinction between two environment variable properties that the devcontainer spec treats ambiguously.
+
+`containerEnv` values are baked into the Docker image as `ENV` directives. They are available to feature `install.sh` scripts during `docker build` and remain set in the container at runtime. Only the container-side variables `${containerWorkspaceFolder}` and `${containerCacheFolder}` may appear in `containerEnv` values; both resolve to fixed paths (`/workspace` and `/cache`) that are the same on every machine.
+
+`remoteEnv` values are passed as `-e KEY=VALUE` flags to `docker run`. They are not part of the image and are re-evaluated on every run. The host-side variables `${localWorkspaceFolder}` and `${localCacheFolder}` are only valid in `remoteEnv`, because their values are machine-specific absolute paths that would be wrong if baked into an image.
+
+`dcc` does not support `${containerEnv:VAR}` references in `remoteEnv`. This diverges from the devcontainer specification, which permits `remoteEnv` values to reference variables from the live container environment.
+
+
 ## Commands
 
 All commands accept the flag `--profile <name>` that indicates which profile to load.
@@ -203,7 +214,8 @@ the container name `my-project--claude`.
 |---|---|
 | `image` | Base Docker image |
 | `features` | devcontainer Features to install |
-| `containerEnv` | Environment variables set inside every container |
+| `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |
+| `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}` and `${localCacheFolder}`. |
 | `containerUser` | User to run as inside the container. When set, `dcc build` creates the user in the image if it does not already exist. When absent, Docker uses the image's `USER` directive. |
 | `mounts` | Additional bind or volume mounts |
 | `forwardPorts` | Ports to forward from the container to the host |
@@ -220,6 +232,7 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. User-supplied values override declared defaults. |
 | `entrypoint` | Array of strings to use as the container entrypoint. The last feature in installation order wins; if multiple features declare an entrypoint a warning is emitted. The top-level `entrypoint` in `devcontainer.json` always overrides feature entrypoints (with a warning). |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives, set before the feature's `install.sh` runs. |
+| `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Stored as templates; `${localWorkspaceFolder}` and `${localCacheFolder}` are substituted at run time. |
 | `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, etc.). |
 | `installsAfter` | Soft ordering hint. An array of feature IDs (the `id` field from `devcontainer-feature.json`). This feature is installed after the listed features if they are already in the installation set. Not evaluated recursively. |
 | `dependsOn` | Hard dependencies. An object whose keys are feature references (same format as `devcontainer.json` `features`) and values are the options for each dependency. Missing dependencies are added to the installation set automatically. Evaluated recursively. Circular dependencies are an error. |

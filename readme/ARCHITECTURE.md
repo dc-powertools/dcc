@@ -97,6 +97,7 @@ struct RawConfig {
     image: Option<String>,
     features: Option<HashMap<String, serde_json::Value>>,
     container_env: Option<HashMap<String, String>>,
+    remote_env: Option<HashMap<String, String>>,
     container_user: Option<String>,
     mounts: Option<Vec<String>>,
     forward_ports: Option<Vec<u16>>,
@@ -119,6 +120,7 @@ pub struct DevcontainerConfig {
     pub image: String,
     pub features: IndexMap<String, serde_json::Value>,
     pub container_env: HashMap<String, String>,
+    pub remote_env: HashMap<String, String>,
     pub container_user: Option<String>,            // None → use image's USER directive
     pub mounts: Vec<String>,
     pub forward_ports: Vec<u16>,
@@ -172,6 +174,7 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 | `image` | Child overwrites parent |
 | `features` | Map union; child value wins on key conflict |
 | `container_env` | Map union; child value wins on key conflict |
+| `remote_env` | Map union; child value wins on key conflict |
 | `container_user` | Child overwrites parent |
 | `mounts` | Array union; duplicates removed, parent entries first |
 | `forward_ports` | Array union; duplicates removed, parent entries first |
@@ -182,8 +185,16 @@ entrypoint is a complete command replacement, not an addendum.
 
 ### Variable Substitution
 
-Variable substitution is applied to string values in `container_env` and
-`mounts` after the full extends chain is merged, before the config is used.
+Substitution is applied in two contexts with different variable sets:
+
+**`containerEnv`** (both devcontainer.json and feature): only container-side constants are substituted.
+
+| Variable | Value |
+|---|---|
+| `${containerCacheFolder}` | `/cache` |
+| `${containerWorkspaceFolder}` | `/workspace` |
+
+**`remoteEnv`** and **`mounts`**: all four variables are substituted.
 
 | Variable | Value |
 |---|---|
@@ -191,6 +202,8 @@ Variable substitution is applied to string values in `container_env` and
 | `${containerCacheFolder}` | `/cache` |
 | `${localWorkspaceFolder}` | Absolute path of workspace root on the host |
 | `${containerWorkspaceFolder}` | `/workspace` |
+
+`${localWorkspaceFolder}` and `${localCacheFolder}` in a `containerEnv` value are treated as unknown: left as-is with a warning.
 
 Substitution is a simple string replacement (all occurrences). An unknown
 variable reference is left as-is and triggers a warning.
@@ -303,7 +316,7 @@ as errors, except where noted below.
 
 ### dcc build
 
-**No features AND no containerUser** (fast path): skip image build. Pull and retag:
+**No features AND no containerUser AND no containerEnv** (fast path): skip image build. Pull and retag:
 
 ```
 docker pull <image>
@@ -312,11 +325,11 @@ docker tag <image> <image-tag>
 
 `docker pull` fails if the image does not exist in a remote registry. Images
 that were built locally and not pushed to a registry must be handled by adding
-features or a `containerUser` to the config, which causes the Dockerfile path
-to be used instead. This limitation should be surfaced in user-facing
-documentation.
+features, a `containerUser`, or `containerEnv` to the config, which causes the
+Dockerfile path to be used instead. This limitation should be surfaced in
+user-facing documentation.
 
-**With features OR containerUser**: pipe the in-memory build context to `docker build`:
+**With features OR containerUser OR containerEnv**: pipe the in-memory build context to `docker build`:
 
 ```
 docker build [--no-cache] --tag <image-tag> -
@@ -339,8 +352,9 @@ docker run
   -it
   --memory <memory>          (default: 4g)
   --cpus <cpus>              (default: 4)
-  -e KEY=VALUE ...           (containerEnv after variable substitution)
   [-u <containerUser>]       (omitted when containerUser is not set)
+  -e KEY=VALUE ...           (remoteEnv after variable substitution)
+  -e KEY=VALUE ...           (feature remoteEnv after template substitution)
   -p <port>:<port> ...       (forwardPorts; host port == container port)
   --mount <spec> ...         (mounts after variable substitution)
   -v <workspace-root>:/workspace
@@ -422,14 +436,27 @@ Independent features are processed in their original declaration order (the
 a fatal error.
 
 **Phase 3 — context assembly**: In topological order, each feature contributes:
-- `containerEnv` → written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
+- `containerEnv` → substituted with container-only variables, written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
+- `remoteEnv` → collected as raw templates into `FeatureRuntimeConfig.remote_env`; substitution is applied at `dcc run` time
 - `mounts` → object form converted to `--mount` string form, collected in `FeatureRuntimeConfig`
 - `entrypoint` → last feature wins, warning emitted on clobber; stored in `FeatureRuntimeConfig`
 
-`FeatureRuntimeConfig` (mounts + entrypoint) is serialized as
+`FeatureRuntimeConfig` (mounts + entrypoint + remote_env) is serialized as
 `.dcc/<profile>/feature-meta.json` by `dcc build` and read back by `dcc run`.
 This bridge allows runtime contributions to survive across the two commands
 without re-downloading features.
+
+### Supported feature properties
+
+| Property | Description |
+|---|---|
+| `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. |
+| `entrypoint` | Array of strings to use as the container entrypoint. Last feature wins; warning emitted on clobber. |
+| `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives. Only container-side variables are substituted. |
+| `remoteEnv` | Environment variables passed as `-e` runtime flags to `docker run`. Stored as raw templates; substituted at `dcc run` time. |
+| `mounts` | Additional mounts attached at `dcc run` time. |
+| `installsAfter` | Soft ordering hint. Feature IDs that this feature should be installed after (if present). |
+| `dependsOn` | Hard dependencies. Missing dependencies are added to the installation set automatically. |
 
 ### OCI Artifact Download (`features/oci.rs`)
 
@@ -477,6 +504,8 @@ The build context is assembled as a `Vec<u8>` using `tar::Builder`. It contains:
 **`Dockerfile`**:
 ```dockerfile
 FROM <image>
+# devcontainer.json containerEnv directives (sorted by key; omitted when empty):
+ENV DC_VAR='value'
 # Only present when features are configured:
 COPY .dcc-features/ /tmp/.dcc-features/
 # Repeated for each feature in installation order:
@@ -491,9 +520,10 @@ RUN id '<user>' >/dev/null 2>&1 \
  || adduser -D -s /bin/sh '<user>'
 ```
 
-The `ENV` directives from `containerEnv` are emitted immediately before each
-feature's `RUN` step so the variables are available to `install.sh` and remain
-set in the image for all subsequent layers.
+The devcontainer.json `containerEnv` `ENV` directives appear immediately after
+`FROM`, before any feature blocks. Feature `containerEnv` `ENV` directives are
+emitted immediately before each feature's `RUN` step so the variables are
+available to `install.sh` and remain set in the image for all subsequent layers.
 
 The user-creation step is idempotent (`id` short-circuits when the user already
 exists) and cross-distro compatible: `useradd` covers Debian/Ubuntu/RHEL/Fedora;

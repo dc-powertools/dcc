@@ -61,6 +61,7 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         image,
         features: raw.features.unwrap_or_default(),
         container_env: raw.container_env.unwrap_or_default(),
+        remote_env: raw.remote_env.unwrap_or_default(),
         container_user: raw.container_user,
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),

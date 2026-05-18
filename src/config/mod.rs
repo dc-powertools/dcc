@@ -18,6 +18,7 @@ pub(crate) struct RawConfig {
     pub(crate) image: Option<String>,
     pub(crate) features: Option<IndexMap<String, serde_json::Value>>,
     pub(crate) container_env: Option<HashMap<String, String>>,
+    pub(crate) remote_env: Option<HashMap<String, String>>,
     pub(crate) container_user: Option<String>,
     pub(crate) mounts: Option<Vec<String>>,
     pub(crate) forward_ports: Option<Vec<u16>>,
@@ -31,6 +32,7 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) image: String,
     pub(crate) features: IndexMap<String, serde_json::Value>,
     pub(crate) container_env: HashMap<String, String>,
+    pub(crate) remote_env: HashMap<String, String>,
     pub(crate) container_user: Option<String>,
     pub(crate) mounts: Vec<String>,
     pub(crate) forward_ports: Vec<u16>,
@@ -95,6 +97,7 @@ mod tests {
                 "image": "rust:latest",
                 "features": { "ghcr.io/devcontainers/features/node:1": { "version": "20" } },
                 "containerEnv": { "FOO": "bar" },
+                "remoteEnv": { "FOO": "bar" },
                 "containerUser": "dev",
                 "mounts": ["type=bind,src=/tmp,dst=/tmp"],
                 "forwardPorts": [8080, 3000],
@@ -106,6 +109,10 @@ mod tests {
         assert_eq!(raw.image.as_deref(), Some("rust:latest"));
         assert!(raw.features.is_some());
         assert!(raw.container_env.is_some());
+        assert!(raw
+            .remote_env
+            .as_ref()
+            .map_or(false, |m| m.get("FOO").map(|s| s.as_str()) == Some("bar")));
         assert_eq!(raw.container_user.as_deref(), Some("dev"));
         assert_eq!(
             raw.mounts.as_deref(),
@@ -123,6 +130,14 @@ mod tests {
             )
         );
         assert!(raw.extra.is_empty());
+    }
+
+    #[test]
+    fn remote_env_parsed() {
+        let file = write_temp(r#"{ "image": "rust:1", "remoteEnv": { "TOKEN": "abc" } }"#);
+        let raw = parse_config_file(file.path(), false).unwrap();
+        let remote_env = raw.remote_env.expect("remoteEnv should be Some");
+        assert_eq!(remote_env.get("TOKEN").map(|s| s.as_str()), Some("abc"));
     }
 
     #[test]
@@ -165,6 +180,7 @@ mod tests {
         assert!(raw.image.is_none());
         assert!(raw.features.is_none());
         assert!(raw.container_env.is_none());
+        assert!(raw.remote_env.is_none());
         assert!(raw.container_user.is_none());
         assert!(raw.mounts.is_none());
         assert!(raw.forward_ports.is_none());

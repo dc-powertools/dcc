@@ -19,10 +19,11 @@ pub(crate) struct FeatureContext {
 
 pub(crate) fn build_context(
     image: &str,
+    devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: Option<&str>,
 ) -> anyhow::Result<Vec<u8>> {
-    let dockerfile = generate_dockerfile(image, features, container_user);
+    let dockerfile = generate_dockerfile(image, devcontainer_env, features, container_user);
     let mut builder = tar::Builder::new(Vec::new());
 
     add_to_tar(&mut builder, "Dockerfile", dockerfile.as_bytes(), 0o644)?;
@@ -60,11 +61,15 @@ pub(crate) fn build_context(
 
 fn generate_dockerfile(
     image: &str,
+    devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: Option<&str>,
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("FROM {image}"));
+    for (k, v) in devcontainer_env {
+        lines.push(format!("ENV {}={}", k, shell_quote(v)));
+    }
     if !features.is_empty() {
         lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string());
         for f in features {
@@ -227,13 +232,13 @@ mod tests {
 
     #[test]
     fn dockerfile_no_features_no_user() {
-        let df = generate_dockerfile("rust:1", &[], None);
+        let df = generate_dockerfile("rust:1", &[], &[], None);
         assert_eq!(df, "FROM rust:1\n");
     }
 
     #[test]
     fn dockerfile_no_features_with_user() {
-        let df = generate_dockerfile("rust:1", &[], Some("dev"));
+        let df = generate_dockerfile("rust:1", &[], &[], Some("dev"));
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("id 'dev'"));
         assert!(df.contains("useradd"));
@@ -242,7 +247,7 @@ mod tests {
 
     #[test]
     fn dockerfile_root_user_skips_creation() {
-        let df = generate_dockerfile("rust:1", &[], Some("root"));
+        let df = generate_dockerfile("rust:1", &[], &[], Some("root"));
         assert_eq!(df, "FROM rust:1\n");
     }
 
@@ -256,7 +261,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[f], Some("dev"));
+        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"));
         let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
         let id_pos = df.find("id 'dev'").unwrap();
         assert!(
@@ -275,7 +280,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[f], None);
+        let df = generate_dockerfile("rust:1", &[], &[f], None);
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("COPY .dcc-features/"));
         assert!(df.contains("chmod +x /tmp/.dcc-features/my-feature/install.sh"));
@@ -296,7 +301,7 @@ mod tests {
             container_env,
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[f], None);
+        let df = generate_dockerfile("rust:1", &[], &[f], None);
         let env_pos = df.find("ENV MY_VAR=").unwrap();
         let run_pos = df.find("RUN chmod +x").unwrap();
         assert!(env_pos < run_pos, "ENV must appear before RUN");
@@ -315,7 +320,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[f], None);
+        let df = generate_dockerfile("rust:1", &[], &[f], None);
         assert!(df.contains("VERSION='20'"));
     }
 
@@ -331,7 +336,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[f], None).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], None).unwrap();
         assert!(!tar_bytes.is_empty());
 
         // Extract and verify
@@ -368,7 +373,7 @@ mod tests {
                 0o755,
             )],
         };
-        let tar_bytes = build_context("rust:1", &[f], None).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], None).unwrap();
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut found_helper = false;
@@ -380,5 +385,27 @@ mod tests {
             }
         }
         assert!(found_helper, "helper.sh should be present in the tar");
+    }
+
+    #[test]
+    fn devcontainer_env_appears_before_feature_env() {
+        let devcontainer_env = vec![("DC_VAR".to_string(), "dc_value".to_string())];
+        let mut container_env = IndexMap::new();
+        container_env.insert("FEAT_VAR".to_string(), "feat_value".to_string());
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env,
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &devcontainer_env, &[f], None);
+        let dc_pos = df.find("ENV DC_VAR=").unwrap();
+        let feat_pos = df.find("ENV FEAT_VAR=").unwrap();
+        assert!(
+            dc_pos < feat_pos,
+            "devcontainer ENV should appear before feature ENV"
+        );
     }
 }
