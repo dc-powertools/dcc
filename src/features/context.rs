@@ -9,6 +9,9 @@ pub(crate) struct FeatureContext {
     pub(crate) install_sh: Vec<u8>,
     pub(crate) feature_json: Vec<u8>,
     pub(crate) env_vars: IndexMap<String, String>,
+    /// Environment variables to bake into the image via Dockerfile `ENV` before
+    /// this feature's install script runs (`containerEnv` in the feature spec).
+    pub(crate) container_env: IndexMap<String, String>,
     /// Additional files from the feature directory (e.g. helper scripts).
     /// Each entry is (filename, content, unix_mode).
     pub(crate) extra_files: Vec<(String, Vec<u8>, u32)>,
@@ -65,6 +68,10 @@ fn generate_dockerfile(
     if !features.is_empty() {
         lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string());
         for f in features {
+            // containerEnv: bake into the image layer before this feature runs
+            for (k, v) in &f.container_env {
+                lines.push(format!("ENV {}={}", k, shell_quote(v)));
+            }
             let install_path = format!("/tmp/.dcc-features/{}/install.sh", f.id);
             if f.env_vars.is_empty() {
                 lines.push(format!(
@@ -246,6 +253,7 @@ mod tests {
             install_sh: vec![],
             feature_json: vec![],
             env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[f], Some("dev"));
@@ -264,6 +272,7 @@ mod tests {
             install_sh: vec![],
             feature_json: vec![],
             env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[f], None);
@@ -276,6 +285,25 @@ mod tests {
     }
 
     #[test]
+    fn dockerfile_feature_container_env_emitted_before_run() {
+        let mut container_env = IndexMap::new();
+        container_env.insert("MY_VAR".to_string(), "hello".to_string());
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env,
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[f], None);
+        let env_pos = df.find("ENV MY_VAR=").unwrap();
+        let run_pos = df.find("RUN chmod +x").unwrap();
+        assert!(env_pos < run_pos, "ENV must appear before RUN");
+        assert!(df.contains("ENV MY_VAR='hello'"));
+    }
+
+    #[test]
     fn dockerfile_one_feature_with_env() {
         let mut env = IndexMap::new();
         env.insert("VERSION".to_string(), "20".to_string());
@@ -284,6 +312,7 @@ mod tests {
             install_sh: vec![],
             feature_json: vec![],
             env_vars: env,
+            container_env: IndexMap::new(),
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[f], None);
@@ -299,6 +328,7 @@ mod tests {
             install_sh: b"#!/bin/sh\necho hello\n".to_vec(),
             feature_json: b"{}".to_vec(),
             env_vars: env,
+            container_env: IndexMap::new(),
             extra_files: vec![],
         };
         let tar_bytes = build_context("rust:1", &[f], None).unwrap();
@@ -331,6 +361,7 @@ mod tests {
             install_sh: b"#!/bin/sh\n./helper.sh\n".to_vec(),
             feature_json: vec![],
             env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
             extra_files: vec![(
                 "helper.sh".to_string(),
                 b"#!/bin/sh\necho hi\n".to_vec(),

@@ -32,6 +32,11 @@ pub(crate) fn apply_substitutions(
 }
 
 /// Substitutes all variable occurrences in `s`. Emits tracing::warn! for unknowns.
+/// Exported for use by `run.rs` when applying substitution to feature mounts.
+pub(crate) fn apply_substitution(s: &str, local_workspace: &str, local_cache: &str) -> String {
+    apply_to_string(s, local_workspace, local_cache)
+}
+
 fn apply_to_string(s: &str, local_workspace: &str, local_cache: &str) -> String {
     let (result, unknowns) = substitute(s, local_workspace, local_cache);
     for u in unknowns {

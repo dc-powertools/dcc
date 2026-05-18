@@ -17,6 +17,12 @@ impl CacheDir {
         }
     }
 
+    /// Path to the file where feature runtime contributions (mounts, entrypoint)
+    /// are stored after `dcc build` for consumption by `dcc run`.
+    pub(crate) fn feature_meta_path(&self) -> std::path::PathBuf {
+        self.host_path.join("feature-meta.json")
+    }
+
     /// Creates the cache directory (and any missing intermediate dirs).
     /// Idempotent: succeeds if the directory already exists.
     pub(crate) fn ensure_exists(&self) -> anyhow::Result<()> {

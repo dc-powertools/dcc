@@ -325,6 +325,11 @@ docker build [--no-cache] --tag <image-tag> -
 The `-` argument instructs Docker to read the entire build context (including
 the Dockerfile) from stdin as a tar archive. No Dockerfile is written to disk.
 
+In both cases, `dcc build` writes `.dcc/<profile>/feature-meta.json` to the
+cache directory. This file records runtime contributions from installed features
+(`mounts`, `entrypoint`) so that `dcc run` can apply them without re-downloading
+feature archives. An empty config is written on the fast path (no features).
+
 ### dcc run
 
 ```
@@ -354,15 +359,17 @@ bind mount source paths to exist on the host before the container starts;
 without this step, a config that mounts `${localCacheFolder}/node_modules`
 would fail on first run because the subdirectory does not yet exist.
 
-**Entrypoint resolution**:
+**Entrypoint resolution** (descending priority):
 
 1. If the user supplies override args (everything after `--` or the first
    non-flag argument), the first arg becomes `--entrypoint` and the rest become
-   post-image arguments. The configured `entrypoint` is ignored.
-2. If no override args are given and `entrypoint` is configured, `entrypoint[0]`
-   becomes `--entrypoint` and `entrypoint[1:]` become post-image arguments.
-3. If no override args and no `entrypoint` is configured, `--entrypoint` is
-   omitted and Docker uses the image's default entrypoint.
+   post-image arguments. All configured entrypoints are ignored.
+2. If `entrypoint` is set in `devcontainer.json`, it is used. A warning is
+   emitted if any feature also declared an entrypoint.
+3. If no devcontainer.json entrypoint but a feature contributed one (from
+   `feature-meta.json`), that entrypoint is used.
+4. If none of the above apply, `--entrypoint` is omitted and Docker uses the
+   image's default.
 
 The `--tmpfs /workspace/.dcc` mount places an empty tmpfs at that path inside
 the container, hiding the host `.dcc/` directory (which contains the cache
@@ -396,6 +403,34 @@ errors.
 
 ## devcontainer Features
 
+### Feature resolution (`features/mod.rs`)
+
+`build_context` runs three phases before assembling the Docker build context:
+
+**Phase 1 — dependency resolution**: Starting from the user's feature list,
+each feature's `devcontainer-feature.json` is read. Features declared in
+`dependsOn` that are not already present are appended to the work queue and
+processed recursively. A `HashSet` of enqueued references prevents re-queueing.
+When a dependency is already present with different options, the existing options
+are kept and a warning is emitted.
+
+**Phase 2 — topological sort** (Kahn's algorithm): A directed graph is
+constructed from `dependsOn` edges (hard) and `installsAfter` edges (soft).
+`installsAfter` is matched by the feature's `id` field from its metadata.
+Independent features are processed in their original declaration order (the
+`IndexMap` insertion order is used as the tiebreaker). A cycle in the graph is
+a fatal error.
+
+**Phase 3 — context assembly**: In topological order, each feature contributes:
+- `containerEnv` → written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
+- `mounts` → object form converted to `--mount` string form, collected in `FeatureRuntimeConfig`
+- `entrypoint` → last feature wins, warning emitted on clobber; stored in `FeatureRuntimeConfig`
+
+`FeatureRuntimeConfig` (mounts + entrypoint) is serialized as
+`.dcc/<profile>/feature-meta.json` by `dcc build` and read back by `dcc run`.
+This bridge allows runtime contributions to survive across the two commands
+without re-downloading features.
+
 ### OCI Artifact Download (`features/oci.rs`)
 
 devcontainer Features are OCI artifacts stored in container registries. A
@@ -425,18 +460,15 @@ Download steps:
    the digest declared in the manifest. Fail loudly if they do not match. This
    check is not optional.
 
-5. **Extract**: Decompress and untar in memory. Retain `install.sh` and
-   `devcontainer-feature.json` (for option defaults).
+5. **Extract**: Decompress and untar in memory. Retain `install.sh`,
+   `devcontainer-feature.json`, and any other regular files (e.g. helper scripts
+   in `library_scripts/`). The archive root is determined by the first regular
+   file's path prefix; paths are preserved relative to that root.
 
 Feature option values are sourced from the devcontainer config's features map
 (e.g., `{"version": "2"}`). Defaults for options not specified by the user come
 from `devcontainer-feature.json`. Options are passed to install scripts as
 uppercase environment variables (e.g., option `version` becomes `VERSION=2`).
-
-**Feature dependencies** (features that declare other features as prerequisites
-in `devcontainer-feature.json`) are not resolved. Features are installed in the
-order they appear in the merged config. Users must declare all required features
-explicitly. This limitation should be surfaced in user-facing documentation.
 
 ### In-Memory Build Context (`features/context.rs`)
 
@@ -447,7 +479,8 @@ The build context is assembled as a `Vec<u8>` using `tar::Builder`. It contains:
 FROM <image>
 # Only present when features are configured:
 COPY .dcc-features/ /tmp/.dcc-features/
-# Repeated for each feature in declaration order:
+# Repeated for each feature in installation order:
+ENV CONTAINER_VAR='value'          # only if feature declares containerEnv
 RUN chmod +x /tmp/.dcc-features/<id>/install.sh \
  && OPTION_A=value OPTION_B=value ... \
     /tmp/.dcc-features/<id>/install.sh
@@ -457,6 +490,10 @@ RUN id '<user>' >/dev/null 2>&1 \
  || useradd -m -s /bin/sh '<user>' \
  || adduser -D -s /bin/sh '<user>'
 ```
+
+The `ENV` directives from `containerEnv` are emitted immediately before each
+feature's `RUN` step so the variables are available to `install.sh` and remain
+set in the image for all subsequent layers.
 
 The user-creation step is idempotent (`id` short-circuits when the user already
 exists) and cross-distro compatible: `useradd` covers Debian/Ubuntu/RHEL/Fedora;

@@ -10,6 +10,7 @@ use crate::{
         vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE},
     },
     docker,
+    features::FeatureRuntimeConfig,
     profile::{ContainerName, ProfileName},
     workspace::Workspace,
 };
@@ -43,7 +44,37 @@ pub(crate) async fn run(
     // referenced as bind-mount sources (e.g. ${localCacheFolder}/node_modules).
     // Docker requires bind-mount source paths to exist on the host before startup.
     cache_dir.ensure_exists()?;
-    ensure_cache_mount_sources(&config.mounts, &cache_dir)?;
+
+    // Load runtime contributions written by `dcc build` (feature mounts, entrypoint).
+    // Missing file means no features were installed — treat as empty.
+    let feature_runtime = load_feature_runtime(&cache_dir);
+
+    // Apply variable substitution to feature mounts (same variables as devcontainer.json mounts)
+    let local_workspace = workspace.root.to_string_lossy().into_owned();
+    let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
+    let feature_mounts: Vec<String> = feature_runtime
+        .mounts
+        .iter()
+        .map(|m| config::vars::apply_substitution(m, &local_workspace, &local_cache))
+        .collect();
+
+    // Warn when the devcontainer.json entrypoint overrides a feature entrypoint
+    if let (Some(feat_ep), Some(config_ep)) = (&feature_runtime.entrypoint, &config.entrypoint) {
+        tracing::warn!(
+            feature_entrypoint = ?feat_ep,
+            devcontainer_entrypoint = ?config_ep,
+            "devcontainer.json entrypoint overrides feature-contributed entrypoint"
+        );
+    }
+
+    // Combined mounts: feature mounts first, then devcontainer.json mounts
+    let all_mounts: Vec<String> = feature_mounts
+        .iter()
+        .chain(config.mounts.iter())
+        .cloned()
+        .collect();
+
+    ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
 
     // Build the docker run argument list
     let mut args: Vec<String> = Vec::new();
@@ -71,8 +102,8 @@ pub(crate) async fn run(
         args.push(format!("{port}:{port}"));
     }
 
-    // mounts from config (string form: "type=bind,src=...,dst=...")
-    for mount in &config.mounts {
+    // mounts: feature contributions first, then devcontainer.json mounts
+    for mount in &all_mounts {
         args.push("--mount".into());
         args.push(mount.clone());
     }
@@ -94,9 +125,12 @@ pub(crate) async fn run(
     // mask .dcc directory inside container
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
-    // Entrypoint resolution
-    let (ep_flag, post_image_args) =
-        resolve_entrypoint(override_args, config.entrypoint.as_deref());
+    // Entrypoint resolution: CLI override > devcontainer.json > feature entrypoint
+    let effective_entrypoint = config
+        .entrypoint
+        .as_deref()
+        .or(feature_runtime.entrypoint.as_deref());
+    let (ep_flag, post_image_args) = resolve_entrypoint(override_args, effective_entrypoint);
     if let Some(ep) = ep_flag {
         args.extend(["--entrypoint".into(), ep]);
     }
@@ -114,6 +148,18 @@ pub(crate) async fn run(
 ///
 /// Restricted to the cache directory because that is dcc-managed space. Creating arbitrary
 /// host paths would silently mask misconfigurations (e.g. a typo pointing at ~/.ssh).
+/// Reads the feature runtime config written by `dcc build`.
+/// Returns a default (empty) config if the file is absent or unreadable,
+/// so that `dcc run` works even when called before `dcc build` or on a
+/// codebase without any features.
+fn load_feature_runtime(cache_dir: &CacheDir) -> FeatureRuntimeConfig {
+    let path = cache_dir.feature_meta_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 fn ensure_cache_mount_sources(mounts: &[String], cache_dir: &CacheDir) -> anyhow::Result<()> {
     for mount in mounts {
         let Some(src) = parse_bind_src(mount) else {
