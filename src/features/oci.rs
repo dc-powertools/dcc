@@ -4,6 +4,9 @@ use anyhow::{bail, Context as _};
 use indexmap::IndexMap;
 use sha2::{Digest as _, Sha256};
 
+/// `(install_sh, feature_json, extra_files)` extracted from a feature archive.
+type ExtractedFeature = (Vec<u8>, Option<Vec<u8>>, Vec<(String, Vec<u8>, u32)>);
+
 #[derive(Debug)]
 pub(crate) struct DownloadedFeature {
     pub(crate) install_sh: Vec<u8>,
@@ -92,14 +95,14 @@ impl OciClient {
             .download_blob(&parsed, &digest)
             .await
             .with_context(|| format!("failed to download blob for {feature_ref}"))?;
-        let (install_sh, feature_json_bytes) = extract_feature(&blob)
+        let (install_sh, feature_json_bytes, extra_files) = extract_feature(&blob)
             .with_context(|| format!("failed to extract feature archive for {feature_ref}"))?;
         let env = super::build_env(feature_json_bytes.as_deref(), user_options);
         Ok(DownloadedFeature {
             install_sh,
             feature_json: feature_json_bytes,
             env,
-            extra_files: vec![],
+            extra_files,
         })
     }
 
@@ -287,7 +290,7 @@ fn find_feature_layer(manifest: &serde_json::Value) -> anyhow::Result<String> {
     )
 }
 
-fn extract_feature(blob: &[u8]) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
+fn extract_feature(blob: &[u8]) -> anyhow::Result<ExtractedFeature> {
     // Detect gzip by magic bytes
     let is_gzip = blob.len() >= 2 && blob[0] == 0x1f && blob[1] == 0x8b;
     if is_gzip {
@@ -300,41 +303,44 @@ fn extract_feature(blob: &[u8]) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
 
 fn extract_from_tar<R: std::io::Read>(
     mut archive: tar::Archive<R>,
-) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
+) -> anyhow::Result<ExtractedFeature> {
     use std::io::Read as _;
+
+    // Per the devcontainer spec, a feature tarball contains the *contents* of the
+    // feature directory — install.sh and devcontainer-feature.json are at the root,
+    // and any helper files or subdirectories (e.g. library_scripts/common.sh) are
+    // also relative to that root. We strip the leading "./" that some tar tools
+    // emit and match paths exactly; no prefix detection is needed.
     let mut install_sh: Option<Vec<u8>> = None;
     let mut feature_json: Option<Vec<u8>> = None;
+    let mut extra_files: Vec<(String, Vec<u8>, u32)> = Vec::new();
 
     for entry in archive.entries().context("failed to read tar archive")? {
         let mut entry = entry.context("failed to read tar entry")?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
         let path = entry.path().context("failed to get tar entry path")?;
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_owned();
-        match name.as_str() {
-            "install.sh" => {
-                let mut buf = Vec::new();
-                entry
-                    .read_to_end(&mut buf)
-                    .context("failed to read install.sh")?;
-                install_sh = Some(buf);
-            }
-            "devcontainer-feature.json" => {
-                let mut buf = Vec::new();
-                entry
-                    .read_to_end(&mut buf)
-                    .context("failed to read devcontainer-feature.json")?;
-                feature_json = Some(buf);
-            }
+        let path_str = path.to_string_lossy().into_owned();
+        let relative = path_str.trim_start_matches("./");
+
+        let mode = entry.header().mode().unwrap_or(0o644);
+        let mut buf = Vec::new();
+        entry
+            .read_to_end(&mut buf)
+            .with_context(|| format!("failed to read `{relative}`"))?;
+
+        match relative {
+            "install.sh" => install_sh = Some(buf),
+            "devcontainer-feature.json" => feature_json = Some(buf),
+            name if !name.is_empty() => extra_files.push((name.to_owned(), buf, mode)),
             _ => {}
         }
     }
 
     let install_sh =
         install_sh.ok_or_else(|| anyhow::anyhow!("feature archive contains no install.sh"))?;
-    Ok((install_sh, feature_json))
+    Ok((install_sh, feature_json, extra_files))
 }
 
 #[cfg(test)]
@@ -389,25 +395,73 @@ mod tests {
             .contains("application/vnd.oci.image.layer.v1.tar+gzip"));
     }
 
+    fn tar_entry(builder: &mut tar::Builder<&mut Vec<u8>>, path: &str, content: &[u8], mode: u32) {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(mode);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path, std::io::Cursor::new(content))
+            .unwrap();
+    }
+
     #[test]
     fn extract_feature_from_plain_tar() {
-        // Build a minimal tar archive in memory
         let mut buf = Vec::new();
-        {
-            let mut builder = tar::Builder::new(&mut buf);
-            let content = b"#!/bin/sh\necho hello\n";
-            let mut header = tar::Header::new_gnu();
-            header.set_size(content.len() as u64);
-            header.set_mode(0o755);
-            header.set_cksum();
-            builder
-                .append_data(&mut header, "install.sh", std::io::Cursor::new(content))
-                .unwrap();
-            builder.finish().unwrap();
-        }
-        let (install_sh, feature_json) = extract_feature(&buf).unwrap();
+        let mut builder = tar::Builder::new(&mut buf);
+        tar_entry(
+            &mut builder,
+            "install.sh",
+            b"#!/bin/sh\necho hello\n",
+            0o755,
+        );
+        builder.finish().unwrap();
+        drop(builder);
+
+        let (install_sh, feature_json, extra_files) = extract_feature(&buf).unwrap();
         assert_eq!(install_sh, b"#!/bin/sh\necho hello\n");
         assert!(feature_json.is_none());
+        assert!(extra_files.is_empty());
+    }
+
+    #[test]
+    fn extract_feature_collects_extra_files() {
+        let mut buf = Vec::new();
+        let mut builder = tar::Builder::new(&mut buf);
+        tar_entry(
+            &mut builder,
+            "install.sh",
+            b"#!/bin/sh\n./helper.sh\n",
+            0o755,
+        );
+        tar_entry(&mut builder, "helper.sh", b"#!/bin/sh\necho hi\n", 0o755);
+        builder.finish().unwrap();
+        drop(builder);
+
+        let (_, _, extra_files) = extract_feature(&buf).unwrap();
+        assert_eq!(extra_files.len(), 1);
+        assert_eq!(extra_files[0].0, "helper.sh");
+        assert_eq!(extra_files[0].1, b"#!/bin/sh\necho hi\n");
+    }
+
+    #[test]
+    fn extract_feature_preserves_nested_paths() {
+        // Subdirectory paths must be preserved so install.sh can source them correctly
+        let mut buf = Vec::new();
+        let mut builder = tar::Builder::new(&mut buf);
+        tar_entry(&mut builder, "install.sh", b"#!/bin/sh\n", 0o755);
+        tar_entry(
+            &mut builder,
+            "library_scripts/common.sh",
+            b"#!/bin/sh\necho common\n",
+            0o755,
+        );
+        builder.finish().unwrap();
+        drop(builder);
+
+        let (_, _, extra_files) = extract_feature(&buf).unwrap();
+        assert_eq!(extra_files.len(), 1);
+        assert_eq!(extra_files[0].0, "library_scripts/common.sh");
     }
 
     use proptest::prelude::*;
