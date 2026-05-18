@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "dcc", about = "Dev Container CLI")]
+#[command(name = "dcc", about = "Dev Container CLI", version)]
 pub(crate) struct Cli {
     #[arg(short = 'p', long, default_value = "devcontainer")]
     pub(crate) profile: String,
