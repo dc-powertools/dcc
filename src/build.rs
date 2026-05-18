@@ -42,7 +42,13 @@ pub(crate) async fn build(
             })?;
     } else {
         // Build path: install features and/or create the container user.
-        let context = crate::features::build_context(&config)
+        let config_dir = config_path.parent().with_context(|| {
+            format!(
+                "config path `{}` has no parent directory",
+                config_path.display()
+            )
+        })?;
+        let context = crate::features::build_context(&config, config_dir)
             .await
             .context("failed to build feature context")?;
         docker::build(image_tag.as_str(), no_cache, context)

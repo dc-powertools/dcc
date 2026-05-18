@@ -4,6 +4,7 @@ use anyhow::{bail, Context as _};
 use indexmap::IndexMap;
 use sha2::{Digest as _, Sha256};
 
+#[derive(Debug)]
 pub(crate) struct DownloadedFeature {
     pub(crate) install_sh: Vec<u8>,
     pub(crate) feature_json: Option<Vec<u8>>,
@@ -90,7 +91,7 @@ impl OciClient {
             .with_context(|| format!("failed to download blob for {feature_ref}"))?;
         let (install_sh, feature_json_bytes) = extract_feature(&blob)
             .with_context(|| format!("failed to extract feature archive for {feature_ref}"))?;
-        let env = build_env(feature_json_bytes.as_deref(), user_options);
+        let env = super::build_env(feature_json_bytes.as_deref(), user_options);
         Ok(DownloadedFeature {
             install_sh,
             feature_json: feature_json_bytes,
@@ -332,48 +333,6 @@ fn extract_from_tar<R: std::io::Read>(
     Ok((install_sh, feature_json))
 }
 
-fn build_env(
-    feature_json: Option<&[u8]>,
-    user_options: &serde_json::Value,
-) -> IndexMap<String, String> {
-    let mut env = IndexMap::new();
-
-    // Extract defaults from devcontainer-feature.json
-    if let Some(bytes) = feature_json {
-        if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(bytes) {
-            if let Some(options) = meta.get("options").and_then(|v| v.as_object()) {
-                for (key, schema) in options {
-                    let env_key = key.to_uppercase();
-                    let default_val = schema
-                        .get("default")
-                        .map(json_value_to_string)
-                        .unwrap_or_default();
-                    env.insert(env_key, default_val);
-                }
-            }
-        }
-    }
-
-    // Overlay user-supplied options (override defaults)
-    if let Some(obj) = user_options.as_object() {
-        for (key, val) in obj {
-            env.insert(key.to_uppercase(), json_value_to_string(val));
-        }
-    }
-
-    env
-}
-
-fn json_value_to_string(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,42 +358,6 @@ mod tests {
     #[test]
     fn feature_ref_parse_no_registry() {
         assert!(FeatureRef::parse("justname:1").is_err());
-    }
-
-    #[test]
-    fn build_env_defaults_applied() {
-        let feature_json = serde_json::json!({
-            "options": {
-                "version": { "type": "string", "default": "lts" }
-            }
-        });
-        let bytes = serde_json::to_vec(&feature_json).unwrap();
-        let env = build_env(Some(&bytes), &serde_json::json!({}));
-        assert_eq!(env.get("VERSION"), Some(&"lts".to_string()));
-    }
-
-    #[test]
-    fn build_env_user_overrides_default() {
-        let feature_json = serde_json::json!({
-            "options": {
-                "version": { "default": "lts" }
-            }
-        });
-        let bytes = serde_json::to_vec(&feature_json).unwrap();
-        let env = build_env(Some(&bytes), &serde_json::json!({"version": "20"}));
-        assert_eq!(env.get("VERSION"), Some(&"20".to_string()));
-    }
-
-    #[test]
-    fn build_env_no_feature_json() {
-        let env = build_env(None, &serde_json::json!({"version": "20"}));
-        assert_eq!(env.get("VERSION"), Some(&"20".to_string()));
-    }
-
-    #[test]
-    fn build_env_key_uppercased() {
-        let env = build_env(None, &serde_json::json!({"nodeVersion": "20"}));
-        assert!(env.contains_key("NODEVERSION"));
     }
 
     #[test]
