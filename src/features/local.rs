@@ -20,41 +20,52 @@ fn file_mode(path: &Path) -> u32 {
     }
 }
 
-/// Reads all regular files in `feature_dir` except `install.sh` and
-/// `devcontainer-feature.json` (which are handled separately by the caller).
-/// Returns `(filename, content, unix_mode)` triples.
-/// Non-regular entries (symlinks, subdirectories) are skipped.
+/// Recursively collects all regular files under `feature_dir` except the two
+/// that are handled separately (`install.sh` and `devcontainer-feature.json`).
+/// Returns `(relative_path, content, unix_mode)` triples where `relative_path`
+/// is relative to `feature_dir` (e.g. `"library_scripts/common.sh"`), preserving
+/// the directory structure so that `install.sh` can reference helpers by the
+/// same relative paths it uses on disk.
+/// Symlinks are skipped.
 fn collect_extra_files(feature_dir: &Path) -> anyhow::Result<Vec<(String, Vec<u8>, u32)>> {
     let mut extra = Vec::new();
-    for entry in std::fs::read_dir(feature_dir).with_context(|| {
-        format!(
-            "failed to read feature directory `{}`",
-            feature_dir.display()
-        )
-    })? {
-        let entry = entry.with_context(|| {
-            format!(
-                "failed to read entry in feature directory `{}`",
-                feature_dir.display()
-            )
-        })?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name == "install.sh" || name == "devcontainer-feature.json" {
-            continue;
-        }
-        if !entry
-            .file_type()
-            .with_context(|| format!("failed to get file type for `{name}`"))?
-            .is_file()
-        {
-            continue;
-        }
-        let path = entry.path();
-        let content = std::fs::read(&path)
-            .with_context(|| format!("failed to read `{name}` from local feature"))?;
-        extra.push((name, content, file_mode(&path)));
-    }
+    collect_recursive(feature_dir, feature_dir, &mut extra)?;
     Ok(extra)
+}
+
+fn collect_recursive(
+    feature_root: &Path,
+    dir: &Path,
+    extra: &mut Vec<(String, Vec<u8>, u32)>,
+) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("failed to read directory `{}`", dir.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry in `{}`", dir.display()))?;
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(feature_root)
+            .expect("entries are within feature_root")
+            .to_string_lossy()
+            .into_owned();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to get file type for `{rel}`"))?;
+
+        if file_type.is_dir() {
+            collect_recursive(feature_root, &path, extra)?;
+        } else if file_type.is_file() {
+            if rel == "install.sh" || rel == "devcontainer-feature.json" {
+                continue;
+            }
+            let content = std::fs::read(&path)
+                .with_context(|| format!("failed to read `{rel}` from local feature"))?;
+            extra.push((rel, content, file_mode(&path)));
+        }
+        // Symlinks are intentionally skipped.
+    }
+    Ok(())
 }
 
 /// Loads a feature from a local directory on disk.
@@ -199,6 +210,25 @@ mod tests {
         let (name, content, _mode) = &result.extra_files[0];
         assert_eq!(name, "helper.sh");
         assert_eq!(content.as_slice(), b"#!/bin/sh\necho hello\n");
+    }
+
+    #[test]
+    fn extra_files_include_subdirectory_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let feature_dir = tmp.path().join("feat");
+        std::fs::create_dir(&feature_dir).unwrap();
+        std::fs::create_dir(feature_dir.join("library_scripts")).unwrap();
+        write(&feature_dir, "install.sh", b"#!/bin/sh");
+        write(
+            &feature_dir.join("library_scripts"),
+            "common.sh",
+            b"#!/bin/sh\necho common\n",
+        );
+
+        let result = load_local_feature("./feat", tmp.path(), &json!({})).unwrap();
+        assert_eq!(result.extra_files.len(), 1);
+        assert_eq!(result.extra_files[0].0, "library_scripts/common.sh");
+        assert_eq!(result.extra_files[0].1, b"#!/bin/sh\necho common\n");
     }
 
     #[test]
