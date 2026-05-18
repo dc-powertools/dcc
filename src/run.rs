@@ -144,14 +144,8 @@ pub(crate) async fn run(
     docker::run_container(&args).await
 }
 
-/// Creates host-side source directories for bind mounts whose source lives under the cache dir.
-///
-/// Restricted to the cache directory because that is dcc-managed space. Creating arbitrary
-/// host paths would silently mask misconfigurations (e.g. a typo pointing at ~/.ssh).
-/// Reads the feature runtime config written by `dcc build`.
-/// Returns a default (empty) config if the file is absent or unreadable,
-/// so that `dcc run` works even when called before `dcc build` or on a
-/// codebase without any features.
+// Missing file means no features were installed; treat as empty so `dcc run`
+// works before `dcc build` and on codebases without features.
 fn load_feature_runtime(cache_dir: &CacheDir) -> FeatureRuntimeConfig {
     let path = cache_dir.feature_meta_path();
     std::fs::read_to_string(&path)
@@ -160,6 +154,8 @@ fn load_feature_runtime(cache_dir: &CacheDir) -> FeatureRuntimeConfig {
         .unwrap_or_default()
 }
 
+// Restricted to the cache directory (dcc-managed space) to avoid silently creating
+// arbitrary host paths that would mask misconfigurations like typos pointing at ~/.ssh.
 fn ensure_cache_mount_sources(mounts: &[String], cache_dir: &CacheDir) -> anyhow::Result<()> {
     for mount in mounts {
         let Some(src) = parse_bind_src(mount) else {

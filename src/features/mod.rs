@@ -174,7 +174,13 @@ async fn resolve_features(
     client: &mut OciClient,
 ) -> anyhow::Result<IndexMap<String, FeatureEntry>> {
     let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
-    let mut queued: HashSet<String> = config.features.keys().cloned().collect();
+    // Maps reference → options for every feature that has been enqueued.
+    // Used to detect options conflicts even for features not yet processed.
+    let mut queued: HashMap<String, serde_json::Value> = config
+        .features
+        .iter()
+        .map(|(r, o)| (r.clone(), o.clone()))
+        .collect();
     let mut queue: VecDeque<(String, serde_json::Value)> = config
         .features
         .iter()
@@ -195,15 +201,20 @@ async fn resolve_features(
         let meta = parse_feature_meta(downloaded.feature_json.as_deref());
 
         for (dep_ref, dep_opts) in &meta.depends_on {
-            if let Some(existing) = all.get(dep_ref) {
-                if &existing.user_options != dep_opts {
+            if let Some(existing_opts) = queued.get(dep_ref) {
+                // Already enqueued or processed — warn if options differ.
+                let canonical_opts = all
+                    .get(dep_ref)
+                    .map(|e| &e.user_options)
+                    .unwrap_or(existing_opts);
+                if canonical_opts != dep_opts {
                     tracing::warn!(
                         dependency = dep_ref,
                         "feature dependency already present with different options; ignoring dependency's options"
                     );
                 }
-            } else if !queued.contains(dep_ref) {
-                queued.insert(dep_ref.clone());
+            } else {
+                queued.insert(dep_ref.clone(), dep_opts.clone());
                 queue.push_back((dep_ref.clone(), dep_opts.clone()));
             }
         }
@@ -279,14 +290,19 @@ fn topological_sort(all: &IndexMap<String, FeatureEntry>) -> anyhow::Result<Vec<
         let pos = ready
             .iter()
             .enumerate()
-            .min_by_key(|(_, r)| all.get_index_of(r.as_str()).unwrap_or(usize::MAX))
+            .min_by_key(|(_, r)| {
+                all.get_index_of(r.as_str())
+                    .expect("ready queue only contains references from `all`")
+            })
             .map(|(i, _)| i)
             .unwrap();
         let current = ready.swap_remove(pos);
         order.push(current.clone());
 
         for successor in successors.get(&current).into_iter().flatten() {
-            let deg = in_degree.get_mut(successor).unwrap();
+            let deg = in_degree
+                .get_mut(successor)
+                .expect("successors derived from edges built over `all`; all are in `in_degree`");
             *deg -= 1;
             if *deg == 0 {
                 ready.push(successor.clone());

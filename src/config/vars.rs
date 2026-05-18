@@ -78,9 +78,7 @@ fn substitute(s: &str, local_workspace: &str, local_cache: &str) -> (String, Vec
                 i += 1;
             }
         } else {
-            // Safe: we're iterating ASCII-by-ASCII through UTF-8 string
-            // For non-ASCII, copy the full char
-            let ch = s[i..].chars().next().unwrap();
+            let ch = s[i..].chars().next().expect("i < s.len() guaranteed by while condition");
             result.push(ch);
             i += ch.len_utf8();
         }
