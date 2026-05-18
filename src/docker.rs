@@ -32,11 +32,19 @@ pub(crate) async fn tag(source: &str, target: &str) -> anyhow::Result<()> {
     check_status(status, &format!("docker tag {source} {target}"))
 }
 
-pub(crate) async fn build(tag: &str, no_cache: bool, context: Vec<u8>) -> anyhow::Result<()> {
+pub(crate) async fn build(
+    tag: &str,
+    no_cache: bool,
+    context: Vec<u8>,
+    metadata_label: Option<&str>,
+) -> anyhow::Result<()> {
     let mut cmd = Command::new("docker");
     cmd.arg("build");
     if no_cache {
         cmd.arg("--no-cache");
+    }
+    if let Some(label) = metadata_label {
+        cmd.args(["--label", &format!("devcontainer.metadata={label}")]);
     }
     cmd.args(["--tag", tag, "-"]);
     cmd.stdin(Stdio::piped());
@@ -114,6 +122,39 @@ pub(crate) async fn stop_container(container: &str) -> anyhow::Result<()> {
     }
 
     anyhow::bail!("`docker stop {container}` failed: {}", stderr.trim())
+}
+
+/// Reads the `devcontainer.metadata` label from a local Docker image.
+/// Returns `None` when the image exists but the label is absent.
+/// Returns `Err` when the image does not exist or the Docker daemon is unreachable.
+pub(crate) async fn inspect_image_label(image: &str) -> anyhow::Result<Option<String>> {
+    let output = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            r#"{{index .Config.Labels "devcontainer.metadata"}}"#,
+            image,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to spawn `docker image inspect {image}`"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("`docker image inspect {image}` failed: {}", stderr.trim());
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout);
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_owned()))
+    }
 }
 
 pub(crate) async fn inspect_running(container: &str) -> anyhow::Result<bool> {

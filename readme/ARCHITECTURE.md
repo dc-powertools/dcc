@@ -278,7 +278,9 @@ impl CacheDir {
 ```
 
 The cache directory is created by `ensure_exists` on `dcc run` if it does not
-already exist. It is never deleted automatically.
+already exist. It is never deleted automatically. `dcc build` does not create
+or write to the cache directory; all persistent build output is stored in the
+Docker image itself (see `devcontainer.metadata` label below).
 
 The container-side mount path (`/cache`) is defined as the constant
 `CONTAINER_CACHE` in `config/vars.rs`, which also defines `CONTAINER_WORKSPACE`
@@ -332,16 +334,18 @@ user-facing documentation.
 **With features OR containerUser OR containerEnv**: pipe the in-memory build context to `docker build`:
 
 ```
-docker build [--no-cache] --tag <image-tag> -
+docker build [--no-cache] [--label devcontainer.metadata=<json>] --tag <image-tag> -
 ```
 
 The `-` argument instructs Docker to read the entire build context (including
 the Dockerfile) from stdin as a tar archive. No Dockerfile is written to disk.
 
-In both cases, `dcc build` writes `.dcc/<profile>/feature-meta.json` to the
-cache directory. This file records runtime contributions from installed features
-(`mounts`, `entrypoint`) so that `dcc run` can apply them without re-downloading
-feature archives. An empty config is written on the fast path (no features).
+When features contribute runtime properties (mounts, entrypoint, remoteEnv),
+`dcc build` passes `--label devcontainer.metadata=<json>` to `docker build`.
+The label value is a JSON array with one entry per contributing feature and is
+stored inside the image. `dcc run` reads it back via `docker image inspect`
+rather than relying on any local file, making the image self-describing and
+portable across machines.
 
 ### dcc run
 
@@ -367,11 +371,16 @@ docker run
   [<override-command...>]    (user-supplied command args, replaces entrypoint entirely)
 ```
 
-Before launching Docker, `dcc run` calls `fs::create_dir_all` for any bind
-mount whose `src=` path falls under the host cache directory. Docker requires
-bind mount source paths to exist on the host before the container starts;
-without this step, a config that mounts `${localCacheFolder}/node_modules`
-would fail on first run because the subdirectory does not yet exist.
+Before launching Docker, `dcc run`:
+
+1. Calls `docker image inspect` on the image tag to read its
+   `devcontainer.metadata` label, if present. The label JSON is parsed into a
+   `FeatureRuntimeConfig` (mounts, entrypoint, remoteEnv). A missing label is
+   treated as no feature runtime contributions; a malformed label is a fatal
+   error.
+2. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
+   the host cache directory. Docker requires bind mount source paths to exist on
+   the host before the container starts.
 
 **Entrypoint resolution** (descending priority):
 
@@ -380,8 +389,8 @@ would fail on first run because the subdirectory does not yet exist.
    post-image arguments. All configured entrypoints are ignored.
 2. If `entrypoint` is set in `devcontainer.json`, it is used. A warning is
    emitted if any feature also declared an entrypoint.
-3. If no devcontainer.json entrypoint but a feature contributed one (from
-   `feature-meta.json`), that entrypoint is used.
+3. If no devcontainer.json entrypoint but a feature contributed one (from the
+   image label), that entrypoint is used.
 4. If none of the above apply, `--entrypoint` is omitted and Docker uses the
    image's default.
 
@@ -437,14 +446,14 @@ a fatal error.
 
 **Phase 3 — context assembly**: In topological order, each feature contributes:
 - `containerEnv` → substituted with container-only variables, written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
-- `remoteEnv` → collected as raw templates into `FeatureRuntimeConfig.remote_env`; substitution is applied at `dcc run` time
-- `mounts` → object form converted to `--mount` string form, collected in `FeatureRuntimeConfig`
-- `entrypoint` → last feature wins, warning emitted on clobber; stored in `FeatureRuntimeConfig`
+- `remoteEnv` → stored as raw templates in the feature's label entry; substitution is applied at `dcc run` time
+- `mounts` → stored as JSON objects in the feature's label entry; converted to `--mount` template strings and substituted at `dcc run` time
+- `entrypoint` → stored in the feature's label entry; last feature wins, warning emitted on clobber
 
-`FeatureRuntimeConfig` (mounts + entrypoint + remote_env) is serialized as
-`.dcc/<profile>/feature-meta.json` by `dcc build` and read back by `dcc run`.
-This bridge allows runtime contributions to survive across the two commands
-without re-downloading features.
+Features that contribute at least one runtime property (mounts, entrypoint, or
+remoteEnv) get an entry in the `devcontainer.metadata` label JSON array. Features
+that contribute only build-time properties (`containerEnv`, `options`) are omitted
+from the label. The label is embedded in the image via `docker build --label`.
 
 ### Supported feature properties
 

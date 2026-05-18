@@ -10,7 +10,7 @@ use crate::{
         vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE},
     },
     docker,
-    features::FeatureRuntimeConfig,
+    features::{self, FeatureRuntimeConfig},
     profile::{ContainerName, ProfileName},
     workspace::Workspace,
 };
@@ -45,9 +45,16 @@ pub(crate) async fn run(
     // Docker requires bind-mount source paths to exist on the host before startup.
     cache_dir.ensure_exists()?;
 
-    // Load runtime contributions written by `dcc build` (feature mounts, entrypoint).
-    // Missing file means no features were installed — treat as empty.
-    let feature_runtime = load_feature_runtime(&cache_dir);
+    // Read runtime contributions from the image's devcontainer.metadata label.
+    let feature_runtime = match docker::inspect_image_label(image_tag.as_str())
+        .await
+        .with_context(|| format!("failed to inspect image `{image_tag}`"))?
+    {
+        None => FeatureRuntimeConfig::default(),
+        Some(ref json) => features::parse_runtime_from_label(json).with_context(|| {
+            format!("failed to parse devcontainer.metadata label from image `{image_tag}`")
+        })?,
+    };
 
     // Apply variable substitution to feature mounts (same variables as devcontainer.json mounts)
     let local_workspace = workspace.root.to_string_lossy().into_owned();
@@ -160,16 +167,6 @@ pub(crate) async fn run(
     args.extend(post_image_args);
 
     docker::run_container(&args).await
-}
-
-// Missing file means no features were installed; treat as empty so `dcc run`
-// works before `dcc build` and on codebases without features.
-fn load_feature_runtime(cache_dir: &CacheDir) -> FeatureRuntimeConfig {
-    let path = cache_dir.feature_meta_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
 }
 
 // Restricted to the cache directory (dcc-managed space) to avoid silently creating

@@ -42,9 +42,9 @@ struct FeatureMeta {
 }
 
 /// A mount from `devcontainer-feature.json`, in the JSON object form.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct FeatureMount {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     source: String,
     target: String,
     #[serde(rename = "type")]
@@ -63,28 +63,27 @@ impl FeatureMount {
 
 // ── Public return types ───────────────────────────────────────────────────────
 
-/// Runtime contributions from installed features, written to the cache dir at
-/// `dcc build` time and read at `dcc run` time.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+/// Runtime contributions from installed features, parsed from the
+/// `devcontainer.metadata` image label at `dcc run` time.
+#[derive(Debug, Default)]
 pub(crate) struct FeatureRuntimeConfig {
-    /// Additional mounts to pass to `docker run`, in `--mount` string form.
-    #[serde(default)]
+    /// Additional mounts to pass to `docker run`, in `--mount` template string form.
+    /// Variable references (e.g. `${localCacheFolder}`) are substituted at run time.
     pub(crate) mounts: Vec<String>,
-    /// Entrypoint contributed by features. When multiple features declare an
-    /// entrypoint, the last one in installation order wins (with a warning).
+    /// Entrypoint contributed by features. The last feature in installation order wins.
     /// `None` when no installed feature declares an entrypoint.
     pub(crate) entrypoint: Option<Vec<String>>,
     /// Environment variables to pass as `-e KEY=VALUE` flags to `docker run`.
-    /// Stored as raw templates; `${localWorkspaceFolder}` and
-    /// `${localCacheFolder}` are substituted at `dcc run` time.
-    #[serde(default)]
+    /// Stored as raw templates; variable references are substituted at run time.
     pub(crate) remote_env: IndexMap<String, String>,
 }
 
 /// Return value of `build_context`.
 pub(crate) struct FeatureBuildOutput {
     pub(crate) context_tar: Vec<u8>,
-    pub(crate) runtime: FeatureRuntimeConfig,
+    /// Serialised `devcontainer.metadata` label JSON, or `None` when no feature
+    /// contributed any runtime properties (mounts, entrypoint, remoteEnv).
+    pub(crate) metadata_label: Option<String>,
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────
@@ -114,35 +113,38 @@ pub(crate) async fn build_context(
     // Phase 2: topological sort (dependsOn hard ordering + installsAfter hints)
     let order = topological_sort(&all)?;
 
-    // Phase 3: build FeatureContexts and collect runtime contributions
+    // Phase 3: build FeatureContexts and the devcontainer.metadata label entries
     let mut seen_ids: HashSet<String> = HashSet::new();
     let mut feature_contexts: Vec<FeatureContext> = Vec::new();
-    let mut runtime = FeatureRuntimeConfig::default();
+    let mut label_entries: Vec<serde_json::Value> = Vec::new();
 
     for reference in &order {
         let entry = &all[reference];
 
-        // Entrypoint: last wins, warn whenever a value is replaced
+        // Build the label entry for this feature (only fields with content are included)
+        let mut label_entry = serde_json::json!({ "id": reference });
+
         if let Some(ep) = &entry.meta.entrypoint {
-            if let Some(prev) = &runtime.entrypoint {
-                tracing::warn!(
-                    feature = reference,
-                    clobbered = ?prev,
-                    replacement = ?ep,
-                    "feature entrypoint clobbered by later feature in installation order"
-                );
-            }
-            runtime.entrypoint = Some(ep.clone());
+            label_entry["entrypoint"] =
+                serde_json::to_value(ep).context("failed to serialize feature entrypoint")?;
         }
 
-        // Mounts: collect all and convert to string form
-        for mount in &entry.meta.mounts {
-            runtime.mounts.push(mount.to_mount_string());
+        if !entry.meta.mounts.is_empty() {
+            label_entry["mounts"] = serde_json::to_value(&entry.meta.mounts)
+                .context("failed to serialize feature mounts")?;
         }
 
-        // remoteEnv: store raw templates (substitution happens at dcc run time)
-        for (k, v) in &entry.meta.remote_env {
-            runtime.remote_env.insert(k.clone(), v.clone());
+        if !entry.meta.remote_env.is_empty() {
+            label_entry["remoteEnv"] = serde_json::to_value(&entry.meta.remote_env)
+                .context("failed to serialize feature remoteEnv")?;
+        }
+
+        // Only include the entry in the label if there are runtime contributions
+        let has_runtime = label_entry.get("entrypoint").is_some()
+            || label_entry.get("mounts").is_some()
+            || label_entry.get("remoteEnv").is_some();
+        if has_runtime {
+            label_entries.push(label_entry);
         }
 
         let id = context::unique_feature_id(reference, &mut seen_ids);
@@ -180,10 +182,73 @@ pub(crate) async fn build_context(
     )
     .context("failed to assemble Docker build context")?;
 
+    let metadata_label = if label_entries.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::to_string(&label_entries)
+                .context("failed to serialize devcontainer.metadata label")?,
+        )
+    };
+
     Ok(FeatureBuildOutput {
         context_tar,
-        runtime,
+        metadata_label,
     })
+}
+
+/// Parses a `devcontainer.metadata` label value into a `FeatureRuntimeConfig`.
+///
+/// The label value must be a JSON array of feature contribution objects, or a
+/// single object (normalised to a one-element array). Returns an error if the
+/// JSON is malformed or a required field has an unexpected type.
+pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRuntimeConfig> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .context("failed to parse devcontainer.metadata label as JSON")?;
+
+    let entries = match value {
+        serde_json::Value::Array(arr) => arr,
+        obj @ serde_json::Value::Object(_) => vec![obj],
+        _ => anyhow::bail!("devcontainer.metadata label must be a JSON array or object"),
+    };
+
+    let mut config = FeatureRuntimeConfig::default();
+
+    for entry in &entries {
+        // entrypoint: last entry wins; warn when a prior value is replaced
+        if let Some(ep_val) = entry.get("entrypoint") {
+            let ep: Vec<String> = serde_json::from_value(ep_val.clone())
+                .context("failed to parse 'entrypoint' in devcontainer.metadata label")?;
+            if !ep.is_empty() {
+                if let Some(prev) = &config.entrypoint {
+                    tracing::warn!(
+                        clobbered = ?prev,
+                        replacement = ?ep,
+                        "feature entrypoint clobbered by later entry in devcontainer.metadata label"
+                    );
+                }
+                config.entrypoint = Some(ep);
+            }
+        }
+
+        // mounts: collect all; convert JSON objects to --mount template strings
+        if let Some(mounts_val) = entry.get("mounts") {
+            let mounts: Vec<FeatureMount> = serde_json::from_value(mounts_val.clone())
+                .context("failed to parse 'mounts' in devcontainer.metadata label")?;
+            for mount in mounts {
+                config.mounts.push(mount.to_mount_string());
+            }
+        }
+
+        // remoteEnv: last value per key wins
+        if let Some(env_val) = entry.get("remoteEnv") {
+            let env: IndexMap<String, String> = serde_json::from_value(env_val.clone())
+                .context("failed to parse 'remoteEnv' in devcontainer.metadata label")?;
+            config.remote_env.extend(env);
+        }
+    }
+
+    Ok(config)
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -645,25 +710,19 @@ mod tests {
         panic!("Dockerfile not found in tar");
     }
 
-    #[tokio::test]
-    async fn container_env_variables_substituted_in_build_context() {
+    fn local_config(
+        tmp: &std::path::Path,
+        feature_json: &[u8],
+    ) -> crate::config::DevcontainerConfig {
         use crate::config::DevcontainerConfig;
         use std::collections::HashMap;
-
-        // A feature with containerEnv that uses ${localWorkspaceFolder} (unknown in
-        // container-only context) and ${containerCacheFolder} (known).
-        let feature_json = serde_json::json!({
-            "containerEnv": {
-                "PROJECT_ROOT": "${localWorkspaceFolder}/src",
-                "CACHE_DIR": "${containerCacheFolder}/data"
-            }
-        });
-        let feature_json_bytes = serde_json::to_vec(&feature_json).unwrap();
-
+        let feature_dir = tmp.join("local-feat");
+        std::fs::create_dir_all(&feature_dir).unwrap();
+        std::fs::write(feature_dir.join("install.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(feature_dir.join("devcontainer-feature.json"), feature_json).unwrap();
         let mut features = IndexMap::new();
         features.insert("./local-feat".to_string(), serde_json::json!({}));
-
-        let config = DevcontainerConfig {
+        DevcontainerConfig {
             image: "rust:1".to_string(),
             features,
             container_env: HashMap::new(),
@@ -672,80 +731,18 @@ mod tests {
             mounts: vec![],
             forward_ports: vec![],
             entrypoint: None,
-        };
-
-        // Manually build the FeatureEntry to avoid downloading
-        let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
-        let meta = parse_feature_meta(Some(&feature_json_bytes));
-        all.insert(
-            "./local-feat".to_string(),
-            FeatureEntry {
-                user_options: serde_json::json!({}),
-                downloaded: oci::DownloadedFeature {
-                    install_sh: b"#!/bin/sh\n".to_vec(),
-                    feature_json: Some(feature_json_bytes),
-                    env: IndexMap::new(),
-                    extra_files: vec![],
-                },
-                meta,
-            },
-        );
-
-        let order = topological_sort(&all).unwrap();
-
-        let mut seen_ids: HashSet<String> = HashSet::new();
-        let mut feature_contexts: Vec<context::FeatureContext> = Vec::new();
-        let mut runtime = FeatureRuntimeConfig::default();
-
-        for reference in &order {
-            let entry_ref = &all[reference];
-            if let Some(ep) = &entry_ref.meta.entrypoint {
-                runtime.entrypoint = Some(ep.clone());
-            }
-            for mount in &entry_ref.meta.mounts {
-                runtime.mounts.push(mount.to_mount_string());
-            }
-            for (k, v) in &entry_ref.meta.remote_env {
-                runtime.remote_env.insert(k.clone(), v.clone());
-            }
-            let id = context::unique_feature_id(reference, &mut seen_ids);
-            let container_env = entry_ref
-                .meta
-                .container_env
-                .iter()
-                .map(|(k, v)| (k.clone(), apply_container_env_substitution(v)))
-                .collect();
-            feature_contexts.push(context::FeatureContext {
-                id,
-                install_sh: entry_ref.downloaded.install_sh.clone(),
-                feature_json: entry_ref
-                    .downloaded
-                    .feature_json
-                    .clone()
-                    .unwrap_or_default(),
-                env_vars: entry_ref.downloaded.env.clone(),
-                container_env,
-                extra_files: entry_ref.downloaded.extra_files.clone(),
-            });
         }
+    }
 
-        let mut devcontainer_env: Vec<(String, String)> = config
-            .container_env
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        devcontainer_env.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let tar_bytes = context::build_context(
-            &config.image,
-            &devcontainer_env,
-            &feature_contexts,
-            config.container_user.as_deref(),
-        )
-        .unwrap();
-
-        let dockerfile = extract_dockerfile(&tar_bytes);
-
+    #[tokio::test]
+    async fn container_env_variables_substituted_in_build_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"containerEnv":{"PROJECT_ROOT":"${localWorkspaceFolder}/src","CACHE_DIR":"${containerCacheFolder}/data"}}"#,
+        );
+        let output = build_context(&config, tmp.path()).await.unwrap();
+        let dockerfile = extract_dockerfile(&output.context_tar);
         // ${localWorkspaceFolder} is unknown in container-only context — left as-is
         assert!(
             dockerfile.contains("PROJECT_ROOT='${localWorkspaceFolder}/src'"),
@@ -760,103 +757,87 @@ mod tests {
 
     #[tokio::test]
     async fn feature_remote_env_stored_as_raw_templates() {
-        use crate::config::DevcontainerConfig;
-        use std::collections::HashMap;
-
-        let feature_json = serde_json::json!({
-            "remoteEnv": {
-                "TOKEN": "${localCacheFolder}/tok"
-            }
-        });
-        let feature_json_bytes = serde_json::to_vec(&feature_json).unwrap();
-
-        let mut features = IndexMap::new();
-        features.insert("./local-feat".to_string(), serde_json::json!({}));
-
-        let config = DevcontainerConfig {
-            image: "rust:1".to_string(),
-            features,
-            container_env: HashMap::new(),
-            remote_env: HashMap::new(),
-            container_user: None,
-            mounts: vec![],
-            forward_ports: vec![],
-            entrypoint: None,
-        };
-
-        let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
-        let meta = parse_feature_meta(Some(&feature_json_bytes));
-        all.insert(
-            "./local-feat".to_string(),
-            FeatureEntry {
-                user_options: serde_json::json!({}),
-                downloaded: oci::DownloadedFeature {
-                    install_sh: b"#!/bin/sh\n".to_vec(),
-                    feature_json: Some(feature_json_bytes),
-                    env: IndexMap::new(),
-                    extra_files: vec![],
-                },
-                meta,
-            },
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"remoteEnv":{"TOKEN":"${localCacheFolder}/tok"}}"#,
         );
-
-        let order = topological_sort(&all).unwrap();
-
-        let mut seen_ids: HashSet<String> = HashSet::new();
-        let mut feature_contexts: Vec<context::FeatureContext> = Vec::new();
-        let mut runtime = FeatureRuntimeConfig::default();
-
-        for reference in &order {
-            let entry_ref = &all[reference];
-            if let Some(ep) = &entry_ref.meta.entrypoint {
-                runtime.entrypoint = Some(ep.clone());
-            }
-            for mount in &entry_ref.meta.mounts {
-                runtime.mounts.push(mount.to_mount_string());
-            }
-            for (k, v) in &entry_ref.meta.remote_env {
-                runtime.remote_env.insert(k.clone(), v.clone());
-            }
-            let id = context::unique_feature_id(reference, &mut seen_ids);
-            let container_env = entry_ref
-                .meta
-                .container_env
-                .iter()
-                .map(|(k, v)| (k.clone(), apply_container_env_substitution(v)))
-                .collect();
-            feature_contexts.push(context::FeatureContext {
-                id,
-                install_sh: entry_ref.downloaded.install_sh.clone(),
-                feature_json: entry_ref
-                    .downloaded
-                    .feature_json
-                    .clone()
-                    .unwrap_or_default(),
-                env_vars: entry_ref.downloaded.env.clone(),
-                container_env,
-                extra_files: entry_ref.downloaded.extra_files.clone(),
-            });
-        }
-
-        let mut devcontainer_env: Vec<(String, String)> = config
-            .container_env
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        devcontainer_env.sort_by(|a, b| a.0.cmp(&b.0));
-
-        context::build_context(
-            &config.image,
-            &devcontainer_env,
-            &feature_contexts,
-            config.container_user.as_deref(),
-        )
-        .unwrap();
-
-        // remoteEnv is stored as raw template — not substituted
+        let output = build_context(&config, tmp.path()).await.unwrap();
+        let label = output.metadata_label.expect("expected metadata label");
+        let runtime = parse_runtime_from_label(&label).unwrap();
+        // remoteEnv is stored as a raw template — variable not substituted
         assert_eq!(
             runtime.remote_env.get("TOKEN"),
             Some(&"${localCacheFolder}/tok".to_string())
         );
+    }
+
+    // --- parse_runtime_from_label ---
+
+    #[test]
+    fn parse_label_mounts_converted_to_template_strings() {
+        let json = r#"[{"id":"feat","mounts":[{"type":"bind","source":"${localCacheFolder}/x","target":"/x"}]}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.mounts,
+            vec!["type=bind,source=${localCacheFolder}/x,target=/x"]
+        );
+    }
+
+    #[test]
+    fn parse_label_remote_env_last_value_per_key_wins() {
+        let json =
+            r#"[{"id":"a","remoteEnv":{"KEY":"first"}},{"id":"b","remoteEnv":{"KEY":"second"}}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.remote_env.get("KEY").map(String::as_str),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn parse_label_entrypoint_last_wins() {
+        let json = r#"[{"id":"a","entrypoint":["/a.sh"]},{"id":"b","entrypoint":["/b.sh"]}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.entrypoint.as_deref(),
+            Some(&["/b.sh".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn parse_label_empty_array_gives_default() {
+        let config = parse_runtime_from_label("[]").unwrap();
+        assert!(config.mounts.is_empty());
+        assert!(config.entrypoint.is_none());
+        assert!(config.remote_env.is_empty());
+    }
+
+    #[test]
+    fn parse_label_bare_object_normalised_to_array() {
+        let json = r#"{"id":"feat","entrypoint":["/ep.sh"]}"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.entrypoint.as_deref(),
+            Some(&["/ep.sh".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn parse_label_invalid_json_errors() {
+        assert!(parse_runtime_from_label("{not valid json").is_err());
+    }
+
+    #[test]
+    fn parse_label_wrong_root_type_errors() {
+        assert!(parse_runtime_from_label("\"just a string\"").is_err());
+    }
+
+    #[test]
+    fn parse_label_volume_mount_omits_source() {
+        let json = r#"[{"id":"feat","mounts":[{"type":"volume","target":"/data"}]}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        // source is empty so it is omitted from the --mount string
+        assert_eq!(config.mounts, vec!["type=volume,source=,target=/data"]);
     }
 }
