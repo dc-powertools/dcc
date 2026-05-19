@@ -137,11 +137,10 @@ impl OciClient {
             .unwrap_or("")
             .to_owned();
 
-        let (realm, service, challenge_scope) = parse_www_authenticate(&www_auth)
+        let (realm, service, _) = parse_www_authenticate(&www_auth)
             .with_context(|| format!("failed to parse WWW-Authenticate header from {registry}"))?;
 
-        // Use the scope from the challenge (more specific than our requested scope)
-        let token_url = format!("{}?service={}&scope={}", realm, service, challenge_scope);
+        let token_url = format!("{}?service={}&scope={}", realm, service, scope);
         let token_resp = self
             .client
             .get(&token_url)
