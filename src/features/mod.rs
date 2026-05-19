@@ -22,8 +22,8 @@ struct FeatureMeta {
     /// The feature's canonical identifier within its repository (e.g. `"node"`).
     /// Used to resolve `installsAfter` references.
     id: Option<String>,
-    /// Script(s) to run as the container entrypoint after the feature installs.
-    entrypoint: Option<Vec<String>>,
+    /// Command array passed as Docker's `--entrypoint` when the container starts.
+    command: Option<Vec<String>>,
     /// Environment variables to bake into the image via Dockerfile `ENV` before
     /// this feature's install script runs.
     container_env: IndexMap<String, String>,
@@ -70,9 +70,9 @@ pub(crate) struct FeatureRuntimeConfig {
     /// Additional mounts to pass to `docker run`, in `--mount` template string form.
     /// Variable references (e.g. `${localCacheFolder}`) are substituted at run time.
     pub(crate) mounts: Vec<String>,
-    /// Entrypoint contributed by features. The last feature in installation order wins.
-    /// `None` when no installed feature declares an entrypoint.
-    pub(crate) entrypoint: Option<Vec<String>>,
+    /// Command contributed by features. The last feature in installation order wins.
+    /// `None` when no installed feature declares a command.
+    pub(crate) command: Option<Vec<String>>,
     /// Environment variables to pass as `-e KEY=VALUE` flags to `docker run`.
     /// Stored as raw templates; variable references are substituted at run time.
     pub(crate) remote_env: IndexMap<String, String>,
@@ -82,7 +82,7 @@ pub(crate) struct FeatureRuntimeConfig {
 pub(crate) struct FeatureBuildOutput {
     pub(crate) context_tar: Vec<u8>,
     /// Serialised `devcontainer.metadata` label JSON, or `None` when no feature
-    /// contributed any runtime properties (mounts, entrypoint, remoteEnv).
+    /// contributed any runtime properties (mounts, command, remoteEnv).
     pub(crate) metadata_label: Option<String>,
 }
 
@@ -124,9 +124,9 @@ pub(crate) async fn build_context(
         // Build the label entry for this feature (only fields with content are included)
         let mut label_entry = serde_json::json!({ "id": reference });
 
-        if let Some(ep) = &entry.meta.entrypoint {
-            label_entry["entrypoint"] =
-                serde_json::to_value(ep).context("failed to serialize feature entrypoint")?;
+        if let Some(cmd) = &entry.meta.command {
+            label_entry["command"] =
+                serde_json::to_value(cmd).context("failed to serialize feature command")?;
         }
 
         if !entry.meta.mounts.is_empty() {
@@ -140,7 +140,7 @@ pub(crate) async fn build_context(
         }
 
         // Only include the entry in the label if there are runtime contributions
-        let has_runtime = label_entry.get("entrypoint").is_some()
+        let has_runtime = label_entry.get("command").is_some()
             || label_entry.get("mounts").is_some()
             || label_entry.get("remoteEnv").is_some();
         if has_runtime {
@@ -215,19 +215,19 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
     let mut config = FeatureRuntimeConfig::default();
 
     for entry in &entries {
-        // entrypoint: last entry wins; warn when a prior value is replaced
-        if let Some(ep_val) = entry.get("entrypoint") {
-            let ep: Vec<String> = serde_json::from_value(ep_val.clone())
-                .context("failed to parse 'entrypoint' in devcontainer.metadata label")?;
-            if !ep.is_empty() {
-                if let Some(prev) = &config.entrypoint {
+        // command: last entry wins; warn when a prior value is replaced
+        if let Some(cmd_val) = entry.get("command") {
+            let cmd: Vec<String> = serde_json::from_value(cmd_val.clone())
+                .context("failed to parse 'command' in devcontainer.metadata label")?;
+            if !cmd.is_empty() {
+                if let Some(prev) = &config.command {
                     tracing::warn!(
                         clobbered = ?prev,
-                        replacement = ?ep,
-                        "feature entrypoint clobbered by later entry in devcontainer.metadata label"
+                        replacement = ?cmd,
+                        "feature command clobbered by later entry in devcontainer.metadata label"
                     );
                 }
-                config.entrypoint = Some(ep);
+                config.command = Some(cmd);
             }
         }
 
@@ -552,7 +552,7 @@ mod tests {
     fn parse_meta_empty_bytes_gives_default() {
         let meta = parse_feature_meta(None);
         assert!(meta.id.is_none());
-        assert!(meta.entrypoint.is_none());
+        assert!(meta.command.is_none());
         assert!(meta.container_env.is_empty());
         assert!(meta.mounts.is_empty());
         assert!(meta.installs_after.is_empty());
@@ -563,7 +563,7 @@ mod tests {
     fn parse_meta_all_fields() {
         let json = serde_json::json!({
             "id": "my-feature",
-            "entrypoint": ["/usr/local/share/my-feature/entrypoint.sh"],
+            "command": ["/usr/local/share/my-feature/entrypoint.sh"],
             "containerEnv": { "MY_VAR": "hello" },
             "mounts": [{ "source": "vol", "target": "/data", "type": "volume" }],
             "installsAfter": ["common-utils"],
@@ -573,7 +573,7 @@ mod tests {
         let meta = parse_feature_meta(Some(&bytes));
         assert_eq!(meta.id.as_deref(), Some("my-feature"));
         assert_eq!(
-            meta.entrypoint.as_deref(),
+            meta.command.as_deref(),
             Some(&["/usr/local/share/my-feature/entrypoint.sh".to_string()][..])
         );
         assert_eq!(
@@ -730,7 +730,7 @@ mod tests {
             container_user: None,
             mounts: vec![],
             forward_ports: vec![],
-            entrypoint: None,
+            command: None,
         }
     }
 
@@ -796,31 +796,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_label_entrypoint_last_wins() {
-        let json = r#"[{"id":"a","entrypoint":["/a.sh"]},{"id":"b","entrypoint":["/b.sh"]}]"#;
+    fn parse_label_command_last_wins() {
+        let json = r#"[{"id":"a","command":["/a.sh"]},{"id":"b","command":["/b.sh"]}]"#;
         let config = parse_runtime_from_label(json).unwrap();
-        assert_eq!(
-            config.entrypoint.as_deref(),
-            Some(&["/b.sh".to_string()][..])
-        );
+        assert_eq!(config.command.as_deref(), Some(&["/b.sh".to_string()][..]));
     }
 
     #[test]
     fn parse_label_empty_array_gives_default() {
         let config = parse_runtime_from_label("[]").unwrap();
         assert!(config.mounts.is_empty());
-        assert!(config.entrypoint.is_none());
+        assert!(config.command.is_none());
         assert!(config.remote_env.is_empty());
     }
 
     #[test]
     fn parse_label_bare_object_normalised_to_array() {
-        let json = r#"{"id":"feat","entrypoint":["/ep.sh"]}"#;
+        let json = r#"{"id":"feat","command":["/ep.sh"]}"#;
         let config = parse_runtime_from_label(json).unwrap();
-        assert_eq!(
-            config.entrypoint.as_deref(),
-            Some(&["/ep.sh".to_string()][..])
-        );
+        assert_eq!(config.command.as_deref(), Some(&["/ep.sh".to_string()][..]));
     }
 
     #[test]

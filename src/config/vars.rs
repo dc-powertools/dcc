@@ -37,7 +37,7 @@ pub(crate) fn apply_substitutions(
             .map(|m| apply_to_string(&m, Some(&local_workspace), Some(&local_cache)))
             .collect(),
         forward_ports: config.forward_ports,
-        entrypoint: config.entrypoint,
+        command: config.command,
     }
 }
 

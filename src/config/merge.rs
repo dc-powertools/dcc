@@ -14,7 +14,7 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         container_user: child.container_user.or(parent.container_user),
         mounts: merge_option_vecs(parent.mounts, child.mounts),
         forward_ports: merge_option_vecs(parent.forward_ports, child.forward_ports),
-        entrypoint: child.entrypoint.or(parent.entrypoint),
+        command: child.command.or(parent.command),
         extra: merge_hash_maps(parent.extra, child.extra),
     }
 }
@@ -98,7 +98,7 @@ mod tests {
             container_user: None,
             mounts: None,
             forward_ports: None,
-            entrypoint: None,
+            command: None,
             extra: Default::default(),
         }
     }
@@ -323,32 +323,32 @@ mod tests {
     }
 
     #[test]
-    fn entrypoint_child_wins_not_merged() {
-        // entrypoint is a complete command replacement — a child's entrypoint is NOT
-        // appended to the parent's. If child specifies an entrypoint, it entirely
-        // replaces the parent's, regardless of how many elements parent had.
+    fn command_child_wins_not_merged() {
+        // command is a complete replacement — a child's command is NOT appended to
+        // the parent's. If child specifies a command, it entirely replaces the
+        // parent's, regardless of how many elements parent had.
         let parent = RawConfig {
-            entrypoint: Some(vec!["a".to_string(), "b".to_string()]),
+            command: Some(vec!["a".to_string(), "b".to_string()]),
             ..empty()
         };
         let child = RawConfig {
-            entrypoint: Some(vec!["c".to_string()]),
+            command: Some(vec!["c".to_string()]),
             ..empty()
         };
         let result = merge(parent, child);
         // must be ["c"], not ["a", "b", "c"]
-        assert_eq!(result.entrypoint.unwrap(), vec!["c".to_string()]);
+        assert_eq!(result.command.unwrap(), vec!["c".to_string()]);
     }
 
     #[test]
-    fn entrypoint_child_none_uses_parent() {
+    fn command_child_none_uses_parent() {
         let parent = RawConfig {
-            entrypoint: Some(vec!["/bin/bash".to_string()]),
+            command: Some(vec!["/bin/bash".to_string()]),
             ..empty()
         };
         let child = empty();
         let result = merge(parent, child);
-        assert_eq!(result.entrypoint.unwrap(), vec!["/bin/bash".to_string()]);
+        assert_eq!(result.command.unwrap(), vec!["/bin/bash".to_string()]);
     }
 
     #[test]
@@ -356,7 +356,7 @@ mod tests {
         let config = RawConfig {
             image: Some("rust:latest".to_string()),
             container_user: Some("dev".to_string()),
-            entrypoint: Some(vec!["/bin/sh".to_string()]),
+            command: Some(vec!["/bin/sh".to_string()]),
             features: Some({
                 let mut m = IndexMap::new();
                 m.insert("f".to_string(), serde_json::json!({}));
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(result.image.as_deref(), Some("rust:latest"));
         assert_eq!(result.container_user.as_deref(), Some("dev"));
         assert_eq!(
-            result.entrypoint.as_deref(),
+            result.command.as_deref(),
             Some(&["/bin/sh".to_string()][..])
         );
         let features = result.features.unwrap();
@@ -393,7 +393,7 @@ mod tests {
         let config = RawConfig {
             image: Some("rust:latest".to_string()),
             container_user: Some("dev".to_string()),
-            entrypoint: Some(vec!["/bin/sh".to_string()]),
+            command: Some(vec!["/bin/sh".to_string()]),
             features: Some({
                 let mut m = IndexMap::new();
                 m.insert("f".to_string(), serde_json::json!({}));
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(result.image.as_deref(), Some("rust:latest"));
         assert_eq!(result.container_user.as_deref(), Some("dev"));
         assert_eq!(
-            result.entrypoint.as_deref(),
+            result.command.as_deref(),
             Some(&["/bin/sh".to_string()][..])
         );
         let features = result.features.unwrap();

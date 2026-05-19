@@ -65,12 +65,12 @@ pub(crate) async fn run(
         .map(|m| config::vars::apply_substitution(m, &local_workspace, &local_cache))
         .collect();
 
-    // Warn when the devcontainer.json entrypoint overrides a feature entrypoint
-    if let (Some(feat_ep), Some(config_ep)) = (&feature_runtime.entrypoint, &config.entrypoint) {
+    // Warn when the devcontainer.json command overrides a feature-contributed command
+    if let (Some(feat_cmd), Some(config_cmd)) = (&feature_runtime.command, &config.command) {
         tracing::warn!(
-            feature_entrypoint = ?feat_ep,
-            devcontainer_entrypoint = ?config_ep,
-            "devcontainer.json entrypoint overrides feature-contributed entrypoint"
+            feature_command = ?feat_cmd,
+            devcontainer_command = ?config_cmd,
+            "devcontainer.json command overrides feature-contributed command"
         );
     }
 
@@ -150,14 +150,14 @@ pub(crate) async fn run(
     // mask .dcc directory inside container
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
-    // Entrypoint resolution: CLI override > devcontainer.json > feature entrypoint
-    let effective_entrypoint = config
-        .entrypoint
+    // Command resolution: CLI override > devcontainer.json > feature command
+    let effective_command = config
+        .command
         .as_deref()
-        .or(feature_runtime.entrypoint.as_deref());
-    let (ep_flag, post_image_args) = resolve_entrypoint(override_args, effective_entrypoint);
-    if let Some(ep) = ep_flag {
-        args.extend(["--entrypoint".into(), ep]);
+        .or(feature_runtime.command.as_deref());
+    let (cmd_flag, post_image_args) = resolve_command(override_args, effective_command);
+    if let Some(cmd) = cmd_flag {
+        args.extend(["--entrypoint".into(), cmd]);
     }
 
     // Image tag (must come after all flags)
@@ -209,8 +209,8 @@ fn parse_bind_src(mount: &str) -> Option<String> {
     }
 }
 
-/// Determines (entrypoint_flag, post_image_args) from override_args and configured entrypoint.
-fn resolve_entrypoint(
+/// Determines (command_flag, post_image_args) from override_args and the configured command.
+fn resolve_command(
     override_args: &[String],
     configured: Option<&[String]>,
 ) -> (Option<String>, Vec<String>) {
@@ -218,7 +218,7 @@ fn resolve_entrypoint(
         override_args
     } else {
         match configured {
-            Some(ep) if !ep.is_empty() => ep,
+            Some(cmd) if !cmd.is_empty() => cmd,
             _ => return (None, Vec::new()),
         }
     };
@@ -375,31 +375,31 @@ mod tests {
     }
 
     #[test]
-    fn override_args_take_first_as_entrypoint() {
-        let (ep, rest) = resolve_entrypoint(&sv(&["npm", "serve"]), None);
-        assert_eq!(ep, Some(s("npm")));
+    fn override_args_used_as_command() {
+        let (cmd, rest) = resolve_command(&sv(&["npm", "serve"]), None);
+        assert_eq!(cmd, Some(s("npm")));
         assert_eq!(rest, sv(&["serve"]));
     }
 
     #[test]
     fn override_single_arg() {
-        let (ep, rest) = resolve_entrypoint(&sv(&["bash"]), None);
-        assert_eq!(ep, Some(s("bash")));
+        let (cmd, rest) = resolve_command(&sv(&["bash"]), None);
+        assert_eq!(cmd, Some(s("bash")));
         assert_eq!(rest, sv(&[]));
     }
 
     #[test]
-    fn configured_entrypoint_used_when_no_override() {
-        let ep_vec = sv(&["bash", "-c", "script.sh"]);
-        let (ep, rest) = resolve_entrypoint(&[], Some(&ep_vec));
-        assert_eq!(ep, Some(s("bash")));
+    fn configured_command_used_when_no_override() {
+        let cmd_vec = sv(&["bash", "-c", "script.sh"]);
+        let (cmd, rest) = resolve_command(&[], Some(&cmd_vec));
+        assert_eq!(cmd, Some(s("bash")));
         assert_eq!(rest, sv(&["-c", "script.sh"]));
     }
 
     #[test]
-    fn no_entrypoint_configured_or_overridden() {
-        let (ep, rest) = resolve_entrypoint(&[], None);
-        assert_eq!(ep, None);
+    fn no_command_configured_or_overridden() {
+        let (cmd, rest) = resolve_command(&[], None);
+        assert_eq!(cmd, None);
         assert_eq!(rest, sv(&[]));
     }
 
@@ -407,15 +407,15 @@ mod tests {
     fn override_takes_precedence_over_configured() {
         let configured = sv(&["/bin/sh"]);
         let override_args = sv(&["bash"]);
-        let (ep, _) = resolve_entrypoint(&override_args, Some(&configured));
-        assert_eq!(ep, Some(s("bash")));
+        let (cmd, _) = resolve_command(&override_args, Some(&configured));
+        assert_eq!(cmd, Some(s("bash")));
     }
 
     #[test]
-    fn empty_configured_entrypoint_treated_as_none() {
+    fn empty_configured_command_treated_as_none() {
         let configured = sv(&[]);
-        let (ep, rest) = resolve_entrypoint(&[], Some(&configured));
-        assert_eq!(ep, None);
+        let (cmd, rest) = resolve_command(&[], Some(&configured));
+        assert_eq!(cmd, None);
         assert_eq!(rest, sv(&[]));
     }
 }

@@ -101,7 +101,7 @@ struct RawConfig {
     container_user: Option<String>,
     mounts: Option<Vec<String>>,
     forward_ports: Option<Vec<u16>>,
-    entrypoint: Option<Vec<String>>,
+    command: Option<Vec<String>>,
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
 }
@@ -124,7 +124,7 @@ pub struct DevcontainerConfig {
     pub container_user: Option<String>,            // None → use image's USER directive
     pub mounts: Vec<String>,
     pub forward_ports: Vec<u16>,
-    pub entrypoint: Option<Vec<String>>,
+    pub command: Option<Vec<String>>,
 }
 ```
 
@@ -178,10 +178,10 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 | `container_user` | Child overwrites parent |
 | `mounts` | Array union; duplicates removed, parent entries first |
 | `forward_ports` | Array union; duplicates removed, parent entries first |
-| `entrypoint` | Child overwrites parent (never merged) |
+| `command` | Child overwrites parent (never merged) |
 
-`entrypoint` does not follow the general array-union rule because a child's
-entrypoint is a complete command replacement, not an addendum.
+`command` does not follow the general array-union rule because a child's
+command is a complete replacement, not an addendum.
 
 ### Variable Substitution
 
@@ -340,7 +340,7 @@ docker build [--no-cache] [--label devcontainer.metadata=<json>] --tag <image-ta
 The `-` argument instructs Docker to read the entire build context (including
 the Dockerfile) from stdin as a tar archive. No Dockerfile is written to disk.
 
-When features contribute runtime properties (mounts, entrypoint, remoteEnv),
+When features contribute runtime properties (mounts, command, remoteEnv),
 `dcc build` passes `--label devcontainer.metadata=<json>` to `docker build`.
 The label value is a JSON array with one entry per contributing feature and is
 stored inside the image. `dcc run` reads it back via `docker image inspect`
@@ -364,33 +364,33 @@ docker run
   -v <workspace-root>:/workspace
   -v <host-cache-path>:/cache
   --tmpfs /workspace/.dcc
-  [--entrypoint <entrypoint[0]>]
+  [--entrypoint <command[0]>]
   <image-tag>
-  [<entrypoint[1:]>]         (remaining elements of configured entrypoint)
+  [<command[1:]>]            (remaining elements of configured command)
   OR
-  [<override-command...>]    (user-supplied command args, replaces entrypoint entirely)
+  [<override-command...>]    (user-supplied command args, replaces configured command entirely)
 ```
 
 Before launching Docker, `dcc run`:
 
 1. Calls `docker image inspect` on the image tag to read its
    `devcontainer.metadata` label, if present. The label JSON is parsed into a
-   `FeatureRuntimeConfig` (mounts, entrypoint, remoteEnv). A missing label is
+   `FeatureRuntimeConfig` (mounts, command, remoteEnv). A missing label is
    treated as no feature runtime contributions; a malformed label is a fatal
    error.
 2. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
    the host cache directory. Docker requires bind mount source paths to exist on
    the host before the container starts.
 
-**Entrypoint resolution** (descending priority):
+**Command resolution** (descending priority):
 
 1. If the user supplies override args (everything after `--` or the first
    non-flag argument), the first arg becomes `--entrypoint` and the rest become
-   post-image arguments. All configured entrypoints are ignored.
-2. If `entrypoint` is set in `devcontainer.json`, it is used. A warning is
-   emitted if any feature also declared an entrypoint.
-3. If no devcontainer.json entrypoint but a feature contributed one (from the
-   image label), that entrypoint is used.
+   post-image arguments. All configured commands are ignored.
+2. If `command` is set in `devcontainer.json`, it is used. A warning is
+   emitted if any feature also declared a command.
+3. If no devcontainer.json command but a feature contributed one (from the
+   image label), that command is used.
 4. If none of the above apply, `--entrypoint` is omitted and Docker uses the
    image's default.
 
@@ -448,9 +448,9 @@ a fatal error.
 - `containerEnv` → substituted with container-only variables, written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
 - `remoteEnv` → stored as raw templates in the feature's label entry; substitution is applied at `dcc run` time
 - `mounts` → stored as JSON objects in the feature's label entry; converted to `--mount` template strings and substituted at `dcc run` time
-- `entrypoint` → stored in the feature's label entry; last feature wins, warning emitted on clobber
+- `command` → stored in the feature's label entry; last feature wins, warning emitted on clobber
 
-Features that contribute at least one runtime property (mounts, entrypoint, or
+Features that contribute at least one runtime property (mounts, command, or
 remoteEnv) get an entry in the `devcontainer.metadata` label JSON array. Features
 that contribute only build-time properties (`containerEnv`, `options`) are omitted
 from the label. The label is embedded in the image via `docker build --label`.
@@ -460,7 +460,7 @@ from the label. The label is embedded in the image via `docker build --label`.
 | Property | Description |
 |---|---|
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. |
-| `entrypoint` | Array of strings to use as the container entrypoint. Last feature wins; warning emitted on clobber. |
+| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. Last feature wins; warning emitted on clobber. |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives. Only container-side variables are substituted. |
 | `remoteEnv` | Environment variables passed as `-e` runtime flags to `docker run`. Stored as raw templates; substituted at `dcc run` time. |
 | `mounts` | Additional mounts attached at `dcc run` time. |
@@ -594,7 +594,7 @@ All other commands exit 0 on success and 1 on error.
 
 - Config parsing: all supported fields, JSONC trailing commas, `//` comments,
   unknown field warnings
-- Extends merging: array union, map union, scalar override, `entrypoint` override
+- Extends merging: array union, map union, scalar override, `command` override
   (not merged), empty parent, empty child
 - Cycle detection: two-file cycle returns error; three-file chain succeeds;
   three-file cycle returns error

@@ -36,7 +36,7 @@ profiles to layer small changes on top of a common base configuration.
 `dcc` generally follows the outline of the proposal in
 [devcontainers/spec#22](https://github.com/devcontainers/spec/issues/22).
 Arrays and objects are combined as a union of values, while basic types are
-overwritten. Exception: `entrypoint` always takes the child value (see below).
+overwritten. Exception: `command` always takes the child value (see below).
 
 The path given in "extends" is resolved relative to the file that contains it.
 Extension chains (A extends B extends C) are permitted. Circular chains are
@@ -159,14 +159,14 @@ to force a full rebuild.
 
 ### `dcc run`
 
-Starts the profile's container and runs its configured `entrypoint`. Attaches
+Starts the profile's container and runs its configured `command`. Attaches
 an interactive terminal and pipes stdin/stdout until the container exits.
 Containers are always ephemeral. `dcc run` terminates with an error if the
 profile's container is already running. `dcc build` must be run before `dcc run`;
 `dcc run` never builds the image automatically.
 
 If additional arguments are present, such as `dcc run npm serve`, they override
-the configured entrypoint. Starting from the first non-flag argument,
+the configured command. Starting from the first non-flag argument,
 all subsequent arguments are passed through as the launch command.
 
 The argument `--` can be supplied to explicitly indicate the boundary between
@@ -219,7 +219,7 @@ the container name `my-project--claude`.
 | `containerUser` | User to run as inside the container. When set, `dcc build` creates the user in the image if it does not already exist. When absent, Docker uses the image's `USER` directive. |
 | `mounts` | Additional bind or volume mounts |
 | `forwardPorts` | Ports to forward from the container to the host |
-| `entrypoint` | Array of strings that override the container entrypoint. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed entrypoint. |
+| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. |
 
 Unrecognised fields produce a warning by default; pass `--strict` to treat them as errors.
 
@@ -230,7 +230,7 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | Property | Description |
 |---|---|
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. User-supplied values override declared defaults. |
-| `entrypoint` | Array of strings to use as the container entrypoint. The last feature in installation order wins; if multiple features declare an entrypoint a warning is emitted. The top-level `entrypoint` in `devcontainer.json` always overrides feature entrypoints (with a warning). |
+| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The last feature in installation order wins; if multiple features declare a command a warning is emitted. The top-level `command` in `devcontainer.json` always overrides feature-contributed commands (with a warning). |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives, set before the feature's `install.sh` runs. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Stored as templates; `${localWorkspaceFolder}` and `${localCacheFolder}` are substituted at run time. |
 | `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, etc.). |

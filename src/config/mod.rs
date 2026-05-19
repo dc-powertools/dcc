@@ -22,7 +22,7 @@ pub(crate) struct RawConfig {
     pub(crate) container_user: Option<String>,
     pub(crate) mounts: Option<Vec<String>>,
     pub(crate) forward_ports: Option<Vec<u16>>,
-    pub(crate) entrypoint: Option<Vec<String>>,
+    pub(crate) command: Option<Vec<String>>,
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
 }
@@ -36,7 +36,7 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) container_user: Option<String>,
     pub(crate) mounts: Vec<String>,
     pub(crate) forward_ports: Vec<u16>,
-    pub(crate) entrypoint: Option<Vec<String>>,
+    pub(crate) command: Option<Vec<String>>,
 }
 
 pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<RawConfig> {
@@ -101,7 +101,7 @@ mod tests {
                 "containerUser": "dev",
                 "mounts": ["type=bind,src=/tmp,dst=/tmp"],
                 "forwardPorts": [8080, 3000],
-                "entrypoint": ["/bin/bash", "-c", "echo hello"]
+                "command": ["/bin/bash", "-c", "echo hello"]
             }"#,
         );
         let raw = parse_config_file(file.path(), false).unwrap();
@@ -120,7 +120,7 @@ mod tests {
         );
         assert_eq!(raw.forward_ports.as_deref(), Some(&[8080u16, 3000u16][..]));
         assert_eq!(
-            raw.entrypoint.as_deref(),
+            raw.command.as_deref(),
             Some(
                 &[
                     "/bin/bash".to_string(),
@@ -184,7 +184,7 @@ mod tests {
         assert!(raw.container_user.is_none());
         assert!(raw.mounts.is_none());
         assert!(raw.forward_ports.is_none());
-        assert!(raw.entrypoint.is_none());
+        assert!(raw.command.is_none());
         assert!(raw.extra.is_empty());
     }
 

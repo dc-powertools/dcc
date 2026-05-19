@@ -65,7 +65,7 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         container_user: raw.container_user,
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),
-        entrypoint: raw.entrypoint,
+        command: raw.command,
     })
 }
 
@@ -281,20 +281,20 @@ mod tests {
     }
 
     #[test]
-    fn test_entrypoint_child_replaces_parent() {
+    fn test_command_child_replaces_parent() {
         let dir = TempDir::new().unwrap();
         write(
             dir.path(),
             "base.json",
-            r#"{ "image": "x:1", "entrypoint": ["bash"] }"#,
+            r#"{ "image": "x:1", "command": ["bash"] }"#,
         );
         let child = write(
             dir.path(),
             "child.json",
-            r#"{ "extends": "base.json", "entrypoint": ["zsh"] }"#,
+            r#"{ "extends": "base.json", "command": ["zsh"] }"#,
         );
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.entrypoint.as_deref(), Some(&["zsh".to_string()][..]));
+        assert_eq!(config.command.as_deref(), Some(&["zsh".to_string()][..]));
     }
 
     #[test]
