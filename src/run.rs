@@ -101,6 +101,7 @@ pub(crate) async fn run(
     args.extend(["--name".into(), container.as_str().to_owned()]);
     args.push("--rm".into());
     args.push("-it".into());
+    args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
     args.extend(["--memory".into(), memory.to_owned()]);
     args.extend(["--cpus".into(), cpus.to_owned()]);
 
