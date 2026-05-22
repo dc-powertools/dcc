@@ -13,14 +13,18 @@ pub(crate) async fn forward_ports(
     container: &str,
     ports: &[u16],
 ) -> anyhow::Result<Vec<JoinHandle<()>>> {
-    let mut handles = Vec::with_capacity(ports.len());
+    let mut handles = Vec::with_capacity(ports.len() * 2);
     for &port in ports {
-        let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
+        let v4 = TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
-            .with_context(|| format!("failed to bind localhost:{port} for forwarding"))?;
+            .with_context(|| format!("failed to bind 127.0.0.1:{port} for forwarding"))?;
+        let v6 = TcpListener::bind(format!("[::1]:{port}"))
+            .await
+            .with_context(|| format!("failed to bind [::1]:{port} for forwarding"))?;
         tracing::info!(port, "forwarding port");
         let container = container.to_owned();
-        handles.push(tokio::spawn(relay_port(listener, container, port)));
+        handles.push(tokio::spawn(relay_port(v4, container.clone(), port)));
+        handles.push(tokio::spawn(relay_port(v6, container, port)));
     }
     Ok(handles)
 }
@@ -62,7 +66,7 @@ async fn handle_connection(stream: TcpStream, container: &str, port: u16) -> any
             "-i",
             container,
             "nc",
-            "127.0.0.1",
+            "localhost",
             &port.to_string(),
         ])
         .stdin(Stdio::piped())
