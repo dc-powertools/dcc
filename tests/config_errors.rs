@@ -7,7 +7,7 @@ use common::*;
 fn error_on_path_profile_file_not_found() {
     let fx = Fixture::new();
     let output = fx
-        .dcc(&["-p", "./nonexistent.json", "build"])
+        .dcc(&["build", "-p", "./nonexistent.json"])
         .output()
         .unwrap();
     assert_failure(&output);
@@ -20,7 +20,7 @@ fn path_profile_inside_workspace_loads_config() {
     // Write a config file at a non-standard location inside the workspace.
     fx.write_config("../custom.json", r#"{ "image": "rust:1" }"#);
     // dcc build will fail (no Docker), but the failure must NOT be about the config path.
-    let output = fx.dcc(&["-p", "./custom.json", "build"]).output().unwrap();
+    let output = fx.dcc(&["build", "-p", "./custom.json"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("nonexistent") && !stderr.contains("resolve config path"),
@@ -38,7 +38,7 @@ fn path_profile_container_name_consistent_across_commands() {
     // stop is idempotent (treats "no such container" as success), so success
     // with a path arg confirms the name was derived and passed to Docker.
     let output = fx
-        .dcc(&["-p", "./.devcontainer/claude.json", "stop"])
+        .dcc(&["stop", "-p", "./.devcontainer/claude.json"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -66,7 +66,7 @@ fn error_on_missing_profile_config() {
     let fx = Fixture::new();
     // .devcontainer/ exists but no profile file
     let output = fx
-        .dcc(&["--profile", "myprofile", "build"])
+        .dcc(&["build", "--profile", "myprofile"])
         .output()
         .unwrap();
     assert_failure(&output);
@@ -92,7 +92,7 @@ fn error_on_circular_extends_two_files() {
     let fx = Fixture::new();
     fx.write_config("a.json", r#"{ "extends": "./b.json", "image": "rust:1" }"#);
     fx.write_config("b.json", r#"{ "extends": "./a.json", "image": "rust:1" }"#);
-    let output = fx.dcc(&["--profile", "a", "build"]).output().unwrap();
+    let output = fx.dcc(&["build", "--profile", "a"]).output().unwrap();
     assert_failure(&output);
     assert_stderr_contains(&output, "circular");
 }
@@ -103,7 +103,7 @@ fn error_on_circular_extends_three_files() {
     fx.write_config("a.json", r#"{ "extends": "./b.json", "image": "rust:1" }"#);
     fx.write_config("b.json", r#"{ "extends": "./c.json", "image": "rust:1" }"#);
     fx.write_config("c.json", r#"{ "extends": "./a.json", "image": "rust:1" }"#);
-    let output = fx.dcc(&["--profile", "a", "build"]).output().unwrap();
+    let output = fx.dcc(&["build", "--profile", "a"]).output().unwrap();
     assert_failure(&output);
     assert_stderr_contains(&output, "circular");
 }
