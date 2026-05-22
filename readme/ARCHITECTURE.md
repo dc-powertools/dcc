@@ -31,6 +31,7 @@ src/
   run.rs              dcc run command
   join.rs             dcc join command
   stop.rs             dcc stop command
+  forward.rs          Host-side TCP relay for forwardPorts
   config/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
     merge.rs          Extends merging algorithm
@@ -57,7 +58,7 @@ third level of nesting.
 | `serde_json` | — | JSON value type; used in feature option maps |
 | `json5` | — | JSONC-compatible parsing (trailing commas, `//` comments); devcontainer configs use this format |
 | `anyhow` | — | Error handling with context |
-| `tokio` | `rt-multi-thread`, `macros`, `process` | Async runtime and subprocess management |
+| `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container readiness polling |
 | `reqwest` | `json`, `rustls-tls` | HTTP client for OCI registry; `rustls-tls` avoids OpenSSL for cross-compilation |
 | `tar` | — | In-memory tar archive construction for the Docker build context |
 | `flate2` | — | gzip decompression of OCI layer blobs |
@@ -318,7 +319,7 @@ as errors, except where noted below.
 
 ### dcc build
 
-**No features AND no containerUser AND no containerEnv** (fast path): skip image build. Pull and retag:
+**No features AND no containerUser AND no containerEnv AND no forwardPorts** (fast path): skip image build. Pull and retag:
 
 ```
 docker pull <image>
@@ -327,11 +328,11 @@ docker tag <image> <image-tag>
 
 `docker pull` fails if the image does not exist in a remote registry. Images
 that were built locally and not pushed to a registry must be handled by adding
-features, a `containerUser`, or `containerEnv` to the config, which causes the
-Dockerfile path to be used instead. This limitation should be surfaced in
-user-facing documentation.
+features, a `containerUser`, `containerEnv`, or `forwardPorts` to the config,
+which causes the Dockerfile path to be used instead. This limitation should be
+surfaced in user-facing documentation.
 
-**With features OR containerUser OR containerEnv**: pipe the in-memory build context to `docker build`:
+**With features OR containerUser OR containerEnv OR forwardPorts**: pipe the in-memory build context to `docker build`:
 
 ```
 docker build [--no-cache] [--label devcontainer.metadata=<json>] --tag <image-tag> -
@@ -349,29 +350,12 @@ portable across machines.
 
 ### dcc run
 
-```
-docker run
-  --name <container-name>
-  --rm
-  -it
-  --memory <memory>          (default: 4g)
-  --cpus <cpus>              (default: 4)
-  [-u <containerUser>]       (omitted when containerUser is not set)
-  -e KEY=VALUE ...           (remoteEnv after variable substitution)
-  -e KEY=VALUE ...           (feature remoteEnv after template substitution)
-  -p <port>:<port> ...       (forwardPorts; host port == container port)
-  --mount <spec> ...         (mounts after variable substitution)
-  -v <workspace-root>:/workspace
-  -v <host-cache-path>:/cache
-  --tmpfs /workspace/.dcc
-  [--entrypoint <command[0]>]
-  <image-tag>
-  [<command[1:]>]            (remaining elements of configured command)
-  OR
-  [<override-command...>]    (user-supplied command args, replaces configured command entirely)
-```
+`dcc run` uses a three-phase sequence: start detached, set up port forwarders,
+then attach interactively.
 
-Before launching Docker, `dcc run`:
+**Phase 1 — pre-flight checks and argument construction**
+
+Before starting Docker, `dcc run`:
 
 1. Calls `docker image inspect` on the image tag to read its
    `devcontainer.metadata` label, if present. The label JSON is parsed into a
@@ -381,6 +365,62 @@ Before launching Docker, `dcc run`:
 2. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
    the host cache directory. Docker requires bind mount source paths to exist on
    the host before the container starts.
+
+**Phase 2 — detached container start**
+
+The container is started with `-dit` (detached, interactive, TTY pre-allocated):
+
+```
+docker run
+  --name <container-name>
+  --rm
+  -dit
+  --memory <memory>          (default: 4g)
+  --cpus <cpus>              (default: 4)
+  [-u <containerUser>]       (omitted when containerUser is not set)
+  -e KEY=VALUE ...           (remoteEnv after variable substitution)
+  -e KEY=VALUE ...           (feature remoteEnv after template substitution)
+  --mount <spec> ...         (mounts after variable substitution)
+  -v <workspace-root>:/workspace
+  -v <host-cache-path>:/cache
+  --tmpfs /workspace/.dcc
+  [--entrypoint <command[0]>]
+  <image-tag>
+  [<command[1:]>]
+```
+
+`-d` starts the container in the background; `-it` pre-allocates a
+pseudo-TTY and keeps stdin open so that `docker attach` (phase 4) provides a
+proper interactive terminal. `dcc run` then polls `docker inspect` at 100 ms
+intervals (up to 10 s) until the container reports as running.
+
+Note that `forwardPorts` no longer translates to `-p` flags. Publishing ports
+with Docker's `-p` mechanism routes traffic through the Docker bridge network,
+so the container application sees connections as coming from the bridge gateway
+IP rather than `127.0.0.1`. Port forwarding is handled separately in phase 3.
+
+**Phase 3 — port forwarding**
+
+For each port in `forwardPorts`, `dcc run` binds a `TcpListener` on
+`127.0.0.1:<port>` on the host and spawns a Tokio task (see Port Forwarding
+below). The listeners are bound before attaching so that ports are ready as
+soon as the interactive session begins.
+
+**Phase 4 — interactive attach**
+
+```
+docker attach <container-name>
+```
+
+This reattaches to the container's pre-allocated TTY and blocks until the
+container exits or the user detaches with the Docker escape sequence
+(Ctrl-P, Ctrl-Q). The exit status is propagated via `std::process::exit`.
+
+**Phase 5 — teardown**
+
+After `docker attach` returns, all relay task handles are aborted. In-flight
+`docker exec nc` processes terminate on their own because the container is
+already gone; the abort releases the host-side port bindings.
 
 **Command resolution** (descending priority):
 
@@ -395,11 +435,7 @@ Before launching Docker, `dcc run`:
    image's default.
 
 The `--tmpfs /workspace/.dcc` mount places an empty tmpfs at that path inside
-the container, hiding the host `.dcc/` directory (which contains the cache
-directories of all profiles) from the container without exposing any data.
-
-The exit status of `docker run` (which reflects the container process's exit
-code) is propagated via `std::process::exit`.
+the container, hiding the host `.dcc/` directory from the container.
 
 ### dcc join
 
@@ -421,6 +457,86 @@ If the container does not exist or is not running, `docker stop` returns a
 non-zero exit code. `dcc stop` treats this as a success (idempotent). The
 distinction is made by inspecting the error output rather than suppressing all
 errors.
+
+---
+
+## Port Forwarding
+
+The devcontainer spec distinguishes between *publishing* and *forwarding* ports.
+Docker's `-p HOST:CONTAINER` flag *publishes* a port: traffic arrives at the
+container via the Docker bridge network and the application sees the source
+address as the bridge gateway (e.g. `172.17.0.1`), not `127.0.0.1`. An
+application that binds only to `localhost` rejects such connections.
+
+*Forwarding* means routing traffic through the container's own loopback
+interface so the application sees the source address as `127.0.0.1`. `dcc`
+implements this using a host-side TCP relay (`forward.rs`) and `nc` (netcat)
+running inside the container.
+
+### Relay architecture (`forward.rs`)
+
+For each port in `forwardPorts`, `dcc run` binds a `TcpListener` on
+`127.0.0.1:<port>` on the host and spawns a long-running Tokio task
+(`relay_port`). For each accepted connection the task spawns a short-lived
+connection-handler task (`handle_connection`) and immediately resumes
+accepting.
+
+`handle_connection` opens a tunnel by spawning:
+
+```
+docker exec -i <container-name> nc 127.0.0.1 <port>
+```
+
+`nc` runs inside the container and connects to `127.0.0.1:<port>` on the
+container's own loopback interface. `docker exec -i` pipes the process's
+stdin/stdout back to the host. The handler then calls `tokio::io::copy` in
+both directions concurrently via `tokio::select!`:
+
+```
+host TCP socket  ←→  docker exec -i nc  ←→  app (127.0.0.1:<port> inside container)
+```
+
+Because `nc` connects from within the container, the application sees the
+connection as originating from `127.0.0.1`, not from the Docker bridge.
+
+When either direction closes (connection dropped, app closed the socket, or
+`nc` exits), `tokio::select!` cancels the other direction, `nc` is killed,
+and the handler task exits.
+
+### Why nc (netcat)
+
+`nc` is the lowest-common-denominator TCP client available in virtually all
+Linux base images. It does not require any special privileges, does not need
+a daemon running inside the container, and its stdin/stdout are directly
+usable as a byte stream — exactly what `docker exec -i` pipes.
+
+`dcc build` installs `nc` automatically using a cross-distro Dockerfile `RUN`
+step (see In-Memory Build Context above). The step short-circuits if `nc` is
+already present and tries each package manager in turn:
+
+| Package manager | Package installed |
+|---|---|
+| `apt-get` (Debian/Ubuntu) | `netcat-openbsd` |
+| `apk` (Alpine) | `netcat-openbsd` |
+| `yum` (RHEL/CentOS) | `nmap-ncat` |
+| `dnf` (Fedora/RHEL 8+) | `nmap-ncat` |
+
+The fast-path in `dcc build` (pull + retag, no Dockerfile) is bypassed when
+`forwardPorts` is non-empty, since the nc installation step requires a
+Dockerfile build.
+
+### Handle lifetime and cleanup
+
+The relay tasks hold `JoinHandle`s returned by `tokio::spawn`. `dcc run`
+stores all handles in a `Vec` and calls `handle.abort()` on each after
+`docker attach` returns. Aborting the listener task causes `listener.accept()`
+to resolve with an error and the loop exits, releasing the port binding.
+
+Per-connection tasks are spawned without retained handles. They are
+genuinely short-lived (they exit when the connection closes) and
+self-cleaning (the `nc` subprocess exits as soon as the container is gone).
+Holding handles for these tasks would require a `JoinSet` or equivalent and
+add complexity for no observable benefit given their bounded lifetime.
 
 ---
 
@@ -527,6 +643,12 @@ RUN rm -rf /tmp/.dcc-features/
 RUN id '<user>' >/dev/null 2>&1 \
  || useradd -m -s /bin/sh '<user>' \
  || adduser -D -s /bin/sh '<user>'
+# Only present when forwardPorts is non-empty (see Port Forwarding below):
+RUN command -v nc >/dev/null 2>&1 \
+ || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends netcat-openbsd) \
+ || (command -v apk     >/dev/null 2>&1 && apk add --no-cache netcat-openbsd) \
+ || (command -v yum     >/dev/null 2>&1 && yum install -y nmap-ncat) \
+ || (command -v dnf     >/dev/null 2>&1 && dnf install -y nmap-ncat)
 ```
 
 The devcontainer.json `containerEnv` `ENV` directives appear immediately after
@@ -569,19 +691,28 @@ must include the full command that was attempted.
 ## CLI Definition (`cli.rs`)
 
 ```
-dcc [--profile <name>] [--strict] <command> [command-flags] [--] [args...]
+dcc [--strict] <command> [-p/--profile <name>] [command-flags] [--] [args...]
 
 Commands:
-  build   [--no-cache]
-  run     [--memory <size>] [--cpus <n>] [--] [command...]
-  join
-  stop
+  build  [-p/--profile <name>] [--no-cache]
+  run    [-p/--profile <name>] [--memory <size>] [--cpus <n>] [--] [command...]
+  join   [-p/--profile <name>]
+  stop   [-p/--profile <name>]
 ```
 
-`--profile` defaults to `"devcontainer"`. Implemented with `clap` derive macros.
-`trailing_var_arg = true` is set on the `run` subcommand so that clap stops
-flag parsing at the first positional argument, allowing `dcc run npm serve` and
-`dcc run -- npm serve` to behave identically.
+`--profile` (`-p`) is declared on each subcommand individually rather than as a
+global flag on `Cli`. This allows `dcc run -p claude` to work naturally — if
+`-p` were a global flag it would have to appear before the subcommand name
+(`dcc -p claude run`), which conflicts with the common expectation that
+subcommand flags follow the subcommand. `--profile` defaults to `"devcontainer"`.
+
+`--strict` remains a global flag because it affects config parsing, which
+applies identically across all subcommands.
+
+Implemented with `clap` derive macros. `trailing_var_arg = true` is set on the
+`run` subcommand so that clap stops flag parsing at the first positional
+argument, allowing `dcc run npm serve` and `dcc run -- npm serve` to behave
+identically.
 
 The exit code of `dcc run` mirrors the container process exit code.
 All other commands exit 0 on success and 1 on error.

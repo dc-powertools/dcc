@@ -11,6 +11,7 @@ use crate::{
     },
     docker,
     features::{self, FeatureRuntimeConfig},
+    forward,
     profile::{ContainerName, ProfileName},
     workspace::Workspace,
 };
@@ -100,7 +101,7 @@ pub(crate) async fn run(
 
     args.extend(["--name".into(), container.as_str().to_owned()]);
     args.push("--rm".into());
-    args.push("-it".into());
+    args.push("-dit".into());
     args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
     args.extend(["--memory".into(), memory.to_owned()]);
     args.extend(["--cpus".into(), cpus.to_owned()]);
@@ -120,12 +121,6 @@ pub(crate) async fn run(
     for (k, v) in &feature_remote_env {
         args.push("-e".into());
         args.push(format!("{k}={v}"));
-    }
-
-    // forwardPorts (host port == container port)
-    for port in &config.forward_ports {
-        args.push("-p".into());
-        args.push(format!("{port}:{port}"));
     }
 
     // mounts: feature contributions first, then devcontainer.json mounts
@@ -167,7 +162,54 @@ pub(crate) async fn run(
     // Post-image arguments
     args.extend(post_image_args);
 
-    docker::run_container(&args).await
+    // Start the container in the background (-d); TTY is pre-allocated (-t)
+    // so that `docker attach` below provides a proper interactive terminal.
+    docker::start_detached(&args)
+        .await
+        .with_context(|| format!("failed to start container `{}`", container.as_str()))?;
+
+    // Poll until the container is running before binding forwarder ports.
+    wait_for_running(container.as_str())
+        .await
+        .with_context(|| format!("container `{}` failed to start", container.as_str()))?;
+
+    // Bind a host-side TCP relay on 127.0.0.1 for each forwarded port.
+    let relay_handles = forward::forward_ports(container.as_str(), &config.forward_ports)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to set up port forwarding for container `{}`",
+                container.as_str()
+            )
+        })?;
+
+    // Attach to the container's interactive session; blocks until it exits or
+    // the user detaches with the Docker escape sequence (Ctrl-P, Ctrl-Q).
+    let status = docker::attach(container.as_str())
+        .await
+        .with_context(|| format!("failed to attach to container `{}`", container.as_str()))?;
+
+    // Tear down port forwarders now that the container has exited or detached.
+    for handle in relay_handles {
+        handle.abort();
+    }
+
+    Ok(status)
+}
+
+async fn wait_for_running(container: &str) -> anyhow::Result<()> {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        if docker::inspect_running(container).await? {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out after 10 s waiting for container to start");
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 // Restricted to the cache directory (dcc-managed space) to avoid silently creating

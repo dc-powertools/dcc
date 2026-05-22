@@ -218,7 +218,7 @@ the container name `my-project--claude`.
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}` and `${localCacheFolder}`. |
 | `containerUser` | User to run as inside the container. When set, `dcc build` creates the user in the image if it does not already exist. When absent, Docker uses the image's `USER` directive. |
 | `mounts` | Additional bind or volume mounts |
-| `forwardPorts` | Ports to forward from the container to the host |
+| `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
 | `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. |
 
 Unrecognised fields produce a warning by default; pass `--strict` to treat them as errors.

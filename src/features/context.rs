@@ -22,8 +22,15 @@ pub(crate) fn build_context(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: Option<&str>,
+    install_nc: bool,
 ) -> anyhow::Result<Vec<u8>> {
-    let dockerfile = generate_dockerfile(image, devcontainer_env, features, container_user);
+    let dockerfile = generate_dockerfile(
+        image,
+        devcontainer_env,
+        features,
+        container_user,
+        install_nc,
+    );
     let mut builder = tar::Builder::new(Vec::new());
 
     add_to_tar(&mut builder, "Dockerfile", dockerfile.as_bytes(), 0o644)?;
@@ -64,6 +71,7 @@ fn generate_dockerfile(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: Option<&str>,
+    install_nc: bool,
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("FROM {image}"));
@@ -107,6 +115,24 @@ fn generate_dockerfile(
                 "RUN id {u} >/dev/null 2>&1 \\\n || useradd -m -s /bin/sh {u} \\\n || adduser -D -s /bin/sh {u}"
             ));
         }
+    }
+    // Install nc (netcat) for port forwarding. Runs last so features that already
+    // provide nc short-circuit the check. Tries each package manager in turn;
+    // the first successful install wins.
+    if install_nc {
+        lines.push(
+            "RUN command -v nc >/dev/null 2>&1 \
+             \\\n || (command -v apt-get >/dev/null 2>&1 \
+             && apt-get update -qq \
+             && apt-get install -y --no-install-recommends netcat-openbsd) \
+             \\\n || (command -v apk >/dev/null 2>&1 \
+             && apk add --no-cache netcat-openbsd) \
+             \\\n || (command -v yum >/dev/null 2>&1 \
+             && yum install -y nmap-ncat) \
+             \\\n || (command -v dnf >/dev/null 2>&1 \
+             && dnf install -y nmap-ncat)"
+                .to_string(),
+        );
     }
     lines.join("\n") + "\n"
 }
@@ -232,13 +258,13 @@ mod tests {
 
     #[test]
     fn dockerfile_no_features_no_user() {
-        let df = generate_dockerfile("rust:1", &[], &[], None);
+        let df = generate_dockerfile("rust:1", &[], &[], None, false);
         assert_eq!(df, "FROM rust:1\n");
     }
 
     #[test]
     fn dockerfile_no_features_with_user() {
-        let df = generate_dockerfile("rust:1", &[], &[], Some("dev"));
+        let df = generate_dockerfile("rust:1", &[], &[], Some("dev"), false);
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("id 'dev'"));
         assert!(df.contains("useradd"));
@@ -247,7 +273,7 @@ mod tests {
 
     #[test]
     fn dockerfile_root_user_skips_creation() {
-        let df = generate_dockerfile("rust:1", &[], &[], Some("root"));
+        let df = generate_dockerfile("rust:1", &[], &[], Some("root"), false);
         assert_eq!(df, "FROM rust:1\n");
     }
 
@@ -261,7 +287,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"));
+        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
         let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
         let id_pos = df.find("id 'dev'").unwrap();
         assert!(
@@ -280,7 +306,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], None);
+        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("COPY .dcc-features/"));
         assert!(df.contains("chmod +x /tmp/.dcc-features/my-feature/install.sh"));
@@ -301,7 +327,7 @@ mod tests {
             container_env,
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], None);
+        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
         let env_pos = df.find("ENV MY_VAR=").unwrap();
         let run_pos = df.find("RUN chmod +x").unwrap();
         assert!(env_pos < run_pos, "ENV must appear before RUN");
@@ -320,8 +346,39 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], None);
+        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
         assert!(df.contains("VERSION='20'"));
+    }
+
+    #[test]
+    fn dockerfile_install_nc_appended_last() {
+        let df = generate_dockerfile("rust:1", &[], &[], None, true);
+        assert!(df.contains("command -v nc"), "nc check should be present");
+        assert!(
+            df.contains("netcat-openbsd"),
+            "apt/apk package should be named"
+        );
+        assert!(df.contains("nmap-ncat"), "yum/dnf package should be named");
+        // Should be the last non-empty line
+        let last = df.trim_end_matches('\n').lines().last().unwrap();
+        assert!(last.contains("dnf"), "nc install should be the last step");
+    }
+
+    #[test]
+    fn dockerfile_install_nc_after_user_creation() {
+        let df = generate_dockerfile("rust:1", &[], &[], Some("dev"), true);
+        let user_pos = df.find("id 'dev'").unwrap();
+        let nc_pos = df.find("command -v nc").unwrap();
+        assert!(
+            nc_pos > user_pos,
+            "nc install should appear after user creation"
+        );
+    }
+
+    #[test]
+    fn dockerfile_no_install_nc_when_false() {
+        let df = generate_dockerfile("rust:1", &[], &[], None, false);
+        assert!(!df.contains("command -v nc"), "nc install should be absent");
     }
 
     #[test]
@@ -336,7 +393,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], None).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], None, false).unwrap();
         assert!(!tar_bytes.is_empty());
 
         // Extract and verify
@@ -373,7 +430,7 @@ mod tests {
                 0o755,
             )],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], None).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], None, false).unwrap();
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut found_helper = false;
@@ -400,7 +457,7 @@ mod tests {
             container_env,
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &devcontainer_env, &[f], None);
+        let df = generate_dockerfile("rust:1", &devcontainer_env, &[f], None, false);
         let dc_pos = df.find("ENV DC_VAR=").unwrap();
         let feat_pos = df.find("ENV FEAT_VAR=").unwrap();
         assert!(

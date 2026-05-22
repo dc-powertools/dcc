@@ -74,18 +74,24 @@ pub(crate) async fn build(
     check_status(status, &format!("docker build --tag {tag} -"))
 }
 
-pub(crate) async fn run_container(args: &[String]) -> anyhow::Result<ExitStatus> {
-    Command::new("docker")
+/// Starts a container detached (`docker run -d …`) and returns once Docker
+/// confirms the container was created. The caller is responsible for attaching
+/// via [`attach`] and for aborting any port-forwarding tasks on exit.
+pub(crate) async fn start_detached(args: &[String]) -> anyhow::Result<()> {
+    let output = Command::new("docker")
         .arg("run")
         .args(args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .stderr(Stdio::inherit())
-        .spawn()
-        .context("failed to spawn `docker run`")?
-        .wait()
+        .output()
         .await
-        .context("failed to wait for `docker run`")
+        .context("failed to spawn `docker run`")?;
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        anyhow::bail!("`docker run` exited with status {code}");
+    }
+    Ok(())
 }
 
 pub(crate) async fn attach(container: &str) -> anyhow::Result<ExitStatus> {

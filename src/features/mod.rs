@@ -179,6 +179,7 @@ pub(crate) async fn build_context(
         &devcontainer_env,
         &feature_contexts,
         config.container_user.as_deref(),
+        !config.forward_ports.is_empty(),
     )
     .context("failed to assemble Docker build context")?;
 

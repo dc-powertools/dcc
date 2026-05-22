@@ -27,6 +27,7 @@ pub(crate) async fn build(
     if config.features.is_empty()
         && config.container_user.is_none()
         && config.container_env.is_empty()
+        && config.forward_ports.is_empty()
     {
         // Fast path: pull and retag without a Dockerfile build.
         // --no-cache is a no-op here: docker pull always contacts the registry.

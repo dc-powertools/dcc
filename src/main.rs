@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod docker;
 mod features;
+mod forward;
 mod join;
 mod profile;
 mod run;
