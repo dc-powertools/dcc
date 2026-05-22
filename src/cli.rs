@@ -3,8 +3,6 @@ use clap::{Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "dcc", about = "Dev Container CLI", version)]
 pub(crate) struct Cli {
-    #[arg(short = 'p', long, default_value = "devcontainer")]
-    pub(crate) profile: String,
     #[arg(long)]
     pub(crate) strict: bool,
     #[command(subcommand)]
@@ -14,11 +12,15 @@ pub(crate) struct Cli {
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     Build {
+        #[arg(short = 'p', long, default_value = "devcontainer")]
+        profile: String,
         #[arg(long)]
         no_cache: bool,
     },
     #[command(trailing_var_arg = true)]
     Run {
+        #[arg(short = 'p', long, default_value = "devcontainer")]
+        profile: String,
         #[arg(long, default_value = "4g")]
         memory: String,
         #[arg(long, default_value = "4")]
@@ -26,6 +28,12 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
-    Join,
-    Stop,
+    Join {
+        #[arg(short = 'p', long, default_value = "devcontainer")]
+        profile: String,
+    },
+    Stop {
+        #[arg(short = 'p', long, default_value = "devcontainer")]
+        profile: String,
+    },
 }
