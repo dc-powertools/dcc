@@ -85,10 +85,11 @@ fn generate_dockerfile(
             for (k, v) in &f.container_env {
                 lines.push(format!("ENV {}={}", k, shell_quote(v)));
             }
-            let install_path = format!("/tmp/.dcc-features/{}/install.sh", f.id);
+            let feature_dir = format!("/tmp/.dcc-features/{}", f.id);
+            let install_path = format!("{feature_dir}/install.sh");
             if f.env_vars.is_empty() {
                 lines.push(format!(
-                    "RUN chmod +x {install_path} \\\n && {install_path}"
+                    "RUN chmod +x {install_path} \\\n && cd {feature_dir} \\\n && ./install.sh"
                 ));
             } else {
                 let env_prefix: String = f
@@ -98,7 +99,7 @@ fn generate_dockerfile(
                     .collect::<Vec<_>>()
                     .join(" ");
                 lines.push(format!(
-                    "RUN chmod +x {install_path} \\\n && {env_prefix} \\\n    {install_path}"
+                    "RUN chmod +x {install_path} \\\n && cd {feature_dir} \\\n && {env_prefix} \\\n    ./install.sh"
                 ));
             }
         }
