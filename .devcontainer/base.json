@@ -9,6 +9,4 @@
     "HISTFILE": "${containerCacheFolder}/.bash_history",
     "CARGO_HOME": "${containerCacheFolder}/.cargo",
   },
-  "postCreateCommand": "cargo build",
-  "customizations": {}
 }
