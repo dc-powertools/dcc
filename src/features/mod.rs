@@ -757,6 +757,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn feature_install_sees_devcontainer_and_feature_container_env() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = local_config(tmp.path(), br#"{"containerEnv":{"FEAT_VAR":"feat_value"}}"#);
+        config
+            .container_env
+            .insert("DC_VAR".to_string(), "dc_value".to_string());
+        let output = build_context(&config, tmp.path()).await.unwrap();
+        let dockerfile = extract_dockerfile(&output.context_tar);
+
+        let dc_pos = dockerfile
+            .find("ENV DC_VAR='dc_value'")
+            .expect("devcontainer.json containerEnv should be set");
+        let feat_pos = dockerfile
+            .find("ENV FEAT_VAR='feat_value'")
+            .expect("devcontainer-feature.json containerEnv should be set");
+        let install_pos = dockerfile
+            .find("RUN chmod +x")
+            .expect("feature install RUN step should be present");
+
+        assert!(
+            dc_pos < install_pos && feat_pos < install_pos,
+            "both containerEnv sources must be set via ENV before the feature install runs, got:\n{dockerfile}"
+        );
+    }
+
+    #[tokio::test]
     async fn feature_remote_env_stored_as_raw_templates() {
         let tmp = tempfile::tempdir().unwrap();
         let config = local_config(

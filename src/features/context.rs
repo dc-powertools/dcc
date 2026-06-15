@@ -88,7 +88,7 @@ fn generate_dockerfile(
         lines.push(format!("ENV {}={}", k, shell_quote(v)));
     }
     // Ensure the container user exists before features are installed, so that
-    // install scripts can run as that user (see below). The `id` check makes
+    // install scripts can `su` into it (see below). The `id` check makes
     // this idempotent if a feature also creates the user.
     // Skipped for root, which is guaranteed to exist in every image.
     // useradd covers Debian/Ubuntu/RHEL/Fedora; adduser -D covers Alpine/BusyBox.
@@ -100,16 +100,23 @@ fn generate_dockerfile(
         ));
     }
     if !features.is_empty() {
-        // Hand the copied feature context to containerUser (if set) so that the
-        // install scripts, run as that user below, can chmod and execute them.
-        match run_as_user {
-            Some(user) => {
-                lines.push(format!(
-                    "COPY --chown={user} .dcc-features/ /tmp/.dcc-features/"
-                ));
-                lines.push(format!("USER {user}"));
-            }
-            None => lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string()),
+        lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string());
+        // Feature install scripts run as root, per the containers.dev feature
+        // spec, since most published features assume root for package
+        // installs. Export the standard user env vars so a script can
+        // `su "$_REMOTE_USER" -c '...'` for any setup it needs to perform as
+        // containerUser (e.g. dotfiles, per-user tool installs).
+        let (user, home) = match run_as_user {
+            Some(user) => (user, format!("/home/{user}")),
+            None => ("root", "/root".to_string()),
+        };
+        for (var, value) in [
+            ("_REMOTE_USER", user),
+            ("_CONTAINER_USER", user),
+            ("_REMOTE_USER_HOME", home.as_str()),
+            ("_CONTAINER_USER_HOME", home.as_str()),
+        ] {
+            lines.push(format!("ENV {var}={}", shell_quote(value)));
         }
         for f in features {
             // containerEnv: bake into the image layer before this feature runs
@@ -133,10 +140,6 @@ fn generate_dockerfile(
                     "RUN chmod +x {install_path} \\\n && cd {feature_dir} \\\n && {env_prefix} \\\n    ./install.sh"
                 ));
             }
-        }
-        // Switch back to root for cleanup and any remaining build steps.
-        if run_as_user.is_some() {
-            lines.push("USER root".to_string());
         }
         lines.push("RUN rm -rf /tmp/.dcc-features/".to_string());
     }
@@ -332,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_feature_copy_chowned_to_container_user() {
+    fn dockerfile_feature_copy_not_chowned() {
         let f = FeatureContext {
             id: "feat".to_string(),
             install_sh: vec![],
@@ -342,11 +345,13 @@ mod tests {
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[], &[f], "dev", false);
-        assert!(df.contains("COPY --chown=dev .dcc-features/ /tmp/.dcc-features/"));
+        assert!(df.contains("COPY .dcc-features/ /tmp/.dcc-features/"));
+        assert!(!df.contains("--chown"));
+        assert!(!df.contains("USER "));
     }
 
     #[test]
-    fn dockerfile_feature_install_runs_as_container_user() {
+    fn dockerfile_feature_install_exports_remote_user_env() {
         let f = FeatureContext {
             id: "feat".to_string(),
             install_sh: vec![],
@@ -356,23 +361,21 @@ mod tests {
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[], &[f], "dev", false);
-        let user_pos = df.find("USER dev").unwrap();
+        assert!(df.contains("ENV _REMOTE_USER='dev'"));
+        assert!(df.contains("ENV _CONTAINER_USER='dev'"));
+        assert!(df.contains("ENV _REMOTE_USER_HOME='/home/dev'"));
+        assert!(df.contains("ENV _CONTAINER_USER_HOME='/home/dev'"));
+
+        let env_pos = df.find("ENV _REMOTE_USER=").unwrap();
         let install_pos = df.find("RUN chmod +x").unwrap();
-        let root_pos = df.find("USER root").unwrap();
-        let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
         assert!(
-            user_pos < install_pos,
-            "USER dev must precede the install RUN"
+            env_pos < install_pos,
+            "_REMOTE_USER must be exported before the install RUN"
         );
-        assert!(
-            install_pos < root_pos,
-            "build should switch back to root after installing features"
-        );
-        assert!(root_pos < rm_pos, "USER root must precede feature cleanup");
     }
 
     #[test]
-    fn dockerfile_root_user_no_switch() {
+    fn dockerfile_feature_install_runs_as_root_with_root_user_env() {
         let f = FeatureContext {
             id: "feat".to_string(),
             install_sh: vec![],
@@ -385,6 +388,10 @@ mod tests {
         assert!(!df.contains("USER "));
         assert!(!df.contains("--chown"));
         assert!(df.contains("COPY .dcc-features/ /tmp/.dcc-features/"));
+        assert!(df.contains("ENV _REMOTE_USER='root'"));
+        assert!(df.contains("ENV _CONTAINER_USER='root'"));
+        assert!(df.contains("ENV _REMOTE_USER_HOME='/root'"));
+        assert!(df.contains("ENV _CONTAINER_USER_HOME='/root'"));
     }
 
     #[test]
