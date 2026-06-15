@@ -368,10 +368,7 @@ mod tests {
             install_pos < root_pos,
             "build should switch back to root after installing features"
         );
-        assert!(
-            root_pos < rm_pos,
-            "USER root must precede feature cleanup"
-        );
+        assert!(root_pos < rm_pos, "USER root must precede feature cleanup");
     }
 
     #[test]
