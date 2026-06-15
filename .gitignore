@@ -2,6 +2,7 @@
 /.claude
 /docker
 PLAN.md
+/.dcc
 
 # Rust build artifacts
 /target/
