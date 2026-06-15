@@ -75,6 +75,15 @@ fn generate_dockerfile(
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("FROM {image}"));
+    // Stamps the dcc version that generated this Dockerfile as the first
+    // post-FROM instruction. Docker's build cache keys each instruction on
+    // its literal content, so bumping dcc invalidates this layer and every
+    // layer after it, forcing a full rebuild of all dcc-controlled steps on
+    // the next `dcc build` even though the image already exists.
+    lines.push(format!(
+        "LABEL dcc.version={}",
+        shell_quote(env!("CARGO_PKG_VERSION"))
+    ));
     for (k, v) in devcontainer_env {
         lines.push(format!("ENV {}={}", k, shell_quote(v)));
     }
@@ -283,7 +292,24 @@ mod tests {
     #[test]
     fn dockerfile_root_user_skips_creation() {
         let df = generate_dockerfile("rust:1", &[], &[], "root", false);
-        assert_eq!(df, "FROM rust:1\n");
+        assert_eq!(
+            df,
+            format!(
+                "FROM rust:1\nLABEL dcc.version='{}'\n",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn dockerfile_version_label_immediately_after_from() {
+        let df = generate_dockerfile("rust:1", &[], &[], "root", false);
+        let mut lines = df.lines();
+        assert_eq!(lines.next(), Some("FROM rust:1"));
+        assert_eq!(
+            lines.next(),
+            Some(format!("LABEL dcc.version='{}'", env!("CARGO_PKG_VERSION")).as_str())
+        );
     }
 
     #[test]
@@ -379,8 +405,8 @@ mod tests {
         assert!(df.contains("COPY .dcc-features/"));
         assert!(df.contains("chmod +x /tmp/.dcc-features/my-feature/install.sh"));
         assert!(df.contains("RUN rm -rf /tmp/.dcc-features/"));
-        // No env vars prefix
-        assert!(!df.contains("="));
+        // No env vars prefix before ./install.sh
+        assert!(df.contains(" && ./install.sh"));
     }
 
     #[test]

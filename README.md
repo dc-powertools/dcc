@@ -159,6 +159,11 @@ user rather than root.
 Subsequent builds are incremental via Docker's layer cache; pass `--no-cache`
 to force a full rebuild.
 
+The generated Dockerfile stamps the installed `dcc` version as a `LABEL`
+immediately after `FROM`, so upgrading `dcc` automatically invalidates the
+cache for every dcc-controlled step (user creation, feature installs, etc.)
+on the next `dcc build`, even if the image already exists.
+
 ### `dcc run`
 
 Starts the profile's container and runs its configured `command`. Attaches
