@@ -434,7 +434,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         let mount = format!("type=bind,src={},dst=/cache/cargo", src.display());
         // Should not error on second call
-        ensure_cache_mount_sources(&[mount.clone()], &cache).unwrap();
+        ensure_cache_mount_sources(std::slice::from_ref(&mount), &cache).unwrap();
         ensure_cache_mount_sources(&[mount], &cache).unwrap();
         assert!(src.is_dir());
     }

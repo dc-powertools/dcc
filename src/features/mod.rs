@@ -728,12 +728,16 @@ mod tests {
     #[test]
     fn topo_sort_installs_after_by_id() {
         let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
-        let mut a_meta = FeatureMeta::default();
         // a wants to come after a feature with id "common"
-        a_meta.installs_after = vec!["common".into()];
+        let a_meta = FeatureMeta {
+            installs_after: vec!["common".into()],
+            ..Default::default()
+        };
         all.insert("a:1".into(), entry(a_meta));
-        let mut b_meta = FeatureMeta::default();
-        b_meta.id = Some("common".into());
+        let b_meta = FeatureMeta {
+            id: Some("common".into()),
+            ..Default::default()
+        };
         all.insert("b:1".into(), entry(b_meta));
 
         let order = topological_sort(&all).unwrap();

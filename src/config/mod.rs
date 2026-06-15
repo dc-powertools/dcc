@@ -134,7 +134,7 @@ mod tests {
         assert!(raw
             .remote_env
             .as_ref()
-            .map_or(false, |m| m.get("FOO").map(|s| s.as_str()) == Some("bar")));
+            .is_some_and(|m| m.get("FOO").map(|s| s.as_str()) == Some("bar")));
         assert_eq!(raw.container_user.as_deref(), Some("dev"));
         assert_eq!(
             raw.mounts.as_deref(),
