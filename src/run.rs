@@ -106,10 +106,8 @@ pub(crate) async fn run(
     args.extend(["--memory".into(), memory.to_owned()]);
     args.extend(["--cpus".into(), cpus.to_owned()]);
 
-    // containerUser (omitted when not set — Docker uses the image's USER directive)
-    if let Some(user) = &config.container_user {
-        args.extend(["-u".into(), user.clone()]);
-    }
+    // containerUser (defaults to "dev" when not set in the devcontainer config)
+    args.extend(["-u".into(), config.container_user.clone()]);
 
     // remoteEnv: passed as runtime flags (substitution already applied at config-load time)
     for (k, v) in &config.remote_env {

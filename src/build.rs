@@ -25,7 +25,7 @@ pub(crate) async fn build(
     let image_tag = container_name.as_image_tag();
 
     if config.features.is_empty()
-        && config.container_user.is_none()
+        && config.container_user == "root"
         && config.container_env.is_empty()
         && config.forward_ports.is_empty()
     {

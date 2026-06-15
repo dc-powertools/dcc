@@ -178,7 +178,7 @@ pub(crate) async fn build_context(
         &config.image,
         &devcontainer_env,
         &feature_contexts,
-        config.container_user.as_deref(),
+        &config.container_user,
         !config.forward_ports.is_empty(),
     )
     .context("failed to assemble Docker build context")?;
@@ -728,7 +728,7 @@ mod tests {
             features,
             container_env: HashMap::new(),
             remote_env: HashMap::new(),
-            container_user: None,
+            container_user: "dev".to_string(),
             mounts: vec![],
             forward_ports: vec![],
             command: None,

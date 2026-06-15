@@ -5,7 +5,9 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::config::{merge::merge, parse_config_file, DevcontainerConfig, RawConfig};
+use crate::config::{
+    merge::merge, parse_config_file, DevcontainerConfig, RawConfig, DEFAULT_CONTAINER_USER,
+};
 
 /// Recursively load a RawConfig, following `extends` chains.
 /// `visited` contains canonicalized paths already in the chain (for cycle detection).
@@ -62,7 +64,9 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         features: raw.features.unwrap_or_default(),
         container_env: raw.container_env.unwrap_or_default(),
         remote_env: raw.remote_env.unwrap_or_default(),
-        container_user: raw.container_user,
+        container_user: raw
+            .container_user
+            .unwrap_or_else(|| DEFAULT_CONTAINER_USER.to_string()),
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),
         command: raw.command,
@@ -102,11 +106,11 @@ mod tests {
     }
 
     #[test]
-    fn test_no_container_user_is_none() {
+    fn test_no_container_user_defaults_to_dev() {
         let dir = TempDir::new().unwrap();
         let path = write(dir.path(), "dev.json", r#"{ "image": "rust:latest" }"#);
         let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert!(config.container_user.is_none());
+        assert_eq!(config.container_user, "dev");
     }
 
     #[test]
@@ -118,7 +122,7 @@ mod tests {
             r#"{ "image": "rust:latest", "containerUser": "root" }"#,
         );
         let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.container_user.as_deref(), Some("root"));
+        assert_eq!(config.container_user, "root");
     }
 
     #[test]
@@ -143,7 +147,7 @@ mod tests {
         );
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
         assert_eq!(config.image, "ubuntu:22.04");
-        assert_eq!(config.container_user.as_deref(), Some("myuser"));
+        assert_eq!(config.container_user, "myuser");
     }
 
     #[test]

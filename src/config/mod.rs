@@ -11,6 +11,10 @@ pub(crate) mod merge;
 pub(crate) mod resolve;
 pub(crate) mod vars;
 
+/// The user `dcc build` runs feature install scripts as and `dcc run` passes to
+/// `docker run -u` when `containerUser` is not set in the devcontainer config.
+pub(crate) const DEFAULT_CONTAINER_USER: &str = "dev";
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawConfig {
@@ -33,7 +37,7 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) features: IndexMap<String, serde_json::Value>,
     pub(crate) container_env: HashMap<String, String>,
     pub(crate) remote_env: HashMap<String, String>,
-    pub(crate) container_user: Option<String>,
+    pub(crate) container_user: String,
     pub(crate) mounts: Vec<String>,
     pub(crate) forward_ports: Vec<u16>,
     pub(crate) command: Option<Vec<String>>,

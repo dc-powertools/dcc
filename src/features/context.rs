@@ -21,7 +21,7 @@ pub(crate) fn build_context(
     image: &str,
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
-    container_user: Option<&str>,
+    container_user: &str,
     install_nc: bool,
 ) -> anyhow::Result<Vec<u8>> {
     let dockerfile = generate_dockerfile(
@@ -70,7 +70,7 @@ fn generate_dockerfile(
     image: &str,
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
-    container_user: Option<&str>,
+    container_user: &str,
     install_nc: bool,
 ) -> String {
     let mut lines = Vec::new();
@@ -83,7 +83,7 @@ fn generate_dockerfile(
     // this idempotent if a feature also creates the user.
     // Skipped for root, which is guaranteed to exist in every image.
     // useradd covers Debian/Ubuntu/RHEL/Fedora; adduser -D covers Alpine/BusyBox.
-    let run_as_user = container_user.filter(|&user| user != "root");
+    let run_as_user = (container_user != "root").then_some(container_user);
     if let Some(user) = run_as_user {
         let u = shell_quote(user);
         lines.push(format!(
@@ -272,14 +272,8 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_no_features_no_user() {
-        let df = generate_dockerfile("rust:1", &[], &[], None, false);
-        assert_eq!(df, "FROM rust:1\n");
-    }
-
-    #[test]
     fn dockerfile_no_features_with_user() {
-        let df = generate_dockerfile("rust:1", &[], &[], Some("dev"), false);
+        let df = generate_dockerfile("rust:1", &[], &[], "dev", false);
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("id 'dev'"));
         assert!(df.contains("useradd"));
@@ -288,7 +282,7 @@ mod tests {
 
     #[test]
     fn dockerfile_root_user_skips_creation() {
-        let df = generate_dockerfile("rust:1", &[], &[], Some("root"), false);
+        let df = generate_dockerfile("rust:1", &[], &[], "root", false);
         assert_eq!(df, "FROM rust:1\n");
     }
 
@@ -302,7 +296,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "dev", false);
         let id_pos = df.find("id 'dev'").unwrap();
         let copy_pos = df.find("COPY").unwrap();
         assert!(
@@ -321,7 +315,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "dev", false);
         assert!(df.contains("COPY --chown=dev .dcc-features/ /tmp/.dcc-features/"));
     }
 
@@ -335,7 +329,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "dev", false);
         let user_pos = df.find("USER dev").unwrap();
         let install_pos = df.find("RUN chmod +x").unwrap();
         let root_pos = df.find("USER root").unwrap();
@@ -355,22 +349,6 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_no_user_switch_without_container_user() {
-        let f = FeatureContext {
-            id: "feat".to_string(),
-            install_sh: vec![],
-            feature_json: vec![],
-            env_vars: IndexMap::new(),
-            container_env: IndexMap::new(),
-            extra_files: vec![],
-        };
-        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
-        assert!(!df.contains("USER "));
-        assert!(!df.contains("--chown"));
-        assert!(df.contains("COPY .dcc-features/ /tmp/.dcc-features/"));
-    }
-
-    #[test]
     fn dockerfile_root_user_no_switch() {
         let f = FeatureContext {
             id: "feat".to_string(),
@@ -380,7 +358,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], Some("root"), false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "root", false);
         assert!(!df.contains("USER "));
         assert!(!df.contains("--chown"));
         assert!(df.contains("COPY .dcc-features/ /tmp/.dcc-features/"));
@@ -396,7 +374,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "root", false);
         assert!(df.contains("FROM rust:1"));
         assert!(df.contains("COPY .dcc-features/"));
         assert!(df.contains("chmod +x /tmp/.dcc-features/my-feature/install.sh"));
@@ -417,7 +395,7 @@ mod tests {
             container_env,
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "root", false);
         let env_pos = df.find("ENV MY_VAR=").unwrap();
         let run_pos = df.find("RUN chmod +x").unwrap();
         assert!(env_pos < run_pos, "ENV must appear before RUN");
@@ -436,13 +414,13 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
+        let df = generate_dockerfile("rust:1", &[], &[f], "root", false);
         assert!(df.contains("VERSION='20'"));
     }
 
     #[test]
     fn dockerfile_install_nc_appended_last() {
-        let df = generate_dockerfile("rust:1", &[], &[], None, true);
+        let df = generate_dockerfile("rust:1", &[], &[], "root", true);
         assert!(df.contains("command -v nc"), "nc check should be present");
         assert!(
             df.contains("netcat-openbsd"),
@@ -456,7 +434,7 @@ mod tests {
 
     #[test]
     fn dockerfile_install_nc_after_user_creation() {
-        let df = generate_dockerfile("rust:1", &[], &[], Some("dev"), true);
+        let df = generate_dockerfile("rust:1", &[], &[], "dev", true);
         let user_pos = df.find("id 'dev'").unwrap();
         let nc_pos = df.find("command -v nc").unwrap();
         assert!(
@@ -467,7 +445,7 @@ mod tests {
 
     #[test]
     fn dockerfile_no_install_nc_when_false() {
-        let df = generate_dockerfile("rust:1", &[], &[], None, false);
+        let df = generate_dockerfile("rust:1", &[], &[], "root", false);
         assert!(!df.contains("command -v nc"), "nc install should be absent");
     }
 
@@ -483,7 +461,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], None, false).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false).unwrap();
         assert!(!tar_bytes.is_empty());
 
         // Extract and verify
@@ -520,7 +498,7 @@ mod tests {
                 0o755,
             )],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], None, false).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false).unwrap();
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut found_helper = false;
@@ -547,7 +525,7 @@ mod tests {
             container_env,
             extra_files: vec![],
         };
-        let df = generate_dockerfile("rust:1", &devcontainer_env, &[f], None, false);
+        let df = generate_dockerfile("rust:1", &devcontainer_env, &[f], "root", false);
         let dc_pos = df.find("ENV DC_VAR=").unwrap();
         let feat_pos = df.find("ENV FEAT_VAR=").unwrap();
         assert!(

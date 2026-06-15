@@ -145,15 +145,16 @@ file location `.devcontainer/devcontainer.json`.
 
 Reads `.devcontainer/<profile>.json` and builds the local Docker image.
 
-When neither `features` nor `containerUser` are set, `dcc` takes a fast path:
-it pulls the base image and retags it locally without a Dockerfile build.
+`containerUser` defaults to `dev` when not set. When neither `features` are set
+nor `containerUser` is `root`, `dcc` takes a fast path: it pulls the base image
+and retags it locally without a Dockerfile build.
 
-When `features` are set, `dcc` generates a Dockerfile that installs them on top
-of the base image. When `containerUser` is set, `dcc` adds a `RUN` step to the
-Dockerfile that creates the user if it does not already exist; this step is
-cross-distro compatible (`useradd` for Debian/Ubuntu/RHEL, `adduser` for
-Alpine). Both conditions may apply simultaneously: the user is created first,
-and each feature's `install.sh` is then run as that user rather than root.
+Otherwise, `dcc` generates a Dockerfile. When `containerUser` is not `root`,
+`dcc` adds a `RUN` step to the Dockerfile that creates the user if it does not
+already exist; this step is cross-distro compatible (`useradd` for
+Debian/Ubuntu/RHEL, `adduser` for Alpine). When `features` are also set, the
+user is created first, and each feature's `install.sh` is then run as that
+user rather than root.
 
 Subsequent builds are incremental via Docker's layer cache; pass `--no-cache`
 to force a full rebuild.
@@ -217,7 +218,7 @@ the container name `my-project--claude`.
 | `features` | devcontainer Features to install |
 | `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}` and `${localCacheFolder}`. |
-| `containerUser` | User to run as inside the container. When set, `dcc build` creates the user in the image if it does not already exist. When absent, Docker uses the image's `USER` directive. |
+| `containerUser` | User to run as inside the container. Defaults to `dev`. Unless set to `root`, `dcc build` creates the user in the image if it does not already exist and runs feature install scripts as that user. |
 | `mounts` | Additional bind or volume mounts |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
 | `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. |
