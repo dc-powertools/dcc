@@ -152,7 +152,8 @@ When `features` are set, `dcc` generates a Dockerfile that installs them on top
 of the base image. When `containerUser` is set, `dcc` adds a `RUN` step to the
 Dockerfile that creates the user if it does not already exist; this step is
 cross-distro compatible (`useradd` for Debian/Ubuntu/RHEL, `adduser` for
-Alpine). Both conditions may apply simultaneously.
+Alpine). Both conditions may apply simultaneously: the user is created first,
+and each feature's `install.sh` is then run as that user rather than root.
 
 Subsequent builds are incremental via Docker's layer cache; pass `--no-cache`
 to force a full rebuild.

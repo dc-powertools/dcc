@@ -78,8 +78,30 @@ fn generate_dockerfile(
     for (k, v) in devcontainer_env {
         lines.push(format!("ENV {}={}", k, shell_quote(v)));
     }
+    // Ensure the container user exists before features are installed, so that
+    // install scripts can run as that user (see below). The `id` check makes
+    // this idempotent if a feature also creates the user.
+    // Skipped for root, which is guaranteed to exist in every image.
+    // useradd covers Debian/Ubuntu/RHEL/Fedora; adduser -D covers Alpine/BusyBox.
+    let run_as_user = container_user.filter(|&user| user != "root");
+    if let Some(user) = run_as_user {
+        let u = shell_quote(user);
+        lines.push(format!(
+            "RUN id {u} >/dev/null 2>&1 \\\n || useradd -m -s /bin/sh {u} \\\n || adduser -D -s /bin/sh {u}"
+        ));
+    }
     if !features.is_empty() {
-        lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string());
+        // Hand the copied feature context to containerUser (if set) so that the
+        // install scripts, run as that user below, can chmod and execute them.
+        match run_as_user {
+            Some(user) => {
+                lines.push(format!(
+                    "COPY --chown={user} .dcc-features/ /tmp/.dcc-features/"
+                ));
+                lines.push(format!("USER {user}"));
+            }
+            None => lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string()),
+        }
         for f in features {
             // containerEnv: bake into the image layer before this feature runs
             for (k, v) in &f.container_env {
@@ -103,19 +125,11 @@ fn generate_dockerfile(
                 ));
             }
         }
-        lines.push("RUN rm -rf /tmp/.dcc-features/".to_string());
-    }
-    // Ensure the container user exists. Runs after features so that a feature
-    // that already creates the user doesn't conflict (id check makes it idempotent).
-    // Skipped for root, which is guaranteed to exist in every image.
-    // useradd covers Debian/Ubuntu/RHEL/Fedora; adduser -D covers Alpine/BusyBox.
-    if let Some(user) = container_user {
-        if user != "root" {
-            let u = shell_quote(user);
-            lines.push(format!(
-                "RUN id {u} >/dev/null 2>&1 \\\n || useradd -m -s /bin/sh {u} \\\n || adduser -D -s /bin/sh {u}"
-            ));
+        // Switch back to root for cleanup and any remaining build steps.
+        if run_as_user.is_some() {
+            lines.push("USER root".to_string());
         }
+        lines.push("RUN rm -rf /tmp/.dcc-features/".to_string());
     }
     // Install nc (netcat) for port forwarding. Runs last so features that already
     // provide nc short-circuit the check. Tries each package manager in turn;
@@ -279,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_user_creation_after_features() {
+    fn dockerfile_user_creation_before_features() {
         let f = FeatureContext {
             id: "feat".to_string(),
             install_sh: vec![],
@@ -289,12 +303,87 @@ mod tests {
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
-        let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
         let id_pos = df.find("id 'dev'").unwrap();
+        let copy_pos = df.find("COPY").unwrap();
         assert!(
-            id_pos > rm_pos,
-            "user creation should appear after feature cleanup"
+            id_pos < copy_pos,
+            "user creation should appear before features are copied in"
         );
+    }
+
+    #[test]
+    fn dockerfile_feature_copy_chowned_to_container_user() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
+        assert!(df.contains("COPY --chown=dev .dcc-features/ /tmp/.dcc-features/"));
+    }
+
+    #[test]
+    fn dockerfile_feature_install_runs_as_container_user() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[], &[f], Some("dev"), false);
+        let user_pos = df.find("USER dev").unwrap();
+        let install_pos = df.find("RUN chmod +x").unwrap();
+        let root_pos = df.find("USER root").unwrap();
+        let rm_pos = df.find("rm -rf /tmp/.dcc-features/").unwrap();
+        assert!(
+            user_pos < install_pos,
+            "USER dev must precede the install RUN"
+        );
+        assert!(
+            install_pos < root_pos,
+            "build should switch back to root after installing features"
+        );
+        assert!(
+            root_pos < rm_pos,
+            "USER root must precede feature cleanup"
+        );
+    }
+
+    #[test]
+    fn dockerfile_no_user_switch_without_container_user() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[], &[f], None, false);
+        assert!(!df.contains("USER "));
+        assert!(!df.contains("--chown"));
+        assert!(df.contains("COPY .dcc-features/ /tmp/.dcc-features/"));
+    }
+
+    #[test]
+    fn dockerfile_root_user_no_switch() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[], &[f], Some("root"), false);
+        assert!(!df.contains("USER "));
+        assert!(!df.contains("--chown"));
+        assert!(df.contains("COPY .dcc-features/ /tmp/.dcc-features/"));
     }
 
     #[test]
