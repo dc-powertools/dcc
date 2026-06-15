@@ -94,6 +94,37 @@ pub(crate) async fn start_detached(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Runs `argv` inside `container` as `user` from `workdir` via `docker exec`,
+/// with stdio inherited from the current process.
+pub(crate) async fn exec(
+    container: &str,
+    user: &str,
+    workdir: &str,
+    argv: &[String],
+) -> anyhow::Result<ExitStatus> {
+    Command::new("docker")
+        .args(["exec", "-u", user, "-w", workdir, container])
+        .args(argv)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| {
+            format!(
+                "failed to spawn `docker exec {container} {}`",
+                argv.join(" ")
+            )
+        })?
+        .wait()
+        .await
+        .with_context(|| {
+            format!(
+                "failed to wait for `docker exec {container} {}`",
+                argv.join(" ")
+            )
+        })
+}
+
 pub(crate) async fn attach(container: &str) -> anyhow::Result<ExitStatus> {
     Command::new("docker")
         .args(["attach", container])
@@ -186,7 +217,7 @@ fn is_not_running_error(stderr: &str) -> bool {
     stderr.contains("No such container") || stderr.contains("is not running")
 }
 
-fn check_status(status: ExitStatus, cmd: &str) -> anyhow::Result<()> {
+pub(crate) fn check_status(status: ExitStatus, cmd: &str) -> anyhow::Result<()> {
     if status.success() {
         Ok(())
     } else {

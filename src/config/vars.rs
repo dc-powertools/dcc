@@ -38,6 +38,12 @@ pub(crate) fn apply_substitutions(
             .collect(),
         forward_ports: config.forward_ports,
         command: config.command,
+        initialize_command: config.initialize_command.as_ref().map(|c| {
+            c.substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache))
+        }),
+        lifecycle: config
+            .lifecycle
+            .substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache)),
     }
 }
 

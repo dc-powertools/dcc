@@ -186,6 +186,24 @@ The argument `--` can be supplied to explicitly indicate the boundary between
 `dcc` flags and the container launch command. All arguments following `--` will
 be passed through to the container.
 
+#### Lifecycle hooks
+
+Because containers are always created fresh, `dcc run` runs **every**
+lifecycle hook on **every** run — there is no "once per container lifetime"
+tracking as in other devcontainer tools. The order is:
+
+1. `initializeCommand` — on the host, before the container is created/started.
+2. `onCreateCommand`
+3. `updateContentCommand`
+4. `postCreateCommand`
+5. `postStartCommand`
+6. `postAttachCommand` — immediately before attaching.
+
+For steps 2–6, feature-contributed hooks of that type run first, in feature
+installation order, followed by the `devcontainer.json` hook of that type. A
+non-zero exit from any hook aborts `dcc run` immediately and skips all
+subsequent hooks. `dcc join` does not re-run `postAttachCommand`.
+
 ### `dcc join`
 
 Reattaches to the original process's stdin/stdout after detaching from a running
@@ -233,6 +251,23 @@ the container name `my-project--claude`.
 | `mounts` | Additional bind or volume mounts |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
 | `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. |
+| `initializeCommand` | Runs on the **host**, before the container is created or started. |
+| `onCreateCommand` | Runs **in the container**, first among the lifecycle hooks below. |
+| `updateContentCommand` | Runs **in the container**, after `onCreateCommand`. |
+| `postCreateCommand` | Runs **in the container**, after `updateContentCommand`. |
+| `postStartCommand` | Runs **in the container**, after `postCreateCommand`. |
+| `postAttachCommand` | Runs **in the container**, immediately before attaching — last of the lifecycle hooks. |
+
+Each lifecycle hook accepts a shell string (run via `/bin/sh -c`), an array of
+strings (executed directly), or an object mapping arbitrary names to either
+form — the named commands run in parallel, and the next hook waits for all of
+them to finish. `initializeCommand` runs on the host and supports
+`${localWorkspaceFolder}`/`${localCacheFolder}` (and the container-side
+variables); the other five hooks run in the container as `containerUser` from
+`/workspace` and support the same variable substitution as `remoteEnv`/`mounts`.
+A non-zero exit from any hook aborts `dcc run` immediately, skipping
+subsequent hooks. See [`dcc run`](#dcc-run) for execution order and how this
+interacts with `dcc`'s ephemeral containers.
 
 Unrecognised fields produce a warning by default; pass `--strict` to treat them as errors.
 
@@ -249,6 +284,7 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, etc.). |
 | `installsAfter` | Soft ordering hint. An array of feature IDs (the `id` field from `devcontainer-feature.json`). This feature is installed after the listed features if they are already in the installation set. Not evaluated recursively. |
 | `dependsOn` | Hard dependencies. An object whose keys are feature references (same format as `devcontainer.json` `features`) and values are the options for each dependency. Missing dependencies are added to the installation set automatically. Evaluated recursively. Circular dependencies are an error. |
+| `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Lifecycle hooks. Same forms and variable substitution as the identically-named `devcontainer.json` properties. For each hook type, feature-contributed hooks run before the `devcontainer.json` hook of that type, in feature installation order. |
 
 ### Example
 

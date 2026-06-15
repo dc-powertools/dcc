@@ -4,7 +4,10 @@ use std::path::Path;
 use anyhow::Context as _;
 use indexmap::IndexMap;
 
-use crate::config::{vars::apply_container_env_substitution, DevcontainerConfig};
+use crate::{
+    config::{vars::apply_container_env_substitution, DevcontainerConfig},
+    lifecycle::{LifecycleHooks, HOOKS},
+};
 
 use self::{context::FeatureContext, oci::OciClient};
 
@@ -39,6 +42,10 @@ struct FeatureMeta {
     /// Keys are feature references in the same format as `devcontainer.json`
     /// `features`; values are the options for each dependency.
     depends_on: IndexMap<String, serde_json::Value>,
+    /// Lifecycle hooks contributed by this feature. Run before the
+    /// devcontainer.json hook of the same type, in feature installation order.
+    #[serde(flatten)]
+    lifecycle: LifecycleHooks,
 }
 
 /// A mount from `devcontainer-feature.json`, in the JSON object form.
@@ -76,6 +83,10 @@ pub(crate) struct FeatureRuntimeConfig {
     /// Environment variables to pass as `-e KEY=VALUE` flags to `docker run`.
     /// Stored as raw templates; variable references are substituted at run time.
     pub(crate) remote_env: IndexMap<String, String>,
+    /// Lifecycle hooks contributed by installed features, as
+    /// `(feature reference, hooks)` pairs in installation order. Stored as
+    /// raw templates; variable references are substituted at run time.
+    pub(crate) feature_hooks: Vec<(String, LifecycleHooks)>,
 }
 
 /// Return value of `build_context`.
@@ -139,11 +150,16 @@ pub(crate) async fn build_context(
                 .context("failed to serialize feature remoteEnv")?;
         }
 
+        for (name, get) in HOOKS {
+            if let Some(cmd) = get(&entry.meta.lifecycle) {
+                label_entry[name] = serde_json::to_value(cmd)
+                    .context("failed to serialize feature lifecycle hook")?;
+            }
+        }
+
         // Only include the entry in the label if there are runtime contributions
-        let has_runtime = label_entry.get("command").is_some()
-            || label_entry.get("mounts").is_some()
-            || label_entry.get("remoteEnv").is_some();
-        if has_runtime {
+        // beyond the always-present "id" field.
+        if label_entry.as_object().is_some_and(|o| o.len() > 1) {
             label_entries.push(label_entry);
         }
 
@@ -246,6 +262,18 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
             let env: IndexMap<String, String> = serde_json::from_value(env_val.clone())
                 .context("failed to parse 'remoteEnv' in devcontainer.metadata label")?;
             config.remote_env.extend(env);
+        }
+
+        // lifecycle hooks: collect (id, hooks) for every entry declaring at least one
+        let hooks: LifecycleHooks = serde_json::from_value(entry.clone())
+            .context("failed to parse lifecycle hooks in devcontainer.metadata label")?;
+        if !hooks.is_empty() {
+            let id = entry
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            config.feature_hooks.push((id, hooks));
         }
     }
 
@@ -558,6 +586,7 @@ mod tests {
         assert!(meta.mounts.is_empty());
         assert!(meta.installs_after.is_empty());
         assert!(meta.depends_on.is_empty());
+        assert!(meta.lifecycle.is_empty());
     }
 
     #[test]
@@ -568,7 +597,12 @@ mod tests {
             "containerEnv": { "MY_VAR": "hello" },
             "mounts": [{ "source": "vol", "target": "/data", "type": "volume" }],
             "installsAfter": ["common-utils"],
-            "dependsOn": { "ghcr.io/owner/repo/dep:1": {} }
+            "dependsOn": { "ghcr.io/owner/repo/dep:1": {} },
+            "onCreateCommand": "echo on-create",
+            "updateContentCommand": ["echo", "update-content"],
+            "postCreateCommand": "echo post-create",
+            "postStartCommand": "echo post-start",
+            "postAttachCommand": { "a": "echo a", "b": ["echo", "b"] }
         });
         let bytes = serde_json::to_vec(&json).unwrap();
         let meta = parse_feature_meta(Some(&bytes));
@@ -584,6 +618,35 @@ mod tests {
         assert_eq!(meta.mounts.len(), 1);
         assert_eq!(meta.installs_after, vec!["common-utils"]);
         assert!(meta.depends_on.contains_key("ghcr.io/owner/repo/dep:1"));
+        assert_eq!(
+            meta.lifecycle.on_create_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo on-create".to_string()
+            ))
+        );
+        assert_eq!(
+            meta.lifecycle.update_content_command,
+            Some(crate::lifecycle::LifecycleCommand::Exec(vec![
+                "echo".to_string(),
+                "update-content".to_string()
+            ]))
+        );
+        assert_eq!(
+            meta.lifecycle.post_create_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo post-create".to_string()
+            ))
+        );
+        assert_eq!(
+            meta.lifecycle.post_start_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo post-start".to_string()
+            ))
+        );
+        assert!(matches!(
+            meta.lifecycle.post_attach_command,
+            Some(crate::lifecycle::LifecycleCommand::Parallel(_))
+        ));
     }
 
     #[test]
@@ -732,6 +795,8 @@ mod tests {
             mounts: vec![],
             forward_ports: vec![],
             command: None,
+            initialize_command: None,
+            lifecycle: LifecycleHooks::default(),
         }
     }
 
@@ -799,6 +864,29 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn feature_hook_only_feature_included_in_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"postCreateCommand":"echo hello from feature"}"#,
+        );
+        let output = build_context(&config, tmp.path()).await.unwrap();
+        let label = output
+            .metadata_label
+            .expect("hook-only feature should still produce a metadata label");
+        let runtime = parse_runtime_from_label(&label).unwrap();
+        assert_eq!(runtime.feature_hooks.len(), 1);
+        let (id, hooks) = &runtime.feature_hooks[0];
+        assert_eq!(id, "./local-feat");
+        assert_eq!(
+            hooks.post_create_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo hello from feature".to_string()
+            ))
+        );
+    }
+
     // --- parse_runtime_from_label ---
 
     #[test]
@@ -860,5 +948,37 @@ mod tests {
         let config = parse_runtime_from_label(json).unwrap();
         // source is empty so it is omitted from the --mount string
         assert_eq!(config.mounts, vec!["type=volume,source=,target=/data"]);
+    }
+
+    #[test]
+    fn parse_label_feature_hooks_round_trip_preserves_order() {
+        let json = r#"[
+            {"id":"feat-a","postCreateCommand":"echo a"},
+            {"id":"feat-b","postStartCommand":["echo","b"]}
+        ]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(config.feature_hooks.len(), 2);
+        assert_eq!(config.feature_hooks[0].0, "feat-a");
+        assert_eq!(
+            config.feature_hooks[0].1.post_create_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo a".to_string()
+            ))
+        );
+        assert_eq!(config.feature_hooks[1].0, "feat-b");
+        assert_eq!(
+            config.feature_hooks[1].1.post_start_command,
+            Some(crate::lifecycle::LifecycleCommand::Exec(vec![
+                "echo".to_string(),
+                "b".to_string()
+            ]))
+        );
+    }
+
+    #[test]
+    fn parse_label_entries_without_hooks_excluded_from_feature_hooks() {
+        let json = r#"[{"id":"feat","command":["/ep.sh"]}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert!(config.feature_hooks.is_empty());
     }
 }

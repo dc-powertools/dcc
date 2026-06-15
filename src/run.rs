@@ -11,7 +11,7 @@ use crate::{
     },
     docker,
     features::{self, FeatureRuntimeConfig},
-    forward,
+    forward, lifecycle,
     profile::{ContainerName, ProfileName},
     workspace::Workspace,
 };
@@ -160,6 +160,13 @@ pub(crate) async fn run(
     // Post-image arguments
     args.extend(post_image_args);
 
+    // initializeCommand runs on the host before the container is created/started.
+    if let Some(cmd) = &config.initialize_command {
+        lifecycle::run_on_host(cmd, &workspace.root)
+            .await
+            .context("initializeCommand failed")?;
+    }
+
     // Start the container in the background (-d); TTY is pre-allocated (-t)
     // so that `docker attach` below provides a proper interactive terminal.
     docker::start_detached(&args)
@@ -170,6 +177,17 @@ pub(crate) async fn run(
     wait_for_running(container.as_str())
         .await
         .with_context(|| format!("container `{}` failed to start", container.as_str()))?;
+
+    // Run container-side lifecycle hooks (onCreateCommand through
+    // postAttachCommand), in spec order, before forwarding ports or attaching.
+    run_lifecycle_hooks(
+        container.as_str(),
+        &config,
+        &feature_runtime,
+        &local_workspace,
+        &local_cache,
+    )
+    .await?;
 
     // Bind a host-side TCP relay on 127.0.0.1 for each forwarded port.
     let relay_handles = forward::forward_ports(container.as_str(), &config.forward_ports)
@@ -208,6 +226,50 @@ async fn wait_for_running(container: &str) -> anyhow::Result<()> {
         }
         tokio::time::sleep(POLL).await;
     }
+}
+
+/// Runs the container-side lifecycle hooks (`onCreateCommand` through
+/// `postAttachCommand`) in spec order. For each hook type, feature-contributed
+/// hooks run first, in feature installation order, followed by the
+/// devcontainer.json hook of that type. A non-zero exit from any hook aborts
+/// immediately, skipping subsequent hooks.
+async fn run_lifecycle_hooks(
+    container: &str,
+    config: &config::DevcontainerConfig,
+    feature_runtime: &FeatureRuntimeConfig,
+    local_workspace: &str,
+    local_cache: &str,
+) -> anyhow::Result<()> {
+    let substitute = |s: &str| config::vars::apply_substitution(s, local_workspace, local_cache);
+
+    for (name, get) in lifecycle::HOOKS {
+        for (feature_id, hooks) in &feature_runtime.feature_hooks {
+            if let Some(cmd) = get(hooks) {
+                let cmd = cmd.substitute(&substitute);
+                lifecycle::run_in_container(
+                    &cmd,
+                    container,
+                    &config.container_user,
+                    CONTAINER_WORKSPACE,
+                )
+                .await
+                .with_context(|| format!("{name} from feature `{feature_id}` failed"))?;
+            }
+        }
+
+        if let Some(cmd) = get(&config.lifecycle) {
+            lifecycle::run_in_container(
+                cmd,
+                container,
+                &config.container_user,
+                CONTAINER_WORKSPACE,
+            )
+            .await
+            .with_context(|| format!("{name} failed"))?;
+        }
+    }
+
+    Ok(())
 }
 
 // Restricted to the cache directory (dcc-managed space) to avoid silently creating

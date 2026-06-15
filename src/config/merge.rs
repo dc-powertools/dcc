@@ -15,6 +15,14 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         mounts: merge_option_vecs(parent.mounts, child.mounts),
         forward_ports: merge_option_vecs(parent.forward_ports, child.forward_ports),
         command: child.command.or(parent.command),
+        initialize_command: child.initialize_command.or(parent.initialize_command),
+        on_create_command: child.on_create_command.or(parent.on_create_command),
+        update_content_command: child
+            .update_content_command
+            .or(parent.update_content_command),
+        post_create_command: child.post_create_command.or(parent.post_create_command),
+        post_start_command: child.post_start_command.or(parent.post_start_command),
+        post_attach_command: child.post_attach_command.or(parent.post_attach_command),
         extra: merge_hash_maps(parent.extra, child.extra),
     }
 }
@@ -99,6 +107,12 @@ mod tests {
             mounts: None,
             forward_ports: None,
             command: None,
+            initialize_command: None,
+            on_create_command: None,
+            update_content_command: None,
+            post_create_command: None,
+            post_start_command: None,
+            post_attach_command: None,
             extra: Default::default(),
         }
     }
@@ -352,6 +366,47 @@ mod tests {
     }
 
     #[test]
+    fn on_create_command_child_wins_not_merged() {
+        let parent = RawConfig {
+            on_create_command: Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo parent".to_string(),
+            )),
+            ..empty()
+        };
+        let child = RawConfig {
+            on_create_command: Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo child".to_string(),
+            )),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        assert_eq!(
+            result.on_create_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo child".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn on_create_command_child_none_uses_parent() {
+        let parent = RawConfig {
+            on_create_command: Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo parent".to_string(),
+            )),
+            ..empty()
+        };
+        let child = empty();
+        let result = merge(parent, child);
+        assert_eq!(
+            result.on_create_command,
+            Some(crate::lifecycle::LifecycleCommand::Shell(
+                "echo parent".to_string()
+            ))
+        );
+    }
+
+    #[test]
     fn merge_with_empty_parent() {
         let config = RawConfig {
             image: Some("rust:latest".to_string()),
@@ -367,11 +422,9 @@ mod tests {
                 m.insert("K".to_string(), "V".to_string());
                 m
             }),
-            remote_env: None,
             mounts: Some(vec!["m".to_string()]),
             forward_ports: Some(vec![8080]),
-            extends: None,
-            extra: Default::default(),
+            ..empty()
         };
         let result = merge(empty(), config);
         assert_eq!(result.image.as_deref(), Some("rust:latest"));
@@ -404,11 +457,9 @@ mod tests {
                 m.insert("K".to_string(), "V".to_string());
                 m
             }),
-            remote_env: None,
             mounts: Some(vec!["m".to_string()]),
             forward_ports: Some(vec![8080]),
-            extends: None,
-            extra: Default::default(),
+            ..empty()
         };
         let result = merge(config, empty());
         assert_eq!(result.image.as_deref(), Some("rust:latest"));

@@ -6,6 +6,7 @@ mod docker;
 mod features;
 mod forward;
 mod join;
+mod lifecycle;
 mod profile;
 mod run;
 mod stop;

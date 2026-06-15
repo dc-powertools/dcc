@@ -5,8 +5,11 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::config::{
-    merge::merge, parse_config_file, DevcontainerConfig, RawConfig, DEFAULT_CONTAINER_USER,
+use crate::{
+    config::{
+        merge::merge, parse_config_file, DevcontainerConfig, RawConfig, DEFAULT_CONTAINER_USER,
+    },
+    lifecycle::LifecycleHooks,
 };
 
 /// Recursively load a RawConfig, following `extends` chains.
@@ -70,12 +73,22 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),
         command: raw.command,
+        initialize_command: raw.initialize_command,
+        lifecycle: LifecycleHooks {
+            on_create_command: raw.on_create_command,
+            update_content_command: raw.update_content_command,
+            post_create_command: raw.post_create_command,
+            post_start_command: raw.post_start_command,
+            post_attach_command: raw.post_attach_command,
+        },
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{cache::CacheDir, config::load_config, workspace::Workspace};
+    use crate::{
+        cache::CacheDir, config::load_config, lifecycle::LifecycleCommand, workspace::Workspace,
+    };
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -103,6 +116,32 @@ mod tests {
         let path = write(dir.path(), "dev.json", r#"{ "image": "rust:latest" }"#);
         let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
         assert_eq!(config.image, "rust:latest");
+    }
+
+    #[test]
+    fn test_lifecycle_commands_substituted() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "initializeCommand": ["echo", "${localCacheFolder}"],
+                "postCreateCommand": "echo ${localWorkspaceFolder}"
+            }"#,
+        );
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(
+            config.initialize_command,
+            Some(LifecycleCommand::Exec(vec![
+                "echo".to_string(),
+                "/tmp/.dcc/test".to_string(),
+            ]))
+        );
+        assert_eq!(
+            config.lifecycle.post_create_command,
+            Some(LifecycleCommand::Shell("echo /tmp".to_string()))
+        );
     }
 
     #[test]

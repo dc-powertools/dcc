@@ -5,7 +5,11 @@ use anyhow::Context as _;
 use indexmap::IndexMap;
 use serde::Deserialize;
 
-use crate::{cache::CacheDir, workspace::Workspace};
+use crate::{
+    cache::CacheDir,
+    lifecycle::{LifecycleCommand, LifecycleHooks},
+    workspace::Workspace,
+};
 
 pub(crate) mod merge;
 pub(crate) mod resolve;
@@ -27,6 +31,12 @@ pub(crate) struct RawConfig {
     pub(crate) mounts: Option<Vec<String>>,
     pub(crate) forward_ports: Option<Vec<u16>>,
     pub(crate) command: Option<Vec<String>>,
+    pub(crate) initialize_command: Option<LifecycleCommand>,
+    pub(crate) on_create_command: Option<LifecycleCommand>,
+    pub(crate) update_content_command: Option<LifecycleCommand>,
+    pub(crate) post_create_command: Option<LifecycleCommand>,
+    pub(crate) post_start_command: Option<LifecycleCommand>,
+    pub(crate) post_attach_command: Option<LifecycleCommand>,
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
 }
@@ -41,6 +51,8 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) mounts: Vec<String>,
     pub(crate) forward_ports: Vec<u16>,
     pub(crate) command: Option<Vec<String>>,
+    pub(crate) initialize_command: Option<LifecycleCommand>,
+    pub(crate) lifecycle: LifecycleHooks,
 }
 
 pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<RawConfig> {
@@ -105,7 +117,13 @@ mod tests {
                 "containerUser": "dev",
                 "mounts": ["type=bind,src=/tmp,dst=/tmp"],
                 "forwardPorts": [8080, 3000],
-                "command": ["/bin/bash", "-c", "echo hello"]
+                "command": ["/bin/bash", "-c", "echo hello"],
+                "initializeCommand": "echo init",
+                "onCreateCommand": ["echo", "create"],
+                "updateContentCommand": "echo update",
+                "postCreateCommand": "echo post-create",
+                "postStartCommand": "echo post-start",
+                "postAttachCommand": { "a": "echo a", "b": ["echo", "b"] }
             }"#,
         );
         let raw = parse_config_file(file.path(), false).unwrap();
@@ -133,6 +151,33 @@ mod tests {
                 ][..]
             )
         );
+        assert_eq!(
+            raw.initialize_command,
+            Some(LifecycleCommand::Shell("echo init".to_string()))
+        );
+        assert_eq!(
+            raw.on_create_command,
+            Some(LifecycleCommand::Exec(vec![
+                "echo".to_string(),
+                "create".to_string()
+            ]))
+        );
+        assert_eq!(
+            raw.update_content_command,
+            Some(LifecycleCommand::Shell("echo update".to_string()))
+        );
+        assert_eq!(
+            raw.post_create_command,
+            Some(LifecycleCommand::Shell("echo post-create".to_string()))
+        );
+        assert_eq!(
+            raw.post_start_command,
+            Some(LifecycleCommand::Shell("echo post-start".to_string()))
+        );
+        assert!(matches!(
+            raw.post_attach_command,
+            Some(LifecycleCommand::Parallel(_))
+        ));
         assert!(raw.extra.is_empty());
     }
 
@@ -160,20 +205,20 @@ mod tests {
 
     #[test]
     fn unknown_field_warn_mode() {
-        let file = write_temp(r#"{ "onCreateCommand": "foo" }"#);
+        let file = write_temp(r#"{ "fooBarBaz": "foo" }"#);
         let result = parse_config_file(file.path(), false);
         assert!(result.is_ok());
         let raw = result.unwrap();
-        assert!(raw.extra.contains_key("onCreateCommand"));
+        assert!(raw.extra.contains_key("fooBarBaz"));
     }
 
     #[test]
     fn unknown_field_strict_mode() {
-        let file = write_temp(r#"{ "onCreateCommand": "foo" }"#);
+        let file = write_temp(r#"{ "fooBarBaz": "foo" }"#);
         let result = parse_config_file(file.path(), true);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("onCreateCommand"));
+        assert!(err.to_string().contains("fooBarBaz"));
     }
 
     #[test]
@@ -189,6 +234,12 @@ mod tests {
         assert!(raw.mounts.is_none());
         assert!(raw.forward_ports.is_none());
         assert!(raw.command.is_none());
+        assert!(raw.initialize_command.is_none());
+        assert!(raw.on_create_command.is_none());
+        assert!(raw.update_content_command.is_none());
+        assert!(raw.post_create_command.is_none());
+        assert!(raw.post_start_command.is_none());
+        assert!(raw.post_attach_command.is_none());
         assert!(raw.extra.is_empty());
     }
 
