@@ -44,6 +44,8 @@ struct FeatureMeta {
     /// devcontainer.json hook of the same type, in feature installation order.
     #[serde(flatten)]
     lifecycle: LifecycleHooks,
+    /// Named shell commands that can be invoked with `dcc run <name>`.
+    scripts: IndexMap<String, String>,
 }
 
 /// A mount from `devcontainer-feature.json`, in the JSON object form.
@@ -82,6 +84,9 @@ pub(crate) struct FeatureRuntimeConfig {
     /// `(feature reference, hooks)` pairs in installation order. Stored as
     /// raw templates; variable references are substituted at run time.
     pub(crate) feature_hooks: Vec<(String, LifecycleHooks)>,
+    /// Named shell commands contributed by features, merged with devcontainer
+    /// scripts at `dcc run` time. Last-installed feature wins on conflict.
+    pub(crate) scripts: IndexMap<String, String>,
 }
 
 /// One entry in the feature lockfile — the resolved state of a single feature.
@@ -160,6 +165,11 @@ pub(crate) async fn build_context(
         if !entry.meta.remote_env.is_empty() {
             label_entry["remoteEnv"] = serde_json::to_value(&entry.meta.remote_env)
                 .context("failed to serialize feature remoteEnv")?;
+        }
+
+        if !entry.meta.scripts.is_empty() {
+            label_entry["scripts"] = serde_json::to_value(&entry.meta.scripts)
+                .context("failed to serialize feature scripts")?;
         }
 
         for (name, get) in HOOKS {
@@ -266,6 +276,13 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
             let env: IndexMap<String, String> = serde_json::from_value(env_val.clone())
                 .context("failed to parse 'remoteEnv' in devcontainer.metadata label")?;
             config.remote_env.extend(env);
+        }
+
+        // scripts: last-installed feature wins on conflict
+        if let Some(scripts_val) = entry.get("scripts") {
+            let scripts: IndexMap<String, String> = serde_json::from_value(scripts_val.clone())
+                .context("failed to parse 'scripts' in devcontainer.metadata label")?;
+            config.scripts.extend(scripts);
         }
 
         // lifecycle hooks: collect (id, hooks) for every entry declaring at least one
@@ -801,6 +818,7 @@ mod tests {
             forward_ports: vec![],
             initialize_command: None,
             lifecycle: LifecycleHooks::default(),
+            scripts: HashMap::new(),
         }
     }
 
@@ -984,5 +1002,54 @@ mod tests {
         let json = r#"[{"id":"feat","command":["/ep.sh"]}]"#;
         let config = parse_runtime_from_label(json).unwrap();
         assert!(config.feature_hooks.is_empty());
+    }
+
+    #[test]
+    fn parse_meta_scripts_parsed() {
+        let json = serde_json::json!({
+            "id": "my-feature",
+            "scripts": { "build": "cargo build", "test": "cargo test" }
+        });
+        let bytes = serde_json::to_vec(&json).unwrap();
+        let meta = parse_feature_meta(Some(&bytes));
+        assert_eq!(
+            meta.scripts.get("build").map(String::as_str),
+            Some("cargo build")
+        );
+        assert_eq!(
+            meta.scripts.get("test").map(String::as_str),
+            Some("cargo test")
+        );
+    }
+
+    #[test]
+    fn parse_label_scripts_collected() {
+        let json = r#"[{"id":"feat","scripts":{"build":"make all","lint":"make lint"}}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.scripts.get("build").map(String::as_str),
+            Some("make all")
+        );
+        assert_eq!(
+            config.scripts.get("lint").map(String::as_str),
+            Some("make lint")
+        );
+    }
+
+    #[test]
+    fn parse_label_scripts_last_feature_wins() {
+        let json = r#"[
+            {"id":"feat-a","scripts":{"build":"make a"}},
+            {"id":"feat-b","scripts":{"build":"make b","extra":"extra-cmd"}}
+        ]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.scripts.get("build").map(String::as_str),
+            Some("make b")
+        );
+        assert_eq!(
+            config.scripts.get("extra").map(String::as_str),
+            Some("extra-cmd")
+        );
     }
 }

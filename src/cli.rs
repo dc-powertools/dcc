@@ -42,4 +42,9 @@ pub(crate) enum Command {
         #[arg(short = 'p', long, default_value = "devcontainer")]
         profile: String,
     },
+    Run {
+        #[arg(short = 'p', long, default_value = "devcontainer")]
+        profile: String,
+        script: String,
+    },
 }

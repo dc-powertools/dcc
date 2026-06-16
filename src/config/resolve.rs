@@ -73,6 +73,7 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),
         initialize_command: raw.initialize_command,
+        scripts: raw.scripts.unwrap_or_default(),
         lifecycle: LifecycleHooks {
             on_create_command: raw.on_create_command,
             update_content_command: raw.update_content_command,

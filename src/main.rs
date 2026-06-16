@@ -9,6 +9,7 @@ mod join;
 mod lifecycle;
 mod profile;
 mod run;
+mod script;
 mod stop;
 mod workspace;
 
@@ -83,6 +84,10 @@ async fn run() -> anyhow::Result<()> {
             let (profile, _) = resolve_profile(&profile, &workspace, &cwd)?;
             println!("{}", profile::ContainerName::new(&workspace, &profile));
             Ok(())
+        }
+        cli::Command::Run { profile, script } => {
+            let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
+            script::run_script(&workspace, &profile, &config_path, &script, cli.strict).await
         }
     }
 }

@@ -22,6 +22,7 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         post_create_command: child.post_create_command.or(parent.post_create_command),
         post_start_command: child.post_start_command.or(parent.post_start_command),
         post_attach_command: child.post_attach_command.or(parent.post_attach_command),
+        scripts: merge_option_hash_maps(parent.scripts, child.scripts),
         extra: merge_hash_maps(parent.extra, child.extra),
     }
 }
@@ -111,6 +112,7 @@ mod tests {
             post_create_command: None,
             post_start_command: None,
             post_attach_command: None,
+            scripts: None,
             extra: Default::default(),
         }
     }
@@ -433,6 +435,29 @@ mod tests {
         assert_eq!(env["K"], "V");
         assert_eq!(result.mounts.as_deref(), Some(&["m".to_string()][..]));
         assert_eq!(result.forward_ports.as_deref(), Some(&[8080u16][..]));
+    }
+
+    #[test]
+    fn scripts_child_wins_on_conflict() {
+        let mut parent_scripts = HashMap::new();
+        parent_scripts.insert("build".to_string(), "make parent".to_string());
+        parent_scripts.insert("test".to_string(), "make test".to_string());
+        let mut child_scripts = HashMap::new();
+        child_scripts.insert("build".to_string(), "cargo build".to_string());
+        child_scripts.insert("lint".to_string(), "cargo clippy".to_string());
+        let parent = RawConfig {
+            scripts: Some(parent_scripts),
+            ..empty()
+        };
+        let child = RawConfig {
+            scripts: Some(child_scripts),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        let scripts = result.scripts.unwrap();
+        assert_eq!(scripts["build"], "cargo build");
+        assert_eq!(scripts["test"], "make test");
+        assert_eq!(scripts["lint"], "cargo clippy");
     }
 
     proptest! {

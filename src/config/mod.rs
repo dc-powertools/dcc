@@ -36,6 +36,7 @@ pub(crate) struct RawConfig {
     pub(crate) post_create_command: Option<LifecycleCommand>,
     pub(crate) post_start_command: Option<LifecycleCommand>,
     pub(crate) post_attach_command: Option<LifecycleCommand>,
+    pub(crate) scripts: Option<HashMap<String, String>>,
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
 }
@@ -51,6 +52,7 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) forward_ports: Vec<u16>,
     pub(crate) initialize_command: Option<LifecycleCommand>,
     pub(crate) lifecycle: LifecycleHooks,
+    pub(crate) scripts: HashMap<String, String>,
 }
 
 pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<RawConfig> {
@@ -120,7 +122,8 @@ mod tests {
                 "updateContentCommand": "echo update",
                 "postCreateCommand": "echo post-create",
                 "postStartCommand": "echo post-start",
-                "postAttachCommand": { "a": "echo a", "b": ["echo", "b"] }
+                "postAttachCommand": { "a": "echo a", "b": ["echo", "b"] },
+                "scripts": { "build": "cargo build" }
             }"#,
         );
         let raw = parse_config_file(file.path(), false).unwrap();
@@ -165,6 +168,7 @@ mod tests {
             raw.post_attach_command,
             Some(LifecycleCommand::Parallel(_))
         ));
+        assert!(raw.scripts.is_some());
         assert!(raw.extra.is_empty());
     }
 
@@ -226,6 +230,7 @@ mod tests {
         assert!(raw.post_create_command.is_none());
         assert!(raw.post_start_command.is_none());
         assert!(raw.post_attach_command.is_none());
+        assert!(raw.scripts.is_none());
         assert!(raw.extra.is_empty());
     }
 
