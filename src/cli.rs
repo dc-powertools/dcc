@@ -16,6 +16,8 @@ pub(crate) enum Command {
         profile: String,
         #[arg(long)]
         no_cache: bool,
+        #[arg(long)]
+        update: bool,
     },
     #[command(trailing_var_arg = true)]
     Run {

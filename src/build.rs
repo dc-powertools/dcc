@@ -16,6 +16,7 @@ pub(crate) async fn build(
     profile: &ProfileName,
     config_path: &Path,
     no_cache: bool,
+    update: bool,
     strict: bool,
 ) -> anyhow::Result<()> {
     let cache_dir = CacheDir::new(workspace, profile);
@@ -54,7 +55,11 @@ pub(crate) async fn build(
                 config_path.display()
             )
         })?;
-        let locked_digests = load_locked_digests(config_path);
+        let locked_digests = if update {
+            HashMap::new()
+        } else {
+            load_locked_digests(config_path)
+        };
         let output = crate::features::build_context(&config, config_dir, &locked_digests)
             .await
             .context("failed to build feature context")?;

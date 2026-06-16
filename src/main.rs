@@ -36,9 +36,21 @@ async fn run() -> anyhow::Result<()> {
     let workspace =
         workspace::find_workspace().context("failed to locate .devcontainer directory")?;
     match cli.command {
-        cli::Command::Build { profile, no_cache } => {
+        cli::Command::Build {
+            profile,
+            no_cache,
+            update,
+        } => {
             let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
-            build::build(&workspace, &profile, &config_path, no_cache, cli.strict).await
+            build::build(
+                &workspace,
+                &profile,
+                &config_path,
+                no_cache,
+                update,
+                cli.strict,
+            )
+            .await
         }
         cli::Command::Run {
             profile,
