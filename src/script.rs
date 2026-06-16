@@ -17,7 +17,7 @@ pub(crate) async fn run_script(
     workspace: &Workspace,
     profile: &ProfileName,
     config_path: &Path,
-    script_arg: &str,
+    script_arg: Option<&str>,
     strict: bool,
 ) -> anyhow::Result<()> {
     let cache_dir = CacheDir::new(workspace, profile);
@@ -27,13 +27,6 @@ pub(crate) async fn run_script(
     let container = ContainerName::new(workspace, profile);
     let image_tag = container.as_image_tag();
 
-    if !docker::inspect_running(container.as_str()).await? {
-        anyhow::bail!(
-            "container `{}` is not running; start it with `dcc exec`",
-            container.as_str()
-        );
-    }
-
     let feature_runtime = match docker::inspect_image_label(image_tag.as_str()).await? {
         None => FeatureRuntimeConfig::default(),
         Some(ref json) => features::parse_runtime_from_label(json).with_context(|| {
@@ -41,12 +34,22 @@ pub(crate) async fn run_script(
         })?,
     };
 
-    let cmd = resolve_script(
-        script_arg,
-        &config.scripts,
-        &feature_runtime.feature_scripts,
-    )
-    .with_context(|| format!("failed to resolve script `{script_arg}`"))?;
+    let Some(arg) = script_arg else {
+        for line in format_script_list(&config.scripts, &feature_runtime.feature_scripts) {
+            println!("{line}");
+        }
+        return Ok(());
+    };
+
+    if !docker::inspect_running(container.as_str()).await? {
+        anyhow::bail!(
+            "container `{}` is not running; start it with `dcc exec`",
+            container.as_str()
+        );
+    }
+
+    let cmd = resolve_script(arg, &config.scripts, &feature_runtime.feature_scripts)
+        .with_context(|| format!("failed to resolve script `{arg}`"))?;
 
     let argv = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()];
     let status = docker::exec(
@@ -150,6 +153,28 @@ fn parse_script_arg(arg: &str) -> ParsedArg<'_> {
     } else {
         ParsedArg::Unqualified(arg)
     }
+}
+
+/// Returns one indented line per available script, sorted within each source group.
+/// Used by `dcc run` (no args) to display available scripts.
+fn format_script_list(
+    dc_scripts: &HashMap<String, String>,
+    feature_scripts: &[(String, IndexMap<String, String>)],
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut dc_names: Vec<&str> = dc_scripts.keys().map(String::as_str).collect();
+    dc_names.sort_unstable();
+    for name in dc_names {
+        lines.push(format!("  :{name}"));
+    }
+    for (id, scripts) in feature_scripts {
+        let mut names: Vec<&str> = scripts.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        for name in names {
+            lines.push(format!("  {id}:{name}"));
+        }
+    }
+    lines
 }
 
 fn list_all_scripts(
@@ -310,5 +335,35 @@ mod tests {
         let feats = [feat("node", &[("lint", "eslint .")])];
         let result = list_all_scripts(&dc(&[]), &feats);
         assert!(result.contains("node:lint"));
+    }
+
+    // --- format_script_list ---
+
+    #[test]
+    fn format_empty_returns_no_lines() {
+        assert!(format_script_list(&dc(&[]), &[]).is_empty());
+    }
+
+    #[test]
+    fn format_dc_scripts_indented_with_colon_prefix() {
+        let lines = format_script_list(&dc(&[("build", "x"), ("test", "y")]), &[]);
+        assert!(lines.contains(&"  :build".to_string()));
+        assert!(lines.contains(&"  :test".to_string()));
+    }
+
+    #[test]
+    fn format_feature_scripts_indented_with_id_prefix() {
+        let feats = [feat("node", &[("lint", "eslint .")])];
+        let lines = format_script_list(&dc(&[]), &feats);
+        assert_eq!(lines, vec!["  node:lint"]);
+    }
+
+    #[test]
+    fn format_dc_scripts_appear_before_feature_scripts() {
+        let feats = [feat("node", &[("build", "npm run build")])];
+        let lines = format_script_list(&dc(&[("build", "make all")]), &feats);
+        let dc_pos = lines.iter().position(|l| l == "  :build").unwrap();
+        let feat_pos = lines.iter().position(|l| l == "  node:build").unwrap();
+        assert!(dc_pos < feat_pos);
     }
 }

@@ -45,6 +45,6 @@ pub(crate) enum Command {
     Run {
         #[arg(short = 'p', long, default_value = "devcontainer")]
         profile: String,
-        script: String,
+        script: Option<String>,
     },
 }

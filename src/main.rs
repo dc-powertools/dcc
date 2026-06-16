@@ -87,7 +87,14 @@ async fn run() -> anyhow::Result<()> {
         }
         cli::Command::Run { profile, script } => {
             let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
-            script::run_script(&workspace, &profile, &config_path, &script, cli.strict).await
+            script::run_script(
+                &workspace,
+                &profile,
+                &config_path,
+                script.as_deref(),
+                cli.strict,
+            )
+            .await
         }
     }
 }
