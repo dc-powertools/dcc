@@ -52,7 +52,7 @@ async fn run() -> anyhow::Result<()> {
             )
             .await
         }
-        cli::Command::Run {
+        cli::Command::Exec {
             profile,
             memory,
             cpus,

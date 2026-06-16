@@ -20,7 +20,7 @@ pub(crate) enum Command {
         update: bool,
     },
     #[command(trailing_var_arg = true)]
-    Run {
+    Exec {
         #[arg(short = 'p', long, default_value = "devcontainer")]
         profile: String,
         #[arg(long, default_value = "4g")]
