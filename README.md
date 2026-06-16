@@ -229,15 +229,25 @@ configurations must be located within the `.devcontainer` directory.
 
 ### Container identity
 
-Each profile's container is identified by a name derived from the local
-workspace directory and the profile name:
+Each profile's container is identified by a name in the form:
 
 ```
-<workspace-basename>--<profile>
+dcc-<12hex>--<profile>
 ```
 
-For example, a project in `~/code/my-project` with the `claude` profile uses
-the container name `my-project--claude`.
+The `<12hex>` part is the first 12 characters of the SHA-256 hash of a stable
+**repository identity string**. For git repositories with an `origin` remote,
+this is the remote URL (e.g. `https://github.com/org/repo`). For workspaces
+without a git remote, it falls back to the canonical workspace root path.
+
+Using the remote URL means the container name is the same on every machine that
+clones the same repository, regardless of where the directory is located. Renaming
+or moving the directory does not change the container name.
+
+`dcc run` also attaches the standard `devcontainer.local_folder` and
+`devcontainer.config_file` labels to every container it starts, making dcc
+containers discoverable by VS Code and other devcontainer-compatible tools via
+`docker ps --filter label=devcontainer.local_folder=<path>`.
 
 ### Supported devcontainer configuration properties
 

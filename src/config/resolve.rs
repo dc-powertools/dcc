@@ -101,6 +101,7 @@ mod tests {
     fn stub_workspace() -> Workspace {
         Workspace {
             root: PathBuf::from("/tmp"),
+            identity: "/tmp".to_string(),
         }
     }
 

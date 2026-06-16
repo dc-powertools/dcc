@@ -82,16 +82,21 @@ impl AsRef<str> for ProfileName {
 }
 
 impl ContainerName {
-    /// Derives container name as <workspace-basename>--<profile-name>.
-    /// Falls back to "root" if workspace root has no basename (e.g. path is /).
-    /// Per Decision 3 in the plan: returns Self, never Result.
+    /// Derives a stable container name from the workspace identity and profile.
+    ///
+    /// Format: `dcc-<12hex>--<profile>` where `<12hex>` is the first 6 bytes of
+    /// the SHA-256 of the workspace identity string rendered as lowercase hex.
+    /// The identity is the git `origin` remote URL when available, falling back
+    /// to the canonical workspace root path — so the name is identical on every
+    /// machine that clones the same repository.
     pub(crate) fn new(workspace: &Workspace, profile: &ProfileName) -> Self {
-        let basename = workspace
-            .root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("root");
-        Self(format!("{}--{}", basename, profile.0))
+        use sha2::{Digest as _, Sha256};
+        let hash = Sha256::digest(workspace.identity.as_bytes());
+        let hex = format!(
+            "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]
+        );
+        Self(format!("dcc-{}--{}", hex, profile.0))
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -143,23 +148,38 @@ mod tests {
     fn workspace(path: &str) -> Workspace {
         Workspace {
             root: PathBuf::from(path),
+            identity: path.to_string(),
         }
+    }
+
+    fn expected_hex(identity: &str) -> String {
+        use sha2::{Digest as _, Sha256};
+        let hash = Sha256::digest(identity.as_bytes());
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]
+        )
     }
 
     #[test]
     fn container_name_basic() {
         let ws = workspace("/home/user/my-project");
         let p = ProfileName::new("claude");
-        assert_eq!(ContainerName::new(&ws, &p).as_str(), "my-project--claude");
+        let hex = expected_hex("/home/user/my-project");
+        assert_eq!(
+            ContainerName::new(&ws, &p).as_str(),
+            format!("dcc-{hex}--claude")
+        );
     }
 
     #[test]
     fn container_name_default_profile() {
         let ws = workspace("/home/user/my-project");
         let p = ProfileName::new("devcontainer");
+        let hex = expected_hex("/home/user/my-project");
         assert_eq!(
             ContainerName::new(&ws, &p).as_str(),
-            "my-project--devcontainer"
+            format!("dcc-{hex}--devcontainer")
         );
     }
 
@@ -167,7 +187,56 @@ mod tests {
     fn container_name_root_fallback() {
         let ws = workspace("/");
         let p = ProfileName::new("dev");
-        assert_eq!(ContainerName::new(&ws, &p).as_str(), "root--dev");
+        let hex = expected_hex("/");
+        assert_eq!(
+            ContainerName::new(&ws, &p).as_str(),
+            format!("dcc-{hex}--dev")
+        );
+    }
+
+    #[test]
+    fn container_name_dcc_prefix() {
+        let ws = workspace("/any/path");
+        let p = ProfileName::new("test");
+        assert!(ContainerName::new(&ws, &p).as_str().starts_with("dcc-"));
+    }
+
+    #[test]
+    fn container_name_profile_in_suffix() {
+        let ws = workspace("/any/path");
+        let p = ProfileName::new("myprofile");
+        assert!(ContainerName::new(&ws, &p)
+            .as_str()
+            .ends_with("--myprofile"));
+    }
+
+    #[test]
+    fn container_name_same_identity_same_name() {
+        let ws1 = Workspace {
+            root: PathBuf::from("/path/a"),
+            identity: "https://github.com/org/repo".to_string(),
+        };
+        let ws2 = Workspace {
+            root: PathBuf::from("/completely/different/path/b"),
+            identity: "https://github.com/org/repo".to_string(),
+        };
+        let p = ProfileName::new("dev");
+        assert_eq!(
+            ContainerName::new(&ws1, &p).as_str(),
+            ContainerName::new(&ws2, &p).as_str(),
+            "same identity must produce the same container name regardless of root path"
+        );
+    }
+
+    #[test]
+    fn container_name_different_identity_different_name() {
+        let ws1 = workspace("/home/user/project-a");
+        let ws2 = workspace("/home/user/project-b");
+        let p = ProfileName::new("dev");
+        assert_ne!(
+            ContainerName::new(&ws1, &p).as_str(),
+            ContainerName::new(&ws2, &p).as_str(),
+        );
     }
 
     #[test]

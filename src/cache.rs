@@ -39,6 +39,7 @@ mod tests {
     fn ws(path: &str) -> Workspace {
         Workspace {
             root: PathBuf::from(path),
+            identity: path.to_string(),
         }
     }
 
@@ -62,6 +63,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace {
             root: dir.path().to_path_buf(),
+            identity: dir.path().to_string_lossy().into_owned(),
         };
         let cache = CacheDir::new(&ws, &ProfileName::new("test"));
         cache.ensure_exists().expect("first call failed");
@@ -76,6 +78,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace {
             root: dir.path().to_path_buf(),
+            identity: dir.path().to_string_lossy().into_owned(),
         };
         let cache = CacheDir::new(&ws, &ProfileName::new("profile"));
         assert!(!dir.path().join(".dcc").exists());

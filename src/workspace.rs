@@ -6,6 +6,11 @@ use anyhow::Context as _;
 #[derive(Debug)]
 pub(crate) struct Workspace {
     pub(crate) root: PathBuf,
+    /// Stable string identifying this repository, used to derive container names.
+    /// For git repos with an `origin` remote, this is the remote URL (same on every
+    /// machine that clones the repo). Falls back to the canonical workspace root path
+    /// for non-git workspaces or repos without a configured origin.
+    pub(crate) identity: String,
 }
 
 pub(crate) fn find_workspace() -> anyhow::Result<Workspace> {
@@ -26,9 +31,10 @@ fn find_workspace_from(start: &Path) -> anyhow::Result<Workspace> {
 
     for dir in std::iter::once(path.as_path()).chain(path.ancestors().skip(1)) {
         if dir.join(".devcontainer").is_dir() {
-            return Ok(Workspace {
-                root: dir.to_path_buf(),
-            });
+            let root = dir.to_path_buf();
+            let identity =
+                git_remote_url(&root).unwrap_or_else(|| root.to_string_lossy().into_owned());
+            return Ok(Workspace { root, identity });
         }
     }
 
@@ -36,6 +42,26 @@ fn find_workspace_from(start: &Path) -> anyhow::Result<Workspace> {
         "could not find `.devcontainer/` directory in `{}` or any of its ancestors",
         path.display()
     )
+}
+
+/// Returns the `origin` remote URL for the git repo at `root`, or `None` if
+/// `root` is not a git repo, has no `origin` remote, or `git` is not installed.
+fn git_remote_url(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8(output.stdout).ok()?;
+    let url = url.trim().to_owned();
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
 }
 
 #[cfg(test)]

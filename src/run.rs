@@ -100,6 +100,14 @@ pub(crate) async fn run(
     let mut args: Vec<String> = Vec::new();
 
     args.extend(["--name".into(), container.as_str().to_owned()]);
+    args.extend([
+        "--label".into(),
+        format!("devcontainer.local_folder={}", workspace.root.display()),
+    ]);
+    args.extend([
+        "--label".into(),
+        format!("devcontainer.config_file={}", config_path.display()),
+    ]);
     args.push("--rm".into());
     args.push("-dit".into());
     args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
@@ -398,6 +406,7 @@ mod tests {
         CacheDir::new(
             &Workspace {
                 root: root.to_path_buf(),
+                identity: root.to_string_lossy().into_owned(),
             },
             &ProfileName::new("dev"),
         )
