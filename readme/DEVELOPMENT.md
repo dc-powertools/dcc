@@ -21,6 +21,14 @@ cargo test         # full suite, not just the affected module
 
 Fix errors and warnings before moving forward. Don't accumulate a pile of problems to untangle at the end.
 
+## Tool Setup
+
+`rustfmt` and `clippy` are not always bundled with the active toolchain. Install them once before working on the project:
+
+```bash
+rustup component add rustfmt clippy
+```
+
 ## Before Finishing
 
 Run all three checks and confirm they pass cleanly:
@@ -30,6 +38,18 @@ cargo fmt --check
 cargo clippy -- -D warnings
 cargo test
 ```
+
+## Committing
+
+Every commit must leave the repository in a passing state. Before creating a commit, run the full check suite and fix any failures:
+
+```bash
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+```
+
+If `cargo fmt --check` reports a diff, run `cargo fmt` to apply the formatting, then re-stage the affected files before committing.
 
 Then read the full diff critically — not to confirm that changes were made, but to evaluate whether they are correct and complete:
 
