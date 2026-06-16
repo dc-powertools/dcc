@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
+use sha2::{Digest as _, Sha256};
 
 use super::oci::DownloadedFeature;
 
@@ -97,12 +98,14 @@ pub(super) fn load_local_feature(
             feature_dir.display()
         )
     })?;
+    let resolved_digest = format!("sha256:{:x}", Sha256::digest(&install_sh));
 
     Ok(DownloadedFeature {
         install_sh,
         feature_json,
         env,
         extra_files,
+        resolved_digest,
     })
 }
 

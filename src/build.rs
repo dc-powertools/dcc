@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use crate::{
     cache::CacheDir,
     config, docker,
+    features::LockEntry,
     profile::{ContainerName, ProfileName},
     workspace::Workspace,
 };
@@ -63,7 +64,22 @@ pub(crate) async fn build(
         )
         .await
         .with_context(|| format!("failed to build image `{}`", image_tag.as_str()))?;
+
+        write_lockfile(config_path, &output.lock_entries)?;
     }
 
     Ok(())
+}
+
+fn write_lockfile(config_path: &Path, lock_entries: &[LockEntry]) -> anyhow::Result<()> {
+    let lock_path = config_path.with_extension("lock");
+    let lock_json = serde_json::json!({
+        "dccVersion": env!("CARGO_PKG_VERSION"),
+        "features": lock_entries,
+    });
+    std::fs::write(
+        &lock_path,
+        serde_json::to_string_pretty(&lock_json).context("failed to serialise lockfile")?,
+    )
+    .with_context(|| format!("failed to write lockfile `{}`", lock_path.display()))
 }

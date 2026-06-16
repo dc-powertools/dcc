@@ -15,6 +15,10 @@ pub(crate) struct DownloadedFeature {
     /// Additional files from the feature directory beyond install.sh and devcontainer-feature.json.
     /// Each entry is (filename, content, unix_mode). Empty for OCI features.
     pub(crate) extra_files: Vec<(String, Vec<u8>, u32)>,
+    /// Resolved content identifier for this feature.
+    /// For OCI features: the layer blob digest (e.g. `sha256:abc…`) that was verified on download.
+    /// For local features: `sha256:<hex>` of the install.sh content at load time.
+    pub(crate) resolved_digest: String,
 }
 
 pub(crate) struct OciClient {
@@ -103,6 +107,7 @@ impl OciClient {
             feature_json: feature_json_bytes,
             env,
             extra_files,
+            resolved_digest: digest,
         })
     }
 

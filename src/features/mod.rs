@@ -89,12 +89,31 @@ pub(crate) struct FeatureRuntimeConfig {
     pub(crate) feature_hooks: Vec<(String, LifecycleHooks)>,
 }
 
+/// One entry in the feature lockfile — the resolved state of a single feature.
+#[derive(serde::Serialize)]
+pub(crate) struct LockEntry {
+    /// Feature reference exactly as written in `devcontainer.json`.
+    #[serde(rename = "ref")]
+    pub(crate) reference: String,
+    /// Options supplied by the user (or by the declaring `dependsOn`).
+    pub(crate) options: serde_json::Value,
+    /// Content-addressed identifier of what was actually installed.
+    /// OCI features: the layer blob digest (`sha256:…`) verified on download.
+    /// Local features: `sha256:<hex>` of the `install.sh` content at build time.
+    pub(crate) resolved: String,
+    /// `true` when the feature was listed directly in `devcontainer.json`;
+    /// `false` when it was pulled in transitively via `dependsOn`.
+    pub(crate) direct: bool,
+}
+
 /// Return value of `build_context`.
 pub(crate) struct FeatureBuildOutput {
     pub(crate) context_tar: Vec<u8>,
     /// Serialised `devcontainer.metadata` label JSON, or `None` when no feature
     /// contributed any runtime properties (mounts, command, remoteEnv).
     pub(crate) metadata_label: Option<String>,
+    /// Lockfile entries in topological installation order.
+    pub(crate) lock_entries: Vec<LockEntry>,
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────
@@ -125,9 +144,11 @@ pub(crate) async fn build_context(
     let order = topological_sort(&all)?;
 
     // Phase 3: build FeatureContexts and the devcontainer.metadata label entries
+    let direct_refs: HashSet<&str> = config.features.keys().map(String::as_str).collect();
     let mut seen_ids: HashSet<String> = HashSet::new();
     let mut feature_contexts: Vec<FeatureContext> = Vec::new();
     let mut label_entries: Vec<serde_json::Value> = Vec::new();
+    let mut lock_entries: Vec<LockEntry> = Vec::new();
 
     for reference in &order {
         let entry = &all[reference];
@@ -181,6 +202,13 @@ pub(crate) async fn build_context(
             container_env,
             extra_files: entry.downloaded.extra_files.clone(),
         });
+
+        lock_entries.push(LockEntry {
+            reference: reference.clone(),
+            options: entry.user_options.clone(),
+            resolved: entry.downloaded.resolved_digest.clone(),
+            direct: direct_refs.contains(reference.as_str()),
+        });
     }
 
     let mut devcontainer_env: Vec<(String, String)> = config
@@ -211,6 +239,7 @@ pub(crate) async fn build_context(
     Ok(FeatureBuildOutput {
         context_tar,
         metadata_label,
+        lock_entries,
     })
 }
 
@@ -693,6 +722,7 @@ mod tests {
                 feature_json: None,
                 env: IndexMap::new(),
                 extra_files: vec![],
+                resolved_digest: String::new(),
             },
             meta,
         }
