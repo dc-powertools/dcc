@@ -85,13 +85,20 @@ async fn run() -> anyhow::Result<()> {
             println!("{}", profile::ContainerName::new(&workspace, &profile));
             Ok(())
         }
-        cli::Command::Run { profile, script } => {
+        cli::Command::Run {
+            profile,
+            memory,
+            cpus,
+            script,
+        } => {
             let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
             script::run_script(
                 &workspace,
                 &profile,
                 &config_path,
                 script.as_deref(),
+                &memory,
+                &cpus,
                 cli.strict,
             )
             .await

@@ -6,10 +6,10 @@ use indexmap::IndexMap;
 
 use crate::{
     cache::CacheDir,
-    config::{self, vars::CONTAINER_WORKSPACE},
-    docker,
+    config, docker,
     features::{self, FeatureRuntimeConfig},
     profile::{ContainerName, ProfileName},
+    run,
     workspace::Workspace,
 };
 
@@ -18,6 +18,8 @@ pub(crate) async fn run_script(
     profile: &ProfileName,
     config_path: &Path,
     script_arg: Option<&str>,
+    memory: &str,
+    cpus: &str,
     strict: bool,
 ) -> anyhow::Result<()> {
     let cache_dir = CacheDir::new(workspace, profile);
@@ -41,25 +43,20 @@ pub(crate) async fn run_script(
         return Ok(());
     };
 
-    if !docker::inspect_running(container.as_str()).await? {
-        anyhow::bail!(
-            "container `{}` is not running; start it with `dcc exec`",
-            container.as_str()
-        );
-    }
-
     let cmd = resolve_script(arg, &config.scripts, &feature_runtime.feature_scripts)
         .with_context(|| format!("failed to resolve script `{arg}`"))?;
 
-    let argv = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()];
-    let status = docker::exec(
-        container.as_str(),
-        &config.container_user,
-        CONTAINER_WORKSPACE,
-        &argv,
+    let exec_args = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()];
+    let status = run::run(
+        workspace,
+        profile,
+        config_path,
+        memory,
+        cpus,
+        &exec_args,
+        strict,
     )
     .await?;
-
     std::process::exit(status.code().unwrap_or(1));
 }
 
