@@ -84,9 +84,10 @@ pub(crate) struct FeatureRuntimeConfig {
     /// `(feature reference, hooks)` pairs in installation order. Stored as
     /// raw templates; variable references are substituted at run time.
     pub(crate) feature_hooks: Vec<(String, LifecycleHooks)>,
-    /// Named shell commands contributed by features, merged with devcontainer
-    /// scripts at `dcc run` time. Last-installed feature wins on conflict.
-    pub(crate) scripts: IndexMap<String, String>,
+    /// Scripts contributed by installed features, as `(short-id, scripts)` pairs
+    /// in installation order. Kept per-feature so collision detection in
+    /// `dcc run` can identify the source and suggest qualified names.
+    pub(crate) feature_scripts: Vec<(String, IndexMap<String, String>)>,
 }
 
 /// One entry in the feature lockfile — the resolved state of a single feature.
@@ -168,6 +169,10 @@ pub(crate) async fn build_context(
         }
 
         if !entry.meta.scripts.is_empty() {
+            // shortId lets dcc run use a colon-free prefix for disambiguation
+            // (the full "id" reference contains colons in the tag portion).
+            label_entry["shortId"] =
+                serde_json::Value::String(feature_short_id(reference, entry.meta.id.as_deref()));
             label_entry["scripts"] = serde_json::to_value(&entry.meta.scripts)
                 .context("failed to serialize feature scripts")?;
         }
@@ -278,11 +283,19 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
             config.remote_env.extend(env);
         }
 
-        // scripts: last-installed feature wins on conflict
+        // scripts: collect per-feature for collision detection in `dcc run`
         if let Some(scripts_val) = entry.get("scripts") {
             let scripts: IndexMap<String, String> = serde_json::from_value(scripts_val.clone())
                 .context("failed to parse 'scripts' in devcontainer.metadata label")?;
-            config.scripts.extend(scripts);
+            // Use shortId when present (labels written by this version of dcc);
+            // fall back to the full id for labels from older versions.
+            let short_id = entry
+                .get("shortId")
+                .and_then(|v| v.as_str())
+                .or_else(|| entry.get("id").and_then(|v| v.as_str()))
+                .unwrap_or_default()
+                .to_string();
+            config.feature_scripts.push((short_id, scripts));
         }
 
         // lifecycle hooks: collect (id, hooks) for every entry declaring at least one
@@ -512,6 +525,25 @@ fn json_value_to_string(v: &serde_json::Value) -> String {
 /// Local paths start with `./` or `../`, per the devcontainer spec.
 fn is_local_feature(reference: &str) -> bool {
     reference.starts_with("./") || reference.starts_with("../")
+}
+
+/// Derives a colon-free short identifier for a feature, used as the disambiguation
+/// prefix in `dcc run <short-id>:<script-name>`.
+///
+/// Uses the feature's own `id` from `devcontainer-feature.json` when present.
+/// Otherwise derives from the reference: the last `/`-separated segment with
+/// the `:tag` portion stripped (e.g. `ghcr.io/owner/repo/node:1` → `node`,
+/// `./my-feature` → `my-feature`).
+pub(crate) fn feature_short_id(reference: &str, meta_id: Option<&str>) -> String {
+    if let Some(id) = meta_id {
+        return id.to_string();
+    }
+    let segment = reference.rsplit('/').next().unwrap_or(reference);
+    segment
+        .rsplit_once(':')
+        .map(|(base, _)| base)
+        .unwrap_or(segment)
+        .to_string()
 }
 
 #[cfg(test)]
@@ -1026,30 +1058,115 @@ mod tests {
     fn parse_label_scripts_collected() {
         let json = r#"[{"id":"feat","scripts":{"build":"make all","lint":"make lint"}}]"#;
         let config = parse_runtime_from_label(json).unwrap();
-        assert_eq!(
-            config.scripts.get("build").map(String::as_str),
-            Some("make all")
-        );
-        assert_eq!(
-            config.scripts.get("lint").map(String::as_str),
-            Some("make lint")
-        );
+        assert_eq!(config.feature_scripts.len(), 1);
+        let (id, scripts) = &config.feature_scripts[0];
+        assert_eq!(id, "feat");
+        assert_eq!(scripts.get("build").map(String::as_str), Some("make all"));
+        assert_eq!(scripts.get("lint").map(String::as_str), Some("make lint"));
     }
 
     #[test]
-    fn parse_label_scripts_last_feature_wins() {
+    fn parse_label_scripts_per_feature_not_merged() {
+        // Both features define "build" — they are kept separate, not last-wins merged.
         let json = r#"[
             {"id":"feat-a","scripts":{"build":"make a"}},
             {"id":"feat-b","scripts":{"build":"make b","extra":"extra-cmd"}}
         ]"#;
         let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(config.feature_scripts.len(), 2);
+        assert_eq!(config.feature_scripts[0].0, "feat-a");
         assert_eq!(
-            config.scripts.get("build").map(String::as_str),
+            config.feature_scripts[0].1.get("build").map(String::as_str),
+            Some("make a")
+        );
+        assert_eq!(config.feature_scripts[1].0, "feat-b");
+        assert_eq!(
+            config.feature_scripts[1].1.get("build").map(String::as_str),
             Some("make b")
         );
         assert_eq!(
-            config.scripts.get("extra").map(String::as_str),
+            config.feature_scripts[1].1.get("extra").map(String::as_str),
             Some("extra-cmd")
         );
+    }
+
+    #[test]
+    fn parse_label_scripts_uses_short_id_when_present() {
+        let json = r#"[{"id":"ghcr.io/owner/repo/node:1","shortId":"node","scripts":{"build":"npm run build"}}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(config.feature_scripts[0].0, "node");
+    }
+
+    #[test]
+    fn parse_label_scripts_falls_back_to_id_without_short_id() {
+        // Labels from old dcc versions have no shortId field.
+        let json = r#"[{"id":"./local-feat","scripts":{"lint":"cargo clippy"}}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(config.feature_scripts[0].0, "./local-feat");
+    }
+
+    // --- feature_short_id ---
+
+    #[test]
+    fn short_id_uses_meta_id_when_present() {
+        assert_eq!(
+            feature_short_id("ghcr.io/owner/repo/node:1", Some("node")),
+            "node"
+        );
+    }
+
+    #[test]
+    fn short_id_derived_from_oci_reference() {
+        assert_eq!(
+            feature_short_id("ghcr.io/devcontainers/features/node:1", None),
+            "node"
+        );
+    }
+
+    #[test]
+    fn short_id_derived_from_local_reference() {
+        assert_eq!(feature_short_id("./my-feature", None), "my-feature");
+        assert_eq!(feature_short_id("../sibling-feat", None), "sibling-feat");
+    }
+
+    #[test]
+    fn short_id_reference_without_tag() {
+        assert_eq!(feature_short_id("ghcr.io/owner/repo/tool", None), "tool");
+    }
+
+    // --- build_context: shortId emitted alongside scripts ---
+
+    #[tokio::test]
+    async fn build_context_scripts_emit_short_id_in_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"id":"my-tool","scripts":{"lint":"cargo clippy"}}"#,
+        );
+        let output = build_context(&config, tmp.path(), &HashMap::new())
+            .await
+            .unwrap();
+        let label = output
+            .metadata_label
+            .expect("scripts-only feature should produce a label");
+        let parsed: serde_json::Value = serde_json::from_str(&label).unwrap();
+        let entry = &parsed[0];
+        assert_eq!(entry["shortId"].as_str(), Some("my-tool"));
+        assert_eq!(entry["scripts"]["lint"].as_str(), Some("cargo clippy"));
+    }
+
+    #[tokio::test]
+    async fn build_context_no_short_id_when_no_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(tmp.path(), br#"{"postCreateCommand":"echo hello"}"#);
+        let output = build_context(&config, tmp.path(), &HashMap::new())
+            .await
+            .unwrap();
+        let label = output
+            .metadata_label
+            .expect("hook feature should produce a label");
+        let parsed: serde_json::Value = serde_json::from_str(&label).unwrap();
+        let entry = &parsed[0];
+        assert!(entry.get("shortId").is_none());
     }
 }
