@@ -3,13 +3,13 @@ mod cache;
 mod cli;
 mod config;
 mod docker;
+mod exec;
 mod features;
 mod forward;
 mod join;
 mod lifecycle;
 mod profile;
 mod run;
-mod script;
 mod stop;
 mod workspace;
 
@@ -60,7 +60,7 @@ async fn run() -> anyhow::Result<()> {
             args,
         } => {
             let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
-            let status = run::run(
+            let status = exec::exec(
                 &workspace,
                 &profile,
                 &config_path,
@@ -92,7 +92,7 @@ async fn run() -> anyhow::Result<()> {
             script,
         } => {
             let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
-            script::run_script(
+            run::run(
                 &workspace,
                 &profile,
                 &config_path,
