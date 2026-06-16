@@ -85,16 +85,22 @@ impl OciClient {
         &mut self,
         feature_ref: &str,
         user_options: &serde_json::Value,
+        locked_digest: Option<&str>,
     ) -> anyhow::Result<DownloadedFeature> {
         let parsed = FeatureRef::parse(feature_ref)
             .with_context(|| format!("invalid feature reference: {feature_ref}"))?;
-        let manifest = self
-            .fetch_manifest(&parsed)
-            .await
-            .with_context(|| format!("failed to fetch manifest for {feature_ref}"))?;
-        let digest = find_feature_layer(&manifest).with_context(|| {
-            format!("failed to find feature layer in manifest for {feature_ref}")
-        })?;
+        let digest = match locked_digest {
+            Some(d) => d.to_string(),
+            None => {
+                let manifest = self
+                    .fetch_manifest(&parsed)
+                    .await
+                    .with_context(|| format!("failed to fetch manifest for {feature_ref}"))?;
+                find_feature_layer(&manifest).with_context(|| {
+                    format!("failed to find feature layer in manifest for {feature_ref}")
+                })?
+            }
+        };
         let blob = self
             .download_blob(&parsed, &digest)
             .await

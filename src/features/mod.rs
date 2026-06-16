@@ -134,11 +134,12 @@ struct FeatureEntry {
 pub(crate) async fn build_context(
     config: &DevcontainerConfig,
     config_dir: &Path,
+    locked_digests: &HashMap<String, String>,
 ) -> anyhow::Result<FeatureBuildOutput> {
     let mut client = OciClient::new().context("failed to initialize OCI HTTP client")?;
 
     // Phase 1: resolve the full feature set (dependsOn may add new features)
-    let all = resolve_features(config, config_dir, &mut client).await?;
+    let all = resolve_features(config, config_dir, &mut client, locked_digests).await?;
 
     // Phase 2: topological sort (dependsOn hard ordering + installsAfter hints)
     let order = topological_sort(&all)?;
@@ -324,6 +325,7 @@ async fn resolve_features(
     config: &DevcontainerConfig,
     config_dir: &Path,
     client: &mut OciClient,
+    locked_digests: &HashMap<String, String>,
 ) -> anyhow::Result<IndexMap<String, FeatureEntry>> {
     let mut all: IndexMap<String, FeatureEntry> = IndexMap::new();
     // Maps reference → options for every feature that has been enqueued.
@@ -344,8 +346,9 @@ async fn resolve_features(
             local::load_local_feature(&reference, config_dir, &user_options)
                 .with_context(|| format!("failed to load local feature `{reference}`"))?
         } else {
+            let locked = locked_digests.get(&reference).map(String::as_str);
             client
-                .download_feature(&reference, &user_options)
+                .download_feature(&reference, &user_options, locked)
                 .await
                 .with_context(|| format!("failed to download feature `{reference}`"))?
         };
@@ -841,7 +844,9 @@ mod tests {
             tmp.path(),
             br#"{"containerEnv":{"PROJECT_ROOT":"${localWorkspaceFolder}/src","CACHE_DIR":"${containerCacheFolder}/data"}}"#,
         );
-        let output = build_context(&config, tmp.path()).await.unwrap();
+        let output = build_context(&config, tmp.path(), &HashMap::new())
+            .await
+            .unwrap();
         let dockerfile = extract_dockerfile(&output.context_tar);
         // ${localWorkspaceFolder} is unknown in container-only context — left as-is
         assert!(
@@ -862,7 +867,9 @@ mod tests {
         config
             .container_env
             .insert("DC_VAR".to_string(), "dc_value".to_string());
-        let output = build_context(&config, tmp.path()).await.unwrap();
+        let output = build_context(&config, tmp.path(), &HashMap::new())
+            .await
+            .unwrap();
         let dockerfile = extract_dockerfile(&output.context_tar);
 
         let dc_pos = dockerfile
@@ -888,7 +895,9 @@ mod tests {
             tmp.path(),
             br#"{"remoteEnv":{"TOKEN":"${localCacheFolder}/tok"}}"#,
         );
-        let output = build_context(&config, tmp.path()).await.unwrap();
+        let output = build_context(&config, tmp.path(), &HashMap::new())
+            .await
+            .unwrap();
         let label = output.metadata_label.expect("expected metadata label");
         let runtime = parse_runtime_from_label(&label).unwrap();
         // remoteEnv is stored as a raw template — variable not substituted
@@ -905,7 +914,9 @@ mod tests {
             tmp.path(),
             br#"{"postCreateCommand":"echo hello from feature"}"#,
         );
-        let output = build_context(&config, tmp.path()).await.unwrap();
+        let output = build_context(&config, tmp.path(), &HashMap::new())
+            .await
+            .unwrap();
         let label = output
             .metadata_label
             .expect("hook-only feature should still produce a metadata label");

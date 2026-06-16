@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -53,7 +54,8 @@ pub(crate) async fn build(
                 config_path.display()
             )
         })?;
-        let output = crate::features::build_context(&config, config_dir)
+        let locked_digests = load_locked_digests(config_path);
+        let output = crate::features::build_context(&config, config_dir, &locked_digests)
             .await
             .context("failed to build feature context")?;
         docker::build(
@@ -69,6 +71,30 @@ pub(crate) async fn build(
     }
 
     Ok(())
+}
+
+fn load_locked_digests(config_path: &Path) -> HashMap<String, String> {
+    let lock_path = config_path.with_extension("lock");
+    let Ok(content) = std::fs::read(&lock_path) else {
+        return HashMap::new();
+    };
+    #[derive(serde::Deserialize)]
+    struct Lock {
+        features: Vec<Entry>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        #[serde(rename = "ref")]
+        reference: String,
+        resolved: String,
+    }
+    let Ok(lock) = serde_json::from_slice::<Lock>(&content) else {
+        return HashMap::new();
+    };
+    lock.features
+        .into_iter()
+        .map(|e| (e.reference, e.resolved))
+        .collect()
 }
 
 fn write_lockfile(config_path: &Path, lock_entries: &[LockEntry]) -> anyhow::Result<()> {
