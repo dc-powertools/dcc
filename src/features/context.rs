@@ -84,6 +84,13 @@ fn generate_dockerfile(
         "LABEL dcc.version={}",
         shell_quote(env!("CARGO_PKG_VERSION"))
     ));
+    if !features.is_empty() || install_nc {
+        // Suppress debconf's Dialog→Readline→Teletype→Noninteractive fallback
+        // warnings that appear when apt-get runs without a controlling terminal.
+        // ARG (unlike ENV) is not baked into the final image, so interactive
+        // debconf tools remain usable inside the running container.
+        lines.push("ARG DEBIAN_FRONTEND=noninteractive".to_string());
+    }
     for (k, v) in devcontainer_env {
         lines.push(format!("ENV {}={}", k, shell_quote(v)));
     }
@@ -473,6 +480,41 @@ mod tests {
         };
         let df = generate_dockerfile("rust:1", &[], &[f], "root", false);
         assert!(df.contains("VERSION='20'"));
+    }
+
+    #[test]
+    fn dockerfile_debian_frontend_set_when_features_present() {
+        let f = FeatureContext {
+            id: "feat".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[], &[f], "root", false);
+        assert!(
+            df.contains("ARG DEBIAN_FRONTEND=noninteractive"),
+            "DEBIAN_FRONTEND ARG must be present when features are installed"
+        );
+    }
+
+    #[test]
+    fn dockerfile_debian_frontend_set_when_install_nc() {
+        let df = generate_dockerfile("rust:1", &[], &[], "root", true);
+        assert!(
+            df.contains("ARG DEBIAN_FRONTEND=noninteractive"),
+            "DEBIAN_FRONTEND ARG must be present when nc is installed"
+        );
+    }
+
+    #[test]
+    fn dockerfile_debian_frontend_absent_when_no_apt_steps() {
+        let df = generate_dockerfile("rust:1", &[], &[], "root", false);
+        assert!(
+            !df.contains("DEBIAN_FRONTEND"),
+            "DEBIAN_FRONTEND must not appear when no apt-get steps are generated"
+        );
     }
 
     #[test]
