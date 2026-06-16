@@ -67,6 +67,11 @@ async fn run() -> anyhow::Result<()> {
             let (profile, _) = resolve_profile(&profile, &workspace, &cwd)?;
             stop::stop(&workspace, &profile).await
         }
+        cli::Command::Id { profile } => {
+            let (profile, _) = resolve_profile(&profile, &workspace, &cwd)?;
+            println!("{}", profile::ContainerName::new(&workspace, &profile));
+            Ok(())
+        }
     }
 }
 
