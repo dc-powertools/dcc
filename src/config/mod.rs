@@ -30,7 +30,6 @@ pub(crate) struct RawConfig {
     pub(crate) container_user: Option<String>,
     pub(crate) mounts: Option<Vec<String>>,
     pub(crate) forward_ports: Option<Vec<u16>>,
-    pub(crate) command: Option<Vec<String>>,
     pub(crate) initialize_command: Option<LifecycleCommand>,
     pub(crate) on_create_command: Option<LifecycleCommand>,
     pub(crate) update_content_command: Option<LifecycleCommand>,
@@ -50,7 +49,6 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) container_user: String,
     pub(crate) mounts: Vec<String>,
     pub(crate) forward_ports: Vec<u16>,
-    pub(crate) command: Option<Vec<String>>,
     pub(crate) initialize_command: Option<LifecycleCommand>,
     pub(crate) lifecycle: LifecycleHooks,
 }
@@ -117,7 +115,6 @@ mod tests {
                 "containerUser": "dev",
                 "mounts": ["type=bind,src=/tmp,dst=/tmp"],
                 "forwardPorts": [8080, 3000],
-                "command": ["/bin/bash", "-c", "echo hello"],
                 "initializeCommand": "echo init",
                 "onCreateCommand": ["echo", "create"],
                 "updateContentCommand": "echo update",
@@ -141,16 +138,6 @@ mod tests {
             Some(&[String::from("type=bind,src=/tmp,dst=/tmp")][..])
         );
         assert_eq!(raw.forward_ports.as_deref(), Some(&[8080u16, 3000u16][..]));
-        assert_eq!(
-            raw.command.as_deref(),
-            Some(
-                &[
-                    "/bin/bash".to_string(),
-                    "-c".to_string(),
-                    "echo hello".to_string()
-                ][..]
-            )
-        );
         assert_eq!(
             raw.initialize_command,
             Some(LifecycleCommand::Shell("echo init".to_string()))
@@ -233,7 +220,6 @@ mod tests {
         assert!(raw.container_user.is_none());
         assert!(raw.mounts.is_none());
         assert!(raw.forward_ports.is_none());
-        assert!(raw.command.is_none());
         assert!(raw.initialize_command.is_none());
         assert!(raw.on_create_command.is_none());
         assert!(raw.update_content_command.is_none());

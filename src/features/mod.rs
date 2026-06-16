@@ -25,8 +25,6 @@ struct FeatureMeta {
     /// The feature's canonical identifier within its repository (e.g. `"node"`).
     /// Used to resolve `installsAfter` references.
     id: Option<String>,
-    /// Command array passed as Docker's `--entrypoint` when the container starts.
-    command: Option<Vec<String>>,
     /// Environment variables to bake into the image via Dockerfile `ENV` before
     /// this feature's install script runs.
     container_env: IndexMap<String, String>,
@@ -77,9 +75,6 @@ pub(crate) struct FeatureRuntimeConfig {
     /// Additional mounts to pass to `docker run`, in `--mount` template string form.
     /// Variable references (e.g. `${localCacheFolder}`) are substituted at run time.
     pub(crate) mounts: Vec<String>,
-    /// Command contributed by features. The last feature in installation order wins.
-    /// `None` when no installed feature declares a command.
-    pub(crate) command: Option<Vec<String>>,
     /// Environment variables to pass as `-e KEY=VALUE` flags to `docker run`.
     /// Stored as raw templates; variable references are substituted at run time.
     pub(crate) remote_env: IndexMap<String, String>,
@@ -156,11 +151,6 @@ pub(crate) async fn build_context(
 
         // Build the label entry for this feature (only fields with content are included)
         let mut label_entry = serde_json::json!({ "id": reference });
-
-        if let Some(cmd) = &entry.meta.command {
-            label_entry["command"] =
-                serde_json::to_value(cmd).context("failed to serialize feature command")?;
-        }
 
         if !entry.meta.mounts.is_empty() {
             label_entry["mounts"] = serde_json::to_value(&entry.meta.mounts)
@@ -262,22 +252,6 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
     let mut config = FeatureRuntimeConfig::default();
 
     for entry in &entries {
-        // command: last entry wins; warn when a prior value is replaced
-        if let Some(cmd_val) = entry.get("command") {
-            let cmd: Vec<String> = serde_json::from_value(cmd_val.clone())
-                .context("failed to parse 'command' in devcontainer.metadata label")?;
-            if !cmd.is_empty() {
-                if let Some(prev) = &config.command {
-                    tracing::warn!(
-                        clobbered = ?prev,
-                        replacement = ?cmd,
-                        "feature command clobbered by later entry in devcontainer.metadata label"
-                    );
-                }
-                config.command = Some(cmd);
-            }
-        }
-
         // mounts: collect all; convert JSON objects to --mount template strings
         if let Some(mounts_val) = entry.get("mounts") {
             let mounts: Vec<FeatureMount> = serde_json::from_value(mounts_val.clone())
@@ -613,7 +587,6 @@ mod tests {
     fn parse_meta_empty_bytes_gives_default() {
         let meta = parse_feature_meta(None);
         assert!(meta.id.is_none());
-        assert!(meta.command.is_none());
         assert!(meta.container_env.is_empty());
         assert!(meta.mounts.is_empty());
         assert!(meta.installs_after.is_empty());
@@ -625,7 +598,6 @@ mod tests {
     fn parse_meta_all_fields() {
         let json = serde_json::json!({
             "id": "my-feature",
-            "command": ["/usr/local/share/my-feature/entrypoint.sh"],
             "containerEnv": { "MY_VAR": "hello" },
             "mounts": [{ "source": "vol", "target": "/data", "type": "volume" }],
             "installsAfter": ["common-utils"],
@@ -639,10 +611,6 @@ mod tests {
         let bytes = serde_json::to_vec(&json).unwrap();
         let meta = parse_feature_meta(Some(&bytes));
         assert_eq!(meta.id.as_deref(), Some("my-feature"));
-        assert_eq!(
-            meta.command.as_deref(),
-            Some(&["/usr/local/share/my-feature/entrypoint.sh".to_string()][..])
-        );
         assert_eq!(
             meta.container_env.get("MY_VAR").map(String::as_str),
             Some("hello")
@@ -831,7 +799,6 @@ mod tests {
             container_user: "dev".to_string(),
             mounts: vec![],
             forward_ports: vec![],
-            command: None,
             initialize_command: None,
             lifecycle: LifecycleHooks::default(),
         }
@@ -956,25 +923,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_label_command_last_wins() {
-        let json = r#"[{"id":"a","command":["/a.sh"]},{"id":"b","command":["/b.sh"]}]"#;
-        let config = parse_runtime_from_label(json).unwrap();
-        assert_eq!(config.command.as_deref(), Some(&["/b.sh".to_string()][..]));
-    }
-
-    #[test]
     fn parse_label_empty_array_gives_default() {
         let config = parse_runtime_from_label("[]").unwrap();
         assert!(config.mounts.is_empty());
-        assert!(config.command.is_none());
         assert!(config.remote_env.is_empty());
     }
 
     #[test]
     fn parse_label_bare_object_normalised_to_array() {
-        let json = r#"{"id":"feat","command":["/ep.sh"]}"#;
+        let json = r#"{"id":"feat","mounts":[{"type":"volume","source":"vol","target":"/data"}]}"#;
         let config = parse_runtime_from_label(json).unwrap();
-        assert_eq!(config.command.as_deref(), Some(&["/ep.sh".to_string()][..]));
+        assert_eq!(config.mounts.len(), 1);
     }
 
     #[test]

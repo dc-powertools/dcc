@@ -14,7 +14,6 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         container_user: child.container_user.or(parent.container_user),
         mounts: merge_option_vecs(parent.mounts, child.mounts),
         forward_ports: merge_option_vecs(parent.forward_ports, child.forward_ports),
-        command: child.command.or(parent.command),
         initialize_command: child.initialize_command.or(parent.initialize_command),
         on_create_command: child.on_create_command.or(parent.on_create_command),
         update_content_command: child
@@ -106,7 +105,6 @@ mod tests {
             container_user: None,
             mounts: None,
             forward_ports: None,
-            command: None,
             initialize_command: None,
             on_create_command: None,
             update_content_command: None,
@@ -337,35 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn command_child_wins_not_merged() {
-        // command is a complete replacement — a child's command is NOT appended to
-        // the parent's. If child specifies a command, it entirely replaces the
-        // parent's, regardless of how many elements parent had.
-        let parent = RawConfig {
-            command: Some(vec!["a".to_string(), "b".to_string()]),
-            ..empty()
-        };
-        let child = RawConfig {
-            command: Some(vec!["c".to_string()]),
-            ..empty()
-        };
-        let result = merge(parent, child);
-        // must be ["c"], not ["a", "b", "c"]
-        assert_eq!(result.command.unwrap(), vec!["c".to_string()]);
-    }
-
-    #[test]
-    fn command_child_none_uses_parent() {
-        let parent = RawConfig {
-            command: Some(vec!["/bin/bash".to_string()]),
-            ..empty()
-        };
-        let child = empty();
-        let result = merge(parent, child);
-        assert_eq!(result.command.unwrap(), vec!["/bin/bash".to_string()]);
-    }
-
-    #[test]
     fn on_create_command_child_wins_not_merged() {
         let parent = RawConfig {
             on_create_command: Some(crate::lifecycle::LifecycleCommand::Shell(
@@ -411,7 +380,6 @@ mod tests {
         let config = RawConfig {
             image: Some("rust:latest".to_string()),
             container_user: Some("dev".to_string()),
-            command: Some(vec!["/bin/sh".to_string()]),
             features: Some({
                 let mut m = IndexMap::new();
                 m.insert("f".to_string(), serde_json::json!({}));
@@ -429,10 +397,6 @@ mod tests {
         let result = merge(empty(), config);
         assert_eq!(result.image.as_deref(), Some("rust:latest"));
         assert_eq!(result.container_user.as_deref(), Some("dev"));
-        assert_eq!(
-            result.command.as_deref(),
-            Some(&["/bin/sh".to_string()][..])
-        );
         let features = result.features.unwrap();
         assert!(features.contains_key("f"));
         let env = result.container_env.unwrap();
@@ -446,7 +410,6 @@ mod tests {
         let config = RawConfig {
             image: Some("rust:latest".to_string()),
             container_user: Some("dev".to_string()),
-            command: Some(vec!["/bin/sh".to_string()]),
             features: Some({
                 let mut m = IndexMap::new();
                 m.insert("f".to_string(), serde_json::json!({}));
@@ -464,10 +427,6 @@ mod tests {
         let result = merge(config, empty());
         assert_eq!(result.image.as_deref(), Some("rust:latest"));
         assert_eq!(result.container_user.as_deref(), Some("dev"));
-        assert_eq!(
-            result.command.as_deref(),
-            Some(&["/bin/sh".to_string()][..])
-        );
         let features = result.features.unwrap();
         assert!(features.contains_key("f"));
         let env = result.container_env.unwrap();

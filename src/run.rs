@@ -66,15 +66,6 @@ pub(crate) async fn run(
         .map(|m| config::vars::apply_substitution(m, &local_workspace, &local_cache))
         .collect();
 
-    // Warn when the devcontainer.json command overrides a feature-contributed command
-    if let (Some(feat_cmd), Some(config_cmd)) = (&feature_runtime.command, &config.command) {
-        tracing::warn!(
-            feature_command = ?feat_cmd,
-            devcontainer_command = ?config_cmd,
-            "devcontainer.json command overrides feature-contributed command"
-        );
-    }
-
     // Combined mounts: feature mounts first, then devcontainer.json mounts
     let all_mounts: Vec<String> = feature_mounts
         .iter()
@@ -152,21 +143,14 @@ pub(crate) async fn run(
     // mask .dcc directory inside container
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
-    // Command resolution: CLI override > devcontainer.json > feature command
-    let effective_command = config
-        .command
-        .as_deref()
-        .or(feature_runtime.command.as_deref());
-    let (cmd_flag, post_image_args) = resolve_command(override_args, effective_command);
-    if let Some(cmd) = cmd_flag {
-        args.extend(["--entrypoint".into(), cmd]);
-    }
+    // Entrypoint and post-image arguments come from the required CLI args.
+    args.extend(["--entrypoint".into(), override_args[0].clone()]);
 
     // Image tag (must come after all flags)
     args.push(image_tag.as_str().to_owned());
 
-    // Post-image arguments
-    args.extend(post_image_args);
+    // Remaining CLI args become post-image arguments
+    args.extend(override_args[1..].iter().cloned());
 
     // initializeCommand runs on the host before the container is created/started.
     if let Some(cmd) = &config.initialize_command {
@@ -320,33 +304,10 @@ fn parse_bind_src(mount: &str) -> Option<String> {
     }
 }
 
-/// Determines (command_flag, post_image_args) from override_args and the configured command.
-fn resolve_command(
-    override_args: &[String],
-    configured: Option<&[String]>,
-) -> (Option<String>, Vec<String>) {
-    let effective = if !override_args.is_empty() {
-        override_args
-    } else {
-        match configured {
-            Some(cmd) if !cmd.is_empty() => cmd,
-            _ => return (None, Vec::new()),
-        }
-    };
-    (Some(effective[0].clone()), effective[1..].to_vec())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{profile::ProfileName, workspace::Workspace};
-
-    fn s(x: &str) -> String {
-        x.to_string()
-    }
-    fn sv(xs: &[&str]) -> Vec<String> {
-        xs.iter().map(|x| x.to_string()).collect()
-    }
 
     // --- parse_bind_src ---
 
@@ -484,50 +445,5 @@ mod tests {
         let mount = format!("type=bind,src={},dst=/bar", outside.display());
         ensure_cache_mount_sources(&[mount], &cache).unwrap();
         assert!(!outside.exists());
-    }
-
-    #[test]
-    fn override_args_used_as_command() {
-        let (cmd, rest) = resolve_command(&sv(&["npm", "serve"]), None);
-        assert_eq!(cmd, Some(s("npm")));
-        assert_eq!(rest, sv(&["serve"]));
-    }
-
-    #[test]
-    fn override_single_arg() {
-        let (cmd, rest) = resolve_command(&sv(&["bash"]), None);
-        assert_eq!(cmd, Some(s("bash")));
-        assert_eq!(rest, sv(&[]));
-    }
-
-    #[test]
-    fn configured_command_used_when_no_override() {
-        let cmd_vec = sv(&["bash", "-c", "script.sh"]);
-        let (cmd, rest) = resolve_command(&[], Some(&cmd_vec));
-        assert_eq!(cmd, Some(s("bash")));
-        assert_eq!(rest, sv(&["-c", "script.sh"]));
-    }
-
-    #[test]
-    fn no_command_configured_or_overridden() {
-        let (cmd, rest) = resolve_command(&[], None);
-        assert_eq!(cmd, None);
-        assert_eq!(rest, sv(&[]));
-    }
-
-    #[test]
-    fn override_takes_precedence_over_configured() {
-        let configured = sv(&["/bin/sh"]);
-        let override_args = sv(&["bash"]);
-        let (cmd, _) = resolve_command(&override_args, Some(&configured));
-        assert_eq!(cmd, Some(s("bash")));
-    }
-
-    #[test]
-    fn empty_configured_command_treated_as_none() {
-        let configured = sv(&[]);
-        let (cmd, rest) = resolve_command(&[], Some(&configured));
-        assert_eq!(cmd, None);
-        assert_eq!(rest, sv(&[]));
     }
 }

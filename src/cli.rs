@@ -27,7 +27,7 @@ pub(crate) enum Command {
         memory: String,
         #[arg(long, default_value = "4")]
         cpus: String,
-        #[arg(trailing_var_arg = true)]
+        #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },
     Join {

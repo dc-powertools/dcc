@@ -72,7 +72,6 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
             .unwrap_or_else(|| DEFAULT_CONTAINER_USER.to_string()),
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),
-        command: raw.command,
         initialize_command: raw.initialize_command,
         lifecycle: LifecycleHooks {
             on_create_command: raw.on_create_command,
@@ -322,23 +321,6 @@ mod tests {
             config.features.contains_key("feat-b"),
             "feat-b should be present"
         );
-    }
-
-    #[test]
-    fn test_command_child_replaces_parent() {
-        let dir = TempDir::new().unwrap();
-        write(
-            dir.path(),
-            "base.json",
-            r#"{ "image": "x:1", "command": ["bash"] }"#,
-        );
-        let child = write(
-            dir.path(),
-            "child.json",
-            r#"{ "extends": "base.json", "command": ["zsh"] }"#,
-        );
-        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.command.as_deref(), Some(&["zsh".to_string()][..]));
     }
 
     #[test]
