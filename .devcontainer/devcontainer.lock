@@ -1,0 +1,29 @@
+{
+  "dccVersion": "0.0.21",
+  "features": [
+    {
+      "direct": true,
+      "options": {},
+      "ref": "ghcr.io/dc-powertools/features/sudo:latest",
+      "resolved": "sha256:97abfd8f2e9e8213f95f5fe2e44b0fa77400c119a2cba5a228cba0ff2dc04ac6"
+    },
+    {
+      "direct": true,
+      "options": {},
+      "ref": "ghcr.io/dc-powertools/features/git:latest",
+      "resolved": "sha256:06881580e20dc3f2fd50addab8d66bec2c2411bd75410fb2db126917c9da94c1"
+    },
+    {
+      "direct": true,
+      "options": {},
+      "ref": "ghcr.io/dc-powertools/features/rust:latest",
+      "resolved": "sha256:1fd03210f82effae17063d5f0db0a9524ce8db4102c648237693d4e6cba89287"
+    },
+    {
+      "direct": true,
+      "options": {},
+      "ref": "ghcr.io/dc-powertools/features/claude:latest",
+      "resolved": "sha256:21311d1c6f6691cb7aa0d70598e27d7b6c7d9fde0aad8f097a963044c9c8a9c1"
+    }
+  ]
+}

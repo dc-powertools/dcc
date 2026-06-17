@@ -1,7 +1,10 @@
 {
-  "extends": "base.json",
-  "containerUser": "claude",
+  "name": "dcc",
+  "image": "debian",
   "features": {
+    "ghcr.io/dc-powertools/features/sudo:latest": {},
+    "ghcr.io/dc-powertools/features/git:latest": {},
+    "ghcr.io/dc-powertools/features/rust:latest": {},
     "ghcr.io/dc-powertools/features/claude:latest": {}
   },
 }
