@@ -60,6 +60,14 @@ pub(crate) async fn exec(
     // Apply variable substitution to feature mounts (same variables as devcontainer.json mounts)
     let local_workspace = workspace.root.to_string_lossy().into_owned();
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
+
+    // The container command (a `dcc run` script or `dcc exec` args) supports the
+    // same variable substitution, including `${localEnv:VAR}`, as mounts/remoteEnv.
+    let override_args: Vec<String> = override_args
+        .iter()
+        .map(|a| config::vars::apply_substitution(a, &local_workspace, &local_cache))
+        .collect();
+
     let feature_mounts: Vec<String> = feature_runtime
         .mounts
         .iter()
@@ -289,8 +297,8 @@ fn warn_unresolved_variables(kind: &str, value: &str) {
     }
     eprintln!(
         "warning: {kind} `{value}` references unresolved variable(s) {}; \
-         dcc substitutes only ${{localWorkspaceFolder}}, ${{localCacheFolder}}, \
-         ${{containerWorkspaceFolder}}, and ${{containerCacheFolder}}",
+         dcc substitutes ${{localWorkspaceFolder}}, ${{localCacheFolder}}, \
+         ${{containerWorkspaceFolder}}, ${{containerCacheFolder}}, and ${{localEnv:VAR}}",
         unresolved.join(", ")
     );
 }
