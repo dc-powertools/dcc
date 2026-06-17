@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::{ExitStatus, Stdio};
 
 use anyhow::Context as _;
@@ -198,6 +199,54 @@ pub(crate) async fn inspect_image_label(image: &str) -> anyhow::Result<Option<St
     }
 }
 
+/// Reads the environment baked into a local Docker image (`Config.Env`): the base
+/// image's `ENV` plus every `containerEnv` directive `dcc build` baked in. Used to
+/// resolve `${containerEnv:VAR}` references at run time. `remoteEnv` is *not*
+/// part of the image, so it is intentionally absent from this map.
+pub(crate) async fn inspect_image_env(image: &str) -> anyhow::Result<HashMap<String, String>> {
+    let output = Command::new("docker")
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{json .Config.Env}}",
+            image,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to spawn `docker image inspect {image}`"))?;
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(command_failure(
+            &format!("docker image inspect {image}"),
+            code,
+            &output.stderr,
+        ));
+    }
+
+    // `.Config.Env` serializes to `null` for an image with no env directives.
+    let env: Option<Vec<String>> = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("failed to parse env from `docker image inspect {image}`"))?;
+    Ok(parse_env_list(env.unwrap_or_default()))
+}
+
+/// Splits a Docker `Config.Env` list (`KEY=VALUE` strings) into a map. Only the
+/// first `=` separates key from value, so values may themselves contain `=`.
+/// Entries with no `=` are skipped.
+fn parse_env_list(env: Vec<String>) -> HashMap<String, String> {
+    env.into_iter()
+        .filter_map(|entry| {
+            entry
+                .split_once('=')
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        })
+        .collect()
+}
+
 pub(crate) async fn inspect_running(container: &str) -> anyhow::Result<bool> {
     let output = Command::new("docker")
         .args(["inspect", "--format", "{{.State.Running}}", container])
@@ -299,5 +348,30 @@ mod tests {
     fn command_failure_whitespace_only_stderr_falls_back_to_code() {
         let err = command_failure("docker run", 2, b"   \n  ");
         assert_eq!(err.to_string(), "`docker run` exited with status 2");
+    }
+
+    #[test]
+    fn parse_env_list_splits_key_value() {
+        let env = parse_env_list(vec!["PATH=/usr/bin:/bin".into(), "LANG=C.UTF-8".into()]);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin:/bin"));
+        assert_eq!(env.get("LANG").map(String::as_str), Some("C.UTF-8"));
+    }
+
+    #[test]
+    fn parse_env_list_value_may_contain_equals() {
+        let env = parse_env_list(vec!["FOO=a=b=c".into()]);
+        assert_eq!(env.get("FOO").map(String::as_str), Some("a=b=c"));
+    }
+
+    #[test]
+    fn parse_env_list_skips_entries_without_equals() {
+        let env = parse_env_list(vec!["NOTANENV".into(), "OK=1".into()]);
+        assert!(!env.contains_key("NOTANENV"));
+        assert_eq!(env.get("OK").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn parse_env_list_empty() {
+        assert!(parse_env_list(vec![]).is_empty());
     }
 }

@@ -186,28 +186,44 @@ command is a complete replacement, not an addendum.
 
 ### Variable Substitution
 
-Substitution is applied in two contexts with different variable sets:
+Substitution runs in two contexts with different variable sets.
 
-**`containerEnv`** (both devcontainer.json and feature): only container-side constants are substituted.
+**`containerEnv`** (devcontainer.json and feature) is baked into the image at
+build time, so only container-side constants are substituted:
 
 | Variable | Value |
 |---|---|
 | `${containerCacheFolder}` | `/cache` |
 | `${containerWorkspaceFolder}` | `/workspace` |
 
-**`remoteEnv`** and **`mounts`**: all four variables are substituted.
+**Runtime-applied properties** — `remoteEnv`, `mounts`, the container command
+(`dcc run` scripts / `dcc exec` args), and the lifecycle commands
+(`initializeCommand` plus the in-container hooks) — additionally substitute:
 
 | Variable | Value |
 |---|---|
 | `${localCacheFolder}` | Absolute path of `.dcc/<profile>` on the host |
+| `${localWorkspaceFolder}` | Absolute path of the workspace root on the host |
 | `${containerCacheFolder}` | `/cache` |
-| `${localWorkspaceFolder}` | Absolute path of workspace root on the host |
 | `${containerWorkspaceFolder}` | `/workspace` |
+| `${localEnv:VAR}` / `${localEnv:VAR:default}` | Host process env var `VAR` |
+| `${containerEnv:VAR}` / `${containerEnv:VAR:default}` | `VAR` from the **built image** env (base image `ENV` + baked `containerEnv`) |
 
-`${localWorkspaceFolder}` and `${localCacheFolder}` in a `containerEnv` value are treated as unknown: left as-is with a warning.
+Resolution timing differs. The path variables and `${localEnv:…}` are resolved at
+config-load (`vars::apply_substitution`) since they are knowable on the host.
+`${containerEnv:…}` is **deferred** there (left intact, not flagged as unknown)
+and resolved at run time in `exec.rs` by `vars::resolve_container_env` against the
+image's `Config.Env` (read via `docker::inspect_image_env`). The resolved literal
+is placed into the `-e`/`--mount`/command/hook strings, so it lands in the
+container config env and is inherited uniformly (PID 1, its children, and
+`docker exec`). Because the source is the image, `${containerEnv:…}` sees neither
+`remoteEnv` values nor variables set only at container start.
 
-Substitution is a simple string replacement (all occurrences). An unknown
-variable reference is left as-is and triggers a warning.
+An undefined `${localEnv:…}` / `${containerEnv:…}` resolves to its `:default` text
+if present, otherwise the empty string. Local and env-namespace variables are not
+substituted inside a `containerEnv` value (it is build-time). Any other unknown
+`${…}` is left as-is and triggers a warning; the run path additionally prints a
+user-facing warning for unresolved references left in a mount or `remoteEnv`.
 
 ---
 
@@ -361,7 +377,9 @@ Before starting Docker, `dcc run`:
    `devcontainer.metadata` label, if present. The label JSON is parsed into a
    `FeatureRuntimeConfig` (mounts, command, remoteEnv). A missing label is
    treated as no feature runtime contributions; a malformed label is a fatal
-   error.
+   error. It also reads the image's `Config.Env` (`{{json .Config.Env}}`, via
+   `docker::inspect_image_env`) to resolve `${containerEnv:VAR}` references in the
+   runtime properties.
 2. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
    the host cache directory. Docker requires bind mount source paths to exist on
    the host before the container starts.

@@ -132,7 +132,7 @@ empty tmpfs mount, to prevent data from leaking across profiles.
 
 `remoteEnv` values are passed as `-e KEY=VALUE` flags to `docker run`. They are not part of the image and are re-evaluated on every run. The host-side variables `${localWorkspaceFolder}` and `${localCacheFolder}` are only valid in `remoteEnv`, because their values are machine-specific absolute paths that would be wrong if baked into an image.
 
-`dcc` does not support `${containerEnv:VAR}` references in `remoteEnv`. This diverges from the devcontainer specification, which permits `remoteEnv` values to reference variables from the live container environment.
+`${containerEnv:VAR}` is substituted with the value of `VAR` in the **built image's** environment — the base image's `ENV` plus every `containerEnv` directive `dcc build` baked in — read via `docker image inspect` at run time. It is valid in the same places as `${localEnv:VAR}` (below). The canonical use is extending a value the base image set, e.g. `"remoteEnv": { "PATH": "${containerEnv:PATH}:/opt/tool/bin" }`. Because the source is the image, it does **not** see `remoteEnv` values (which are not part of the image) or variables set only when the container starts. An undefined reference resolves to the empty string; supply a fallback with `${containerEnv:VAR:default}`. It is not substituted inside `containerEnv` itself.
 
 `${localEnv:VAR}` is substituted with the value of the host environment variable `VAR`, evaluated on every run. It is valid in `remoteEnv`, `mounts`, the lifecycle commands (`initializeCommand` and the in-container hooks), and the container command (the script run by `dcc run` or the arguments to `dcc exec`) — the fields `dcc` resolves at run time. It is **not** substituted in `containerEnv`, which is baked into the image at build time and must not embed host-specific values. An undefined variable resolves to the empty string; supply a fallback with `${localEnv:VAR:default}`.
 
@@ -258,11 +258,11 @@ containers discoverable by VS Code and other devcontainer-compatible tools via
 | `image` | Base Docker image |
 | `features` | devcontainer Features to install |
 | `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |
-| `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, and `${localEnv:VAR}`. |
+| `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `containerUser` | User to run as inside the container. Defaults to `dev`. Unless set to `root`, `dcc build` creates the user in the image if it does not already exist. Feature install scripts run as `root`; `_REMOTE_USER`/`_CONTAINER_USER`/`_REMOTE_USER_HOME`/`_CONTAINER_USER_HOME` are exported for scripts that need to `su` into `containerUser`. |
-| `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, and `${localEnv:VAR}`. |
+| `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
-| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, and `${localEnv:VAR}`. |
+| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `initializeCommand` | Runs on the **host**, before the container is created or started. |
 | `onCreateCommand` | Runs **in the container**, first among the lifecycle hooks below. |
 | `updateContentCommand` | Runs **in the container**, after `onCreateCommand`. |
@@ -274,8 +274,8 @@ Each lifecycle hook accepts a shell string (run via `/bin/sh -c`), an array of
 strings (executed directly), or an object mapping arbitrary names to either
 form — the named commands run in parallel, and the next hook waits for all of
 them to finish. `initializeCommand` runs on the host and supports
-`${localWorkspaceFolder}`/`${localCacheFolder}`/`${localEnv:VAR}` (and the
-container-side variables); the other five hooks run in the container as
+`${localWorkspaceFolder}`/`${localCacheFolder}`/`${localEnv:VAR}`/`${containerEnv:VAR}`
+(and the container-side variables); the other five hooks run in the container as
 `containerUser` from `/workspace` and support the same variable substitution as
 `remoteEnv`/`mounts`.
 A non-zero exit from any hook aborts `dcc run` immediately, skipping
@@ -293,8 +293,8 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. User-supplied values override declared defaults. |
 | `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The last feature in installation order wins; if multiple features declare a command a warning is emitted. The top-level `command` in `devcontainer.json` always overrides feature-contributed commands (with a warning). |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives, set before the feature's `install.sh` runs. |
-| `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Stored as templates; `${localWorkspaceFolder}`, `${localCacheFolder}`, and `${localEnv:VAR}` are substituted at run time. |
-| `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, `${localEnv:VAR}`, etc.). |
+| `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Stored as templates; `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}` are substituted at run time. |
+| `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, `${localEnv:VAR}`, `${containerEnv:VAR}`, etc.). |
 | `installsAfter` | Soft ordering hint. An array of feature IDs (the `id` field from `devcontainer-feature.json`). This feature is installed after the listed features if they are already in the installation set. Not evaluated recursively. |
 | `dependsOn` | Hard dependencies. An object whose keys are feature references (same format as `devcontainer.json` `features`) and values are the options for each dependency. Missing dependencies are added to the installation set automatically. Evaluated recursively. Circular dependencies are an error. |
 | `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Lifecycle hooks. Same forms and variable substitution as the identically-named `devcontainer.json` properties. For each hook type, feature-contributed hooks run before the `devcontainer.json` hook of that type, in feature installation order. |

@@ -57,55 +57,61 @@ pub(crate) async fn exec(
         })?,
     };
 
-    // Apply variable substitution to feature mounts (same variables as devcontainer.json mounts)
     let local_workspace = workspace.root.to_string_lossy().into_owned();
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
 
+    // The image's baked environment (base image ENV + all containerEnv), used to
+    // resolve `${containerEnv:VAR}` references in the runtime properties below.
+    // remoteEnv is intentionally absent (it is not part of the image).
+    let container_env = docker::inspect_image_env(image_tag.as_str())
+        .await
+        .with_context(|| format!("failed to inspect image env `{image_tag}`"))?;
+
     // The container command (a `dcc run` script or `dcc exec` args) supports the
-    // same variable substitution, including `${localEnv:VAR}`, as mounts/remoteEnv.
+    // same substitution (`${localEnv:VAR}`, `${containerEnv:VAR}`, …) as
+    // mounts/remoteEnv.
     let override_args: Vec<String> = override_args
         .iter()
         .map(|a| config::vars::apply_substitution(a, &local_workspace, &local_cache))
+        .map(|a| config::vars::resolve_container_env(&a, &container_env))
         .collect();
 
-    let feature_mounts: Vec<String> = feature_runtime
+    // Mounts: feature contributions first, then devcontainer.json mounts. Feature
+    // values get host/localEnv substitution; `${containerEnv:…}` is then resolved
+    // over the whole set (devcontainer.json values were host-substituted at load).
+    let all_mounts: Vec<String> = feature_runtime
         .mounts
         .iter()
         .map(|m| config::vars::apply_substitution(m, &local_workspace, &local_cache))
-        .collect();
-
-    // Combined mounts: feature mounts first, then devcontainer.json mounts
-    let all_mounts: Vec<String> = feature_mounts
-        .iter()
-        .chain(config.mounts.iter())
-        .cloned()
+        .chain(config.mounts.iter().cloned())
+        .map(|m| config::vars::resolve_container_env(&m, &container_env))
         .collect();
 
     ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
 
-    // Substitute local variables in feature remoteEnv templates
-    let feature_remote_env: Vec<(String, String)> = feature_runtime
+    // Combined remoteEnv (devcontainer.json first, then features), fully resolved:
+    // feature values get host/localEnv substitution, then `${containerEnv:…}` is
+    // resolved over both sources.
+    let remote_env: Vec<(String, String)> = config
         .remote_env
         .iter()
-        .map(|(k, v)| {
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .chain(feature_runtime.remote_env.iter().map(|(k, v)| {
             (
                 k.clone(),
                 config::vars::apply_substitution(v, &local_workspace, &local_cache),
             )
-        })
+        }))
+        .map(|(k, v)| (k, config::vars::resolve_container_env(&v, &container_env)))
         .collect();
 
-    // Warn about any ${...} reference that survived substitution in a mount or
-    // remoteEnv value. Unresolved references (e.g. a feature mount using an
-    // unsupported ${localEnv:…}) otherwise make `docker run` fail with an opaque
-    // error; surfacing them here points straight at the cause.
+    // Warn about any ${...} reference still unresolved in a mount or remoteEnv
+    // value (e.g. an unsupported ${localEnv:…}); these otherwise make `docker run`
+    // fail with an opaque error, so surfacing them here points at the cause.
     for mount in &all_mounts {
         warn_unresolved_variables("mount", mount);
     }
-    for (k, v) in &config.remote_env {
-        warn_unresolved_variables(&format!("remoteEnv `{k}`"), v);
-    }
-    for (k, v) in &feature_remote_env {
+    for (k, v) in &remote_env {
         warn_unresolved_variables(&format!("remoteEnv `{k}`"), v);
     }
 
@@ -130,14 +136,8 @@ pub(crate) async fn exec(
     // containerUser (defaults to "dev" when not set in the devcontainer config)
     args.extend(["-u".into(), config.container_user.clone()]);
 
-    // remoteEnv: passed as runtime flags (substitution already applied at config-load time)
-    for (k, v) in &config.remote_env {
-        args.push("-e".into());
-        args.push(format!("{k}={v}"));
-    }
-
-    // feature remoteEnv: passed as runtime flags (substituted from templates above)
-    for (k, v) in &feature_remote_env {
+    // remoteEnv: devcontainer.json + feature, fully substituted (see above).
+    for (k, v) in &remote_env {
         args.push("-e".into());
         args.push(format!("{k}={v}"));
     }
@@ -176,7 +176,8 @@ pub(crate) async fn exec(
 
     // initializeCommand runs on the host before the container is created/started.
     if let Some(cmd) = &config.initialize_command {
-        lifecycle::run_on_host(cmd, &workspace.root)
+        let cmd = cmd.substitute(&|s| config::vars::resolve_container_env(s, &container_env));
+        lifecycle::run_on_host(&cmd, &workspace.root)
             .await
             .context("initializeCommand failed")?;
     }
@@ -200,6 +201,7 @@ pub(crate) async fn exec(
         &feature_runtime,
         &local_workspace,
         &local_cache,
+        &container_env,
     )
     .await?;
 
@@ -253,8 +255,16 @@ async fn exec_lifecycle_hooks(
     feature_runtime: &FeatureRuntimeConfig,
     local_workspace: &str,
     local_cache: &str,
+    container_env: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<()> {
-    let substitute = |s: &str| config::vars::apply_substitution(s, local_workspace, local_cache);
+    // Feature hooks need host/localEnv substitution; `${containerEnv:…}` is then
+    // resolved for both feature and devcontainer.json hooks. devcontainer.json
+    // hooks were already host-substituted at config-load (containerEnv deferred).
+    let substitute = |s: &str| {
+        let s = config::vars::apply_substitution(s, local_workspace, local_cache);
+        config::vars::resolve_container_env(&s, container_env)
+    };
+    let resolve_cenv = |s: &str| config::vars::resolve_container_env(s, container_env);
 
     for (name, get) in lifecycle::HOOKS {
         for (feature_id, hooks) in &feature_runtime.feature_hooks {
@@ -272,8 +282,9 @@ async fn exec_lifecycle_hooks(
         }
 
         if let Some(cmd) = get(&config.lifecycle) {
+            let cmd = cmd.substitute(&resolve_cenv);
             lifecycle::run_in_container(
-                cmd,
+                &cmd,
                 container,
                 &config.container_user,
                 CONTAINER_WORKSPACE,
@@ -298,7 +309,8 @@ fn warn_unresolved_variables(kind: &str, value: &str) {
     eprintln!(
         "warning: {kind} `{value}` references unresolved variable(s) {}; \
          dcc substitutes ${{localWorkspaceFolder}}, ${{localCacheFolder}}, \
-         ${{containerWorkspaceFolder}}, ${{containerCacheFolder}}, and ${{localEnv:VAR}}",
+         ${{containerWorkspaceFolder}}, ${{containerCacheFolder}}, ${{localEnv:VAR}}, \
+         and ${{containerEnv:VAR}}",
         unresolved.join(", ")
     );
 }

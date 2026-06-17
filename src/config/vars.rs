@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{cache::CacheDir, config::DevcontainerConfig, workspace::Workspace};
 
 pub(crate) const CONTAINER_WORKSPACE: &str = "/workspace";
@@ -97,6 +99,53 @@ pub(crate) fn unresolved_variables(s: &str) -> Vec<String> {
     tokens
 }
 
+/// Resolves `${containerEnv:NAME}` / `${containerEnv:NAME:default}` references in
+/// `s` against `env` (the image's baked environment from `docker.rs`). A name
+/// absent from `env` falls back to the `:default` text if present, else the empty
+/// string — matching the spec and dcc's `${localEnv:…}` behavior. All other text,
+/// including non-`containerEnv` `${…}` tokens, is copied through unchanged. Run at
+/// run time, after host/`localEnv` substitution has already deferred these tokens.
+pub(crate) fn resolve_container_env(s: &str, env: &HashMap<String, String>) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < s.len() {
+        if bytes[i..].starts_with(b"${") {
+            if let Some(end_offset) = s[i + 2..].find('}') {
+                let name = &s[i + 2..i + 2 + end_offset];
+                let token = &s[i..i + 2 + end_offset + 1];
+                i += 2 + end_offset + 1;
+                if let Some(rest) = name.strip_prefix("containerEnv:") {
+                    let (var, default) = match rest.split_once(':') {
+                        Some((var, default)) => (var, Some(default)),
+                        None => (rest, None),
+                    };
+                    let value = env
+                        .get(var)
+                        .cloned()
+                        .or_else(|| default.map(str::to_owned))
+                        .unwrap_or_default();
+                    result.push_str(&value);
+                } else {
+                    result.push_str(token);
+                }
+                continue;
+            }
+            // No closing '}' — not a variable; copy '$' literally.
+            result.push('$');
+            i += 1;
+        } else {
+            let ch = s[i..]
+                .chars()
+                .next()
+                .expect("i < s.len() guaranteed by while condition");
+            result.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    result
+}
+
 fn apply_to_string(
     s: &str,
     local_workspace: Option<&str>,
@@ -150,6 +199,14 @@ fn substitute(
             if let Some(end_offset) = s[i + 2..].find('}') {
                 let name = &s[i + 2..i + 2 + end_offset];
                 let token = &s[i..i + 2 + end_offset + 1];
+                i += 2 + end_offset + 1;
+                if name.starts_with("containerEnv:") {
+                    // Deferred: resolved at run time by `resolve_container_env`
+                    // against the image's Config.Env. Left intact here (not an
+                    // unknown), so it neither warns nor trips `unresolved_variables`.
+                    result.push_str(token);
+                    continue;
+                }
                 let resolved: Option<String> = match name {
                     "localCacheFolder" => local_cache.map(str::to_owned),
                     "containerCacheFolder" => Some(CONTAINER_CACHE.to_owned()),
@@ -165,7 +222,6 @@ fn substitute(
                         result.push_str(token);
                     }
                 }
-                i += 2 + end_offset + 1;
             } else {
                 // No closing '}' — not a variable, copy '$' literally
                 result.push('$');
@@ -378,6 +434,88 @@ mod tests {
         assert_eq!(
             sub_env("${localWorkspaceFolder}:${localEnv:USER}", &look),
             "/ws:dev"
+        );
+    }
+
+    // --- containerEnv (resolve_container_env + deferral) ---
+
+    fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn container_env_resolves_from_map() {
+        let e = env(&[("PATH", "/usr/bin:/bin")]);
+        assert_eq!(
+            resolve_container_env("${containerEnv:PATH}:/x", &e),
+            "/usr/bin:/bin:/x"
+        );
+    }
+
+    #[test]
+    fn container_env_unset_resolves_to_empty() {
+        assert_eq!(
+            resolve_container_env("a${containerEnv:MISSING}b", &env(&[])),
+            "ab"
+        );
+    }
+
+    #[test]
+    fn container_env_default_used_when_unset() {
+        assert_eq!(
+            resolve_container_env("${containerEnv:MISSING:/fallback}", &env(&[])),
+            "/fallback"
+        );
+    }
+
+    #[test]
+    fn container_env_default_ignored_when_set() {
+        let e = env(&[("X", "real")]);
+        assert_eq!(
+            resolve_container_env("${containerEnv:X:fallback}", &e),
+            "real"
+        );
+    }
+
+    #[test]
+    fn container_env_default_preserves_colons() {
+        assert_eq!(
+            resolve_container_env("${containerEnv:X:a:b:c}", &env(&[])),
+            "a:b:c"
+        );
+    }
+
+    #[test]
+    fn container_env_leaves_other_tokens_untouched() {
+        let e = env(&[("PATH", "/p")]);
+        assert_eq!(
+            resolve_container_env(
+                "${localEnv:HOME}|${localWorkspaceFolder}|${unknown}|${containerEnv:PATH}",
+                &e
+            ),
+            "${localEnv:HOME}|${localWorkspaceFolder}|${unknown}|/p"
+        );
+    }
+
+    #[test]
+    fn container_env_malformed_no_closing_brace_left_literal() {
+        assert_eq!(
+            resolve_container_env("${containerEnv:X", &env(&[("X", "v")])),
+            "${containerEnv:X"
+        );
+    }
+
+    #[test]
+    fn substitute_defers_container_env_without_warning() {
+        // The host pass leaves containerEnv tokens intact and does NOT mark them unknown.
+        let (r, u) = substitute("${containerEnv:PATH}:/x", Some("/ws"), Some("/c"), None);
+        assert_eq!(r, "${containerEnv:PATH}:/x");
+        assert!(
+            u.is_empty(),
+            "containerEnv should be deferred, got unknowns: {u:?}"
         );
     }
 
