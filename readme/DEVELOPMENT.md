@@ -39,7 +39,15 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
+These checks are mandatory: a task is not complete until all three pass. Never report work as done on the strength of manual inspection alone. If the Rust toolchain (`cargo`/`rustc`) is not installed in the environment, install it (e.g. via [rustup](https://rustup.rs), then `rustup component add rustfmt clippy`) and run the checks — do not skip them.
+
 ## Committing
+
+Always commit your changes once the task is complete and the checks above pass — committing is part of finishing the work, not an optional extra. Commit **directly on the `main` branch**; do not create feature branches. **Never push to a remote** — `git push` is off-limits, and commits stay local for the user to push. End every commit message with the trailer:
+
+```
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+```
 
 Every commit must leave the repository in a passing state. Before creating a commit, run the full check suite and fix any failures:
 
