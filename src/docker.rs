@@ -78,18 +78,22 @@ pub(crate) async fn build(
 /// confirms the container was created. The caller is responsible for attaching
 /// via [`attach`] and for aborting any port-forwarding tasks on exit.
 pub(crate) async fn start_detached(args: &[String]) -> anyhow::Result<()> {
+    // stderr is captured (not inherited) so that, on failure, Docker's own
+    // diagnostic — e.g. "invalid mount config ... bind source path does not
+    // exist" — is surfaced in the error instead of being discarded. On success
+    // `docker run -d` prints only the container id to stdout, which we suppress.
     let output = Command::new("docker")
         .arg("run")
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .output()
         .await
         .context("failed to spawn `docker run`")?;
     if !output.status.success() {
         let code = output.status.code().unwrap_or(-1);
-        anyhow::bail!("`docker run` exited with status {code}");
+        return Err(command_failure("docker run", code, &output.stderr));
     }
     Ok(())
 }
@@ -226,6 +230,19 @@ pub(crate) fn check_status(status: ExitStatus, cmd: &str) -> anyhow::Result<()> 
     }
 }
 
+/// Builds an error for a failed command, appending its captured stderr when
+/// present. Used by subprocess calls that pipe stderr (e.g. [`start_detached`])
+/// so the underlying tool's diagnostic is not lost.
+fn command_failure(cmd: &str, code: i32, stderr: &[u8]) -> anyhow::Error {
+    let stderr = String::from_utf8_lossy(stderr);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        anyhow::anyhow!("`{cmd}` exited with status {code}")
+    } else {
+        anyhow::anyhow!("`{cmd}` exited with status {code}: {stderr}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +271,33 @@ mod tests {
     #[test]
     fn is_not_running_error_empty() {
         assert!(!is_not_running_error(""));
+    }
+
+    #[test]
+    fn command_failure_includes_trimmed_stderr() {
+        let err = command_failure(
+            "docker run",
+            125,
+            b"  docker: Error response from daemon: bind source path does not exist: /x\n",
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("exited with status 125"), "got: {msg}");
+        assert!(
+            msg.contains("bind source path does not exist: /x"),
+            "got: {msg}"
+        );
+        assert!(!msg.contains('\n'), "stderr should be trimmed, got: {msg}");
+    }
+
+    #[test]
+    fn command_failure_empty_stderr_falls_back_to_code() {
+        let err = command_failure("docker run", 1, b"");
+        assert_eq!(err.to_string(), "`docker run` exited with status 1");
+    }
+
+    #[test]
+    fn command_failure_whitespace_only_stderr_falls_back_to_code() {
+        let err = command_failure("docker run", 2, b"   \n  ");
+        assert_eq!(err.to_string(), "`docker run` exited with status 2");
     }
 }

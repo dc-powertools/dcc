@@ -59,6 +59,37 @@ pub(crate) fn apply_container_env_substitution(s: &str) -> String {
     apply_to_string(s, None, None)
 }
 
+/// Returns every `${...}` token still present in `s`, in order of appearance.
+///
+/// Once [`apply_substitution`] has run, all four supported variables are already
+/// replaced, so any token returned here is an unresolved reference — either a
+/// completely unknown variable (e.g. `${localEnv:HOME}`) or a known one used in
+/// a context where it is unavailable. Malformed `${...` with no closing brace is
+/// not treated as a token, matching [`substitute`].
+pub(crate) fn unresolved_variables(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < s.len() {
+        if bytes[i..].starts_with(b"${") {
+            if let Some(end_offset) = s[i + 2..].find('}') {
+                tokens.push(s[i..i + 2 + end_offset + 1].to_string());
+                i += 2 + end_offset + 1;
+            } else {
+                // No closing '}' — not a variable; skip the '$' and keep scanning.
+                i += 1;
+            }
+        } else {
+            let ch = s[i..]
+                .chars()
+                .next()
+                .expect("i < s.len() guaranteed by while condition");
+            i += ch.len_utf8();
+        }
+    }
+    tokens
+}
+
 fn apply_to_string(s: &str, local_workspace: Option<&str>, local_cache: Option<&str>) -> String {
     let (result, unknowns) = substitute(s, local_workspace, local_cache);
     for u in unknowns {
@@ -234,5 +265,44 @@ mod tests {
     fn container_var_in_container_env_context_is_substituted() {
         let result = apply_container_env_substitution("${containerCacheFolder}/x");
         assert_eq!(result, "/cache/x");
+    }
+
+    // --- unresolved_variables ---
+
+    #[test]
+    fn unresolved_finds_localenv_in_mount_string() {
+        let mount = "type=bind,source=${localEnv:HOME}/.gitconfig,target=/run/host-gitconfig";
+        assert_eq!(
+            unresolved_variables(mount),
+            vec!["${localEnv:HOME}".to_string()]
+        );
+    }
+
+    #[test]
+    fn unresolved_empty_after_supported_vars_substituted() {
+        let substituted = sub(
+            "${localWorkspaceFolder}/a:${localCacheFolder}/b",
+            "/ws",
+            "/c",
+        );
+        assert!(unresolved_variables(&substituted).is_empty());
+    }
+
+    #[test]
+    fn unresolved_collects_multiple_tokens_in_order() {
+        assert_eq!(
+            unresolved_variables("${localEnv:A}-${localEnv:B}"),
+            vec!["${localEnv:A}".to_string(), "${localEnv:B}".to_string()]
+        );
+    }
+
+    #[test]
+    fn unresolved_none_when_no_tokens() {
+        assert!(unresolved_variables("type=bind,source=/plain/path,target=/x").is_empty());
+    }
+
+    #[test]
+    fn unresolved_ignores_malformed_no_closing_brace() {
+        assert!(unresolved_variables("${noClose/path").is_empty());
     }
 }

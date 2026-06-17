@@ -87,6 +87,20 @@ pub(crate) async fn exec(
         })
         .collect();
 
+    // Warn about any ${...} reference that survived substitution in a mount or
+    // remoteEnv value. Unresolved references (e.g. a feature mount using an
+    // unsupported ${localEnv:…}) otherwise make `docker run` fail with an opaque
+    // error; surfacing them here points straight at the cause.
+    for mount in &all_mounts {
+        warn_unresolved_variables("mount", mount);
+    }
+    for (k, v) in &config.remote_env {
+        warn_unresolved_variables(&format!("remoteEnv `{k}`"), v);
+    }
+    for (k, v) in &feature_remote_env {
+        warn_unresolved_variables(&format!("remoteEnv `{k}`"), v);
+    }
+
     // Build the docker run argument list
     let mut args: Vec<String> = Vec::new();
 
@@ -262,6 +276,23 @@ async fn exec_lifecycle_hooks(
     }
 
     Ok(())
+}
+
+/// Prints a user-facing warning for a value that still contains a `${...}`
+/// reference after substitution. dcc writes user-facing diagnostics straight to
+/// stderr (like the top-level error in `main`) rather than through `tracing`,
+/// which is silent unless `RUST_LOG` is set.
+fn warn_unresolved_variables(kind: &str, value: &str) {
+    let unresolved = config::vars::unresolved_variables(value);
+    if unresolved.is_empty() {
+        return;
+    }
+    eprintln!(
+        "warning: {kind} `{value}` references unresolved variable(s) {}; \
+         dcc substitutes only ${{localWorkspaceFolder}}, ${{localCacheFolder}}, \
+         ${{containerWorkspaceFolder}}, and ${{containerCacheFolder}}",
+        unresolved.join(", ")
+    );
 }
 
 // Restricted to the cache directory (dcc-managed space) to avoid silently creating
