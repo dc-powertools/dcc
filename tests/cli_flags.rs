@@ -64,6 +64,55 @@ fn positional_args_after_run_accepted() {
     );
 }
 
+#[test]
+fn profile_flag_before_and_after_subcommand_are_equivalent() {
+    let fx = Fixture::new();
+    // `dcc id` resolves the profile and prints the container name; it needs
+    // neither a Docker daemon nor a config file on disk for a named profile.
+    let before = fx.dcc(&["-p", "base", "id"]).output().unwrap();
+    let after = fx.dcc(&["id", "-p", "base"]).output().unwrap();
+    assert_success(&before);
+    assert_success(&after);
+    assert_eq!(
+        before.stdout,
+        after.stdout,
+        "`-p base` before and after the subcommand must produce identical output\n\
+         before: {}\nafter: {}",
+        String::from_utf8_lossy(&before.stdout),
+        String::from_utf8_lossy(&after.stdout),
+    );
+    assert!(
+        String::from_utf8_lossy(&before.stdout).contains("base"),
+        "container name should reflect the `base` profile, got: {}",
+        String::from_utf8_lossy(&before.stdout),
+    );
+}
+
+#[test]
+fn long_profile_flag_before_subcommand_accepted() {
+    let fx = Fixture::new();
+    let output = fx.dcc(&["--profile", "base", "id"]).output().unwrap();
+    assert_success(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("base"),
+        "container name should reflect the `base` profile, got: {}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+}
+
+#[test]
+fn profile_flag_before_subcommand_overrides_default() {
+    let fx = Fixture::new();
+    let with_profile = fx.dcc(&["-p", "base", "id"]).output().unwrap();
+    let default = fx.dcc(&["id"]).output().unwrap();
+    assert_success(&with_profile);
+    assert_success(&default);
+    assert_ne!(
+        with_profile.stdout, default.stdout,
+        "`-p base` before the subcommand should differ from the default profile"
+    );
+}
+
 // Tests below require a live Docker daemon — skipped in CI
 #[test]
 #[ignore]

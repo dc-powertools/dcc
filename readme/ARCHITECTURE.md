@@ -709,22 +709,28 @@ must include the full command that was attempted.
 ## CLI Definition (`cli.rs`)
 
 ```
-dcc [--strict] <command> [-p/--profile <name>] [command-flags] [--] [args...]
+dcc [--strict] [-p/--profile <name>] <command> [-p/--profile <name>] [command-flags] [--] [args...]
 
 Commands:
-  build  [-p/--profile <name>] [--no-cache]
-  run    [-p/--profile <name>] [--memory <size>] [--cpus <n>] [--] [command...]
-  join   [-p/--profile <name>]
-  stop   [-p/--profile <name>]
+  build  [--no-cache]
+  run    [--memory <size>] [--cpus <n>] [--] [command...]
+  join
+  stop
 ```
 
-`--profile` (`-p`) is declared on each subcommand individually rather than as a
-global flag on `Cli`. This allows `dcc run -p claude` to work naturally — if
-`-p` were a global flag it would have to appear before the subcommand name
-(`dcc -p claude run`), which conflicts with the common expectation that
-subcommand flags follow the subcommand. `--profile` defaults to `"devcontainer"`.
+`--profile` (`-p`) is a clap **global argument** declared once on `Cli` and
+read from the single `Cli::profile` field. As a global argument it is accepted
+in both positions — `dcc -p claude run` and `dcc run -p claude` are equivalent —
+so users are not forced to remember whether the flag precedes or follows the
+subcommand. Earlier versions declared `-p` on each subcommand to allow it after
+the subcommand; the global argument supersedes that, supporting both orderings
+with no duplication. `--profile` defaults to `"devcontainer"`. (For commands
+like `dcc exec`/`dcc run` whose trailing arguments form the in-container
+command, `-p` must precede the first positional argument, otherwise it is passed
+through to that command.)
 
-`--strict` remains a global flag because it affects config parsing, which
+`--strict` is declared on `Cli` but is **not** global, so it is accepted only
+before the subcommand (`dcc --strict build`). It affects config parsing, which
 applies identically across all subcommands.
 
 Implemented with `clap` derive macros. `trailing_var_arg = true` is set on the

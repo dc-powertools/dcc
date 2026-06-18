@@ -5,6 +5,10 @@ use clap::{Parser, Subcommand};
 pub(crate) struct Cli {
     #[arg(long)]
     pub(crate) strict: bool,
+    /// Profile to operate on. Global so it may appear before or after the
+    /// subcommand (`dcc -p base build` and `dcc build -p base` are equivalent).
+    #[arg(short = 'p', long, global = true, default_value = "devcontainer")]
+    pub(crate) profile: String,
     #[command(subcommand)]
     pub(crate) command: Command,
 }
@@ -12,8 +16,6 @@ pub(crate) struct Cli {
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     Build {
-        #[arg(short = 'p', long, default_value = "devcontainer")]
-        profile: String,
         #[arg(long)]
         no_cache: bool,
         #[arg(long)]
@@ -21,8 +23,6 @@ pub(crate) enum Command {
     },
     #[command(trailing_var_arg = true)]
     Exec {
-        #[arg(short = 'p', long, default_value = "devcontainer")]
-        profile: String,
         #[arg(long, default_value = "4g")]
         memory: String,
         #[arg(long, default_value = "4")]
@@ -30,21 +30,10 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },
-    Join {
-        #[arg(short = 'p', long, default_value = "devcontainer")]
-        profile: String,
-    },
-    Stop {
-        #[arg(short = 'p', long, default_value = "devcontainer")]
-        profile: String,
-    },
-    Id {
-        #[arg(short = 'p', long, default_value = "devcontainer")]
-        profile: String,
-    },
+    Join {},
+    Stop {},
+    Id {},
     Run {
-        #[arg(short = 'p', long, default_value = "devcontainer")]
-        profile: String,
         #[arg(long, default_value = "4g")]
         memory: String,
         #[arg(long, default_value = "4")]

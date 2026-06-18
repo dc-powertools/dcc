@@ -36,13 +36,9 @@ async fn run() -> anyhow::Result<()> {
     let cwd = std::env::current_dir().context("failed to determine current working directory")?;
     let workspace =
         workspace::find_workspace().context("failed to locate .devcontainer directory")?;
+    let (profile, config_path) = resolve_profile(&cli.profile, &workspace, &cwd)?;
     match cli.command {
-        cli::Command::Build {
-            profile,
-            no_cache,
-            update,
-        } => {
-            let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
+        cli::Command::Build { no_cache, update } => {
             build::build(
                 &workspace,
                 &profile,
@@ -53,13 +49,7 @@ async fn run() -> anyhow::Result<()> {
             )
             .await
         }
-        cli::Command::Exec {
-            profile,
-            memory,
-            cpus,
-            args,
-        } => {
-            let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
+        cli::Command::Exec { memory, cpus, args } => {
             let status = exec::exec(
                 &workspace,
                 &profile,
@@ -72,26 +62,17 @@ async fn run() -> anyhow::Result<()> {
             .await?;
             std::process::exit(status.code().unwrap_or(1));
         }
-        cli::Command::Join { profile } => {
-            let (profile, _) = resolve_profile(&profile, &workspace, &cwd)?;
-            join::join(&workspace, &profile).await
-        }
-        cli::Command::Stop { profile } => {
-            let (profile, _) = resolve_profile(&profile, &workspace, &cwd)?;
-            stop::stop(&workspace, &profile).await
-        }
-        cli::Command::Id { profile } => {
-            let (profile, _) = resolve_profile(&profile, &workspace, &cwd)?;
+        cli::Command::Join {} => join::join(&workspace, &profile).await,
+        cli::Command::Stop {} => stop::stop(&workspace, &profile).await,
+        cli::Command::Id {} => {
             println!("{}", profile::ContainerName::new(&workspace, &profile));
             Ok(())
         }
         cli::Command::Run {
-            profile,
             memory,
             cpus,
             script,
         } => {
-            let (profile, config_path) = resolve_profile(&profile, &workspace, &cwd)?;
             run::run(
                 &workspace,
                 &profile,
