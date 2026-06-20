@@ -12,8 +12,23 @@ on:
         type: string
 
 jobs:
+  # Gate the build/release on green CI for the direct `push: tags` path. When
+  # release.yml is called via workflow_call (from autotag.yml), CI already passed
+  # before the tag was created, so re-running it would be redundant; inputs.ref is
+  # empty only on a direct tag push.
+  ci:
+    name: CI
+    if: ${{ inputs.ref == '' }}
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
     name: Build ${{ matrix.target }}
+    needs: ci
+    # Proceed when CI passed (tag-push path) or was skipped (workflow_call path,
+    # already gated by the caller); skip only when CI actually failed.
+    if: ${{ !cancelled() && needs.ci.result != 'failure' }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
