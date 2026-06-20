@@ -58,7 +58,7 @@ jobs:
 
   release:
     needs: bump
-    uses: ./.github/workflows/_build-release.yml
+    uses: ./.github/workflows/release.yml
     permissions:
       contents: write
     with:
