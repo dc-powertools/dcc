@@ -16,13 +16,20 @@ use crate::{
     workspace::Workspace,
 };
 
+/// CPU and memory limits forwarded to `docker run`.
+#[derive(Clone, Copy)]
+pub(crate) struct ResourceLimits<'a> {
+    pub(crate) memory: &'a str,
+    pub(crate) cpus: &'a str,
+}
+
 pub(crate) async fn exec(
     workspace: &Workspace,
     profile: &ProfileName,
     config_path: &Path,
-    memory: &str,
-    cpus: &str,
+    limits: ResourceLimits<'_>,
     override_args: &[String],
+    no_scripts: bool,
     strict: bool,
 ) -> anyhow::Result<ExitStatus> {
     let cache_dir = CacheDir::new(workspace, profile);
@@ -130,8 +137,8 @@ pub(crate) async fn exec(
     args.push("--rm".into());
     args.push("-dit".into());
     args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
-    args.extend(["--memory".into(), memory.to_owned()]);
-    args.extend(["--cpus".into(), cpus.to_owned()]);
+    args.extend(["--memory".into(), limits.memory.to_owned()]);
+    args.extend(["--cpus".into(), limits.cpus.to_owned()]);
 
     // containerUser (defaults to "dev" when not set in the devcontainer config)
     args.extend(["-u".into(), config.container_user.clone()]);
@@ -176,10 +183,14 @@ pub(crate) async fn exec(
 
     // initializeCommand runs on the host before the container is created/started.
     if let Some(cmd) = &config.initialize_command {
-        let cmd = cmd.substitute(&|s| config::vars::resolve_container_env(s, &container_env));
-        lifecycle::run_on_host(&cmd, &workspace.root)
-            .await
-            .context("initializeCommand failed")?;
+        if no_scripts {
+            eprintln!("warning: skipping initializeCommand (--no-scripts)");
+        } else {
+            let cmd = cmd.substitute(&|s| config::vars::resolve_container_env(s, &container_env));
+            lifecycle::run_on_host(&cmd, &workspace.root)
+                .await
+                .context("initializeCommand failed")?;
+        }
     }
 
     // Start the container in the background (-d); TTY is pre-allocated (-t)
@@ -202,6 +213,7 @@ pub(crate) async fn exec(
         &local_workspace,
         &local_cache,
         &container_env,
+        no_scripts,
     )
     .await?;
 
@@ -249,6 +261,9 @@ async fn wait_for_running(container: &str) -> anyhow::Result<()> {
 /// hooks run first, in feature installation order, followed by the
 /// devcontainer.json hook of that type. A non-zero exit from any hook aborts
 /// immediately, skipping subsequent hooks.
+///
+/// When `no_scripts` is set, no hook runs; instead a warning naming each one is
+/// printed, so a misbehaving hook can be bypassed for debugging.
 async fn exec_lifecycle_hooks(
     container: &str,
     config: &config::DevcontainerConfig,
@@ -256,7 +271,15 @@ async fn exec_lifecycle_hooks(
     local_workspace: &str,
     local_cache: &str,
     container_env: &std::collections::HashMap<String, String>,
+    no_scripts: bool,
 ) -> anyhow::Result<()> {
+    if no_scripts {
+        for warning in skipped_hook_warnings(config, feature_runtime) {
+            eprintln!("warning: {warning}");
+        }
+        return Ok(());
+    }
+
     // Feature hooks need host/localEnv substitution; `${containerEnv:…}` is then
     // resolved for both feature and devcontainer.json hooks. devcontainer.json
     // hooks were already host-substituted at config-load (containerEnv deferred).
@@ -295,6 +318,30 @@ async fn exec_lifecycle_hooks(
     }
 
     Ok(())
+}
+
+/// Builds the warning messages for lifecycle hooks skipped under `--no-scripts`,
+/// in the same spec execution order they would otherwise run: for each hook
+/// type, feature-contributed hooks (in installation order) first, then the
+/// devcontainer.json hook. Only hooks that are actually present are listed.
+fn skipped_hook_warnings(
+    config: &config::DevcontainerConfig,
+    feature_runtime: &FeatureRuntimeConfig,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for (name, get) in lifecycle::HOOKS {
+        for (feature_id, hooks) in &feature_runtime.feature_hooks {
+            if get(hooks).is_some() {
+                warnings.push(format!(
+                    "skipping {name} from feature `{feature_id}` (--no-scripts)"
+                ));
+            }
+        }
+        if get(&config.lifecycle).is_some() {
+            warnings.push(format!("skipping {name} (--no-scripts)"));
+        }
+    }
+    warnings
 }
 
 /// Prints a user-facing warning for a value that still contains a `${...}`
@@ -496,5 +543,74 @@ mod tests {
         let mount = format!("type=bind,src={},dst=/bar", outside.display());
         ensure_cache_mount_sources(&[mount], &cache).unwrap();
         assert!(!outside.exists());
+    }
+
+    // --- skipped_hook_warnings ---
+
+    use crate::lifecycle::{LifecycleCommand, LifecycleHooks};
+    use indexmap::IndexMap;
+    use std::collections::HashMap;
+
+    fn empty_config() -> config::DevcontainerConfig {
+        config::DevcontainerConfig {
+            image: "img".into(),
+            features: IndexMap::new(),
+            container_env: HashMap::new(),
+            remote_env: HashMap::new(),
+            container_user: "dev".into(),
+            mounts: Vec::new(),
+            forward_ports: Vec::new(),
+            initialize_command: None,
+            lifecycle: LifecycleHooks::default(),
+            scripts: HashMap::new(),
+        }
+    }
+
+    fn shell(s: &str) -> Option<LifecycleCommand> {
+        Some(LifecycleCommand::Shell(s.to_string()))
+    }
+
+    #[test]
+    fn skipped_hook_warnings_empty_when_no_hooks() {
+        let config = empty_config();
+        let runtime = FeatureRuntimeConfig::default();
+        assert!(skipped_hook_warnings(&config, &runtime).is_empty());
+    }
+
+    #[test]
+    fn skipped_hook_warnings_lists_devcontainer_hooks_in_spec_order() {
+        let mut config = empty_config();
+        // Set out of spec order; output must still follow HOOKS order.
+        config.lifecycle.post_attach_command = shell("echo attach");
+        config.lifecycle.on_create_command = shell("echo create");
+        let runtime = FeatureRuntimeConfig::default();
+        assert_eq!(
+            skipped_hook_warnings(&config, &runtime),
+            vec![
+                "skipping onCreateCommand (--no-scripts)".to_string(),
+                "skipping postAttachCommand (--no-scripts)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn skipped_hook_warnings_feature_hook_named_and_ordered_before_devcontainer() {
+        let mut config = empty_config();
+        config.lifecycle.post_create_command = shell("echo dc");
+        let mut runtime = FeatureRuntimeConfig::default();
+        runtime.feature_hooks.push((
+            "node".to_string(),
+            LifecycleHooks {
+                post_create_command: shell("echo feat"),
+                ..Default::default()
+            },
+        ));
+        assert_eq!(
+            skipped_hook_warnings(&config, &runtime),
+            vec![
+                "skipping postCreateCommand from feature `node` (--no-scripts)".to_string(),
+                "skipping postCreateCommand (--no-scripts)".to_string(),
+            ]
+        );
     }
 }

@@ -49,14 +49,22 @@ async fn run() -> anyhow::Result<()> {
             )
             .await
         }
-        cli::Command::Exec { memory, cpus, args } => {
+        cli::Command::Exec {
+            memory,
+            cpus,
+            no_scripts,
+            args,
+        } => {
             let status = exec::exec(
                 &workspace,
                 &profile,
                 &config_path,
-                &memory,
-                &cpus,
+                exec::ResourceLimits {
+                    memory: &memory,
+                    cpus: &cpus,
+                },
                 &args,
+                no_scripts,
                 cli.strict,
             )
             .await?;

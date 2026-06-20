@@ -412,6 +412,14 @@ pseudo-TTY and keeps stdin open so that `docker attach` (phase 4) provides a
 proper interactive terminal. `dcc run` then polls `docker inspect` at 100 ms
 intervals (up to 10 s) until the container reports as running.
 
+Once the container is running, the container-side lifecycle hooks
+(`onCreateCommand` through `postAttachCommand`) run in spec order before port
+forwarding. The `--no-scripts` flag on `dcc exec` skips every lifecycle script —
+the host `initializeCommand` and all in-container hooks — and prints a warning
+naming each skipped script (`exec::skipped_hook_warnings` builds the list in
+execution order), so a misbehaving script can be bypassed when debugging without
+silently dropping anything.
+
 Note that `forwardPorts` no longer translates to `-p` flags. Publishing ports
 with Docker's `-p` mechanism routes traffic through the Docker bridge network,
 so the container application sees connections as coming from the bridge gateway

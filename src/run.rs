@@ -50,9 +50,9 @@ pub(crate) async fn run(
         workspace,
         profile,
         config_path,
-        memory,
-        cpus,
+        exec::ResourceLimits { memory, cpus },
         &exec_args,
+        false,
         strict,
     )
     .await?;

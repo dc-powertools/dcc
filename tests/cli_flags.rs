@@ -113,6 +113,23 @@ fn profile_flag_before_subcommand_overrides_default() {
     );
 }
 
+#[test]
+fn no_scripts_flag_accepted_by_exec() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    // `--no-scripts` must precede the trailing command. It may still fail (no
+    // Docker daemon), but clap must not reject the flag as unexpected.
+    let output = fx
+        .dcc(&["exec", "--no-scripts", "/bin/true"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unexpected argument") && !stderr.contains("--no-scripts"),
+        "`exec --no-scripts` should be accepted by clap\nstderr: {stderr}"
+    );
+}
+
 // Tests below require a live Docker daemon — skipped in CI
 #[test]
 #[ignore]

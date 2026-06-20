@@ -27,6 +27,11 @@ pub(crate) enum Command {
         memory: String,
         #[arg(long, default_value = "4")]
         cpus: String,
+        /// Skip lifecycle scripts (initializeCommand and the in-container hooks),
+        /// printing a warning for each one skipped. Useful for debugging a
+        /// misbehaving script.
+        #[arg(long)]
+        no_scripts: bool,
         #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },

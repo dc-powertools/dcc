@@ -206,6 +206,12 @@ installation order, followed by the `devcontainer.json` hook of that type. A
 non-zero exit from any hook aborts `dcc run` immediately and skips all
 subsequent hooks. `dcc join` does not re-run `postAttachCommand`.
 
+To bypass the lifecycle scripts for a single invocation — for example when one
+is misbehaving and you want a shell to debug it — run
+`dcc exec --no-scripts <command>`. Every lifecycle script is skipped:
+`initializeCommand` (step 1) and all in-container hooks (steps 2–6). `dcc`
+prints a warning naming each skipped script, so nothing is silently omitted.
+
 ### `dcc join`
 
 Reattaches to the original process's stdin/stdout after detaching from a running
