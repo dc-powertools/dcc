@@ -7,8 +7,19 @@ on:
   workflow_call:
 
 jobs:
+  # Gate the tag/release on green CI. Both entrypoints (the automatic push and
+  # bump.yml) flow through here, so this gates them uniformly. The bump.yml push
+  # uses GITHUB_TOKEN and so never triggers ci.yml's own push run — this reusable
+  # call is the only CI it gets.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   tag:
     name: Create tag if missing
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: write

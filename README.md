@@ -354,11 +354,12 @@ git push origin main
 
 `scripts/bump.sh` edits the version in `Cargo.toml`, refreshes `Cargo.lock`, and
 commits `chore: bump version to vX.Y.Z`. When the push lands on `main`, the
-**Auto-tag on version change** workflow (`.github/workflows/autotag.yml`) creates
-the matching `vX.Y.Z` tag if it does not already exist, which triggers the
-**Release** workflow to build the four target binaries and publish a GitHub
-Release. A push that changes `Cargo.toml` without changing the version is a no-op
-(the tag already exists).
+**Auto-tag on version change** workflow (`.github/workflows/autotag.yml`) runs CI
+(format, clippy, tests, build) and, **only if it passes**, creates the matching
+`vX.Y.Z` tag if it does not already exist, which triggers the **Release** workflow
+to build the four target binaries and publish a GitHub Release. If CI fails, no tag
+or release is produced. A push that changes `Cargo.toml` without changing the
+version is a no-op (the tag already exists).
 
 Alternatively, run the **Bump Version** workflow from the Actions tab (choose
 `patch`/`minor`/`major`); it performs the same steps in CI via `scripts/bump.sh`
