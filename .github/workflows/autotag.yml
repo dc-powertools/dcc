@@ -1,0 +1,54 @@
+name: Auto-tag on version change
+
+on:
+  push:
+    branches: [main]
+    paths: ['Cargo.toml']
+  workflow_call:
+
+jobs:
+  tag:
+    name: Create tag if missing
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      created: ${{ steps.tag.outputs.created }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      # Always read/tag the latest main: on a push it equals the pushed commit;
+      # when called by bump.yml the caller's SHA is stale, so pin to main (which
+      # already has the just-pushed bump commit). Version read and tag target
+      # come from the same checkout, so they are always self-consistent.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve version from Cargo.toml
+        id: resolve
+        run: echo "version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag if it does not exist
+        id: tag
+        run: |
+          TAG="v${{ steps.resolve.outputs.version }}"
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; nothing to do."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Created tag $TAG."
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.created == 'true'
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    with:
+      ref: "v${{ needs.tag.outputs.version }}"

@@ -7,10 +7,7 @@ on:
         description: 'Version bump type'
         required: true
         type: choice
-        options:
-          - patch
-          - minor
-          - major
+        options: [patch, minor, major]
 
 jobs:
   bump:
@@ -18,48 +15,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      version: ${{ steps.version.outputs.new }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Compute new version
-        id: version
-        run: |
-          CURRENT=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          case "${{ inputs.bump_type }}" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-          echo "new=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Update Cargo.toml
-        run: >
-          sed -i
-          "0,/^version = /s/^version = \"[^\"]*\"/version = \"${{ steps.version.outputs.new }}\"/"
-          Cargo.toml
-
-      - name: Update Cargo.lock
-        run: cargo check
-
-      - name: Commit and tag
+      - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock
-          git commit -m "chore: bump version to v${{ steps.version.outputs.new }}"
-          git push origin main
-          git tag "v${{ steps.version.outputs.new }}"
-          git push origin "v${{ steps.version.outputs.new }}"
 
-  release:
+      - name: Bump version
+        run: ./scripts/bump.sh "${{ inputs.bump_type }}"
+
+      - name: Push
+        run: git push origin main
+
+  autotag:
     needs: bump
-    uses: ./.github/workflows/release.yml
+    uses: ./.github/workflows/autotag.yml
     permissions:
       contents: write
-    with:
-      ref: "v${{ needs.bump.outputs.version }}"
