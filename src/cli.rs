@@ -31,7 +31,7 @@ pub(crate) enum Command {
         /// printing a warning for each one skipped. Useful for debugging a
         /// misbehaving script.
         #[arg(long)]
-        no_scripts: bool,
+        skip_lifecycle: bool,
         #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },

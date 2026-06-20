@@ -414,7 +414,7 @@ intervals (up to 10 s) until the container reports as running.
 
 Once the container is running, the container-side lifecycle hooks
 (`onCreateCommand` through `postAttachCommand`) run in spec order before port
-forwarding. The `--no-scripts` flag on `dcc exec` skips every lifecycle script —
+forwarding. The `--skip-lifecycle` flag on `dcc exec` skips every lifecycle script —
 the host `initializeCommand` and all in-container hooks — and prints a warning
 naming each skipped script (`exec::skipped_hook_warnings` builds the list in
 execution order), so a misbehaving script can be bypassed when debugging without

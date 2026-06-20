@@ -52,7 +52,7 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Exec {
             memory,
             cpus,
-            no_scripts,
+            skip_lifecycle,
             args,
         } => {
             let status = exec::exec(
@@ -64,7 +64,7 @@ async fn run() -> anyhow::Result<()> {
                     cpus: &cpus,
                 },
                 &args,
-                no_scripts,
+                skip_lifecycle,
                 cli.strict,
             )
             .await?;

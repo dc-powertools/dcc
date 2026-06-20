@@ -29,7 +29,7 @@ pub(crate) async fn exec(
     config_path: &Path,
     limits: ResourceLimits<'_>,
     override_args: &[String],
-    no_scripts: bool,
+    skip_lifecycle: bool,
     strict: bool,
 ) -> anyhow::Result<ExitStatus> {
     let cache_dir = CacheDir::new(workspace, profile);
@@ -183,8 +183,8 @@ pub(crate) async fn exec(
 
     // initializeCommand runs on the host before the container is created/started.
     if let Some(cmd) = &config.initialize_command {
-        if no_scripts {
-            eprintln!("warning: skipping initializeCommand (--no-scripts)");
+        if skip_lifecycle {
+            eprintln!("warning: skipping initializeCommand (--skip-lifecycle)");
         } else {
             let cmd = cmd.substitute(&|s| config::vars::resolve_container_env(s, &container_env));
             lifecycle::run_on_host(&cmd, &workspace.root)
@@ -213,7 +213,7 @@ pub(crate) async fn exec(
         &local_workspace,
         &local_cache,
         &container_env,
-        no_scripts,
+        skip_lifecycle,
     )
     .await?;
 
@@ -262,7 +262,7 @@ async fn wait_for_running(container: &str) -> anyhow::Result<()> {
 /// devcontainer.json hook of that type. A non-zero exit from any hook aborts
 /// immediately, skipping subsequent hooks.
 ///
-/// When `no_scripts` is set, no hook runs; instead a warning naming each one is
+/// When `skip_lifecycle` is set, no hook runs; instead a warning naming each one is
 /// printed, so a misbehaving hook can be bypassed for debugging.
 async fn exec_lifecycle_hooks(
     container: &str,
@@ -271,9 +271,9 @@ async fn exec_lifecycle_hooks(
     local_workspace: &str,
     local_cache: &str,
     container_env: &std::collections::HashMap<String, String>,
-    no_scripts: bool,
+    skip_lifecycle: bool,
 ) -> anyhow::Result<()> {
-    if no_scripts {
+    if skip_lifecycle {
         for warning in skipped_hook_warnings(config, feature_runtime) {
             eprintln!("warning: {warning}");
         }
@@ -320,7 +320,7 @@ async fn exec_lifecycle_hooks(
     Ok(())
 }
 
-/// Builds the warning messages for lifecycle hooks skipped under `--no-scripts`,
+/// Builds the warning messages for lifecycle hooks skipped under `--skip-lifecycle`,
 /// in the same spec execution order they would otherwise run: for each hook
 /// type, feature-contributed hooks (in installation order) first, then the
 /// devcontainer.json hook. Only hooks that are actually present are listed.
@@ -333,12 +333,12 @@ fn skipped_hook_warnings(
         for (feature_id, hooks) in &feature_runtime.feature_hooks {
             if get(hooks).is_some() {
                 warnings.push(format!(
-                    "skipping {name} from feature `{feature_id}` (--no-scripts)"
+                    "skipping {name} from feature `{feature_id}` (--skip-lifecycle)"
                 ));
             }
         }
         if get(&config.lifecycle).is_some() {
-            warnings.push(format!("skipping {name} (--no-scripts)"));
+            warnings.push(format!("skipping {name} (--skip-lifecycle)"));
         }
     }
     warnings
@@ -587,8 +587,8 @@ mod tests {
         assert_eq!(
             skipped_hook_warnings(&config, &runtime),
             vec![
-                "skipping onCreateCommand (--no-scripts)".to_string(),
-                "skipping postAttachCommand (--no-scripts)".to_string(),
+                "skipping onCreateCommand (--skip-lifecycle)".to_string(),
+                "skipping postAttachCommand (--skip-lifecycle)".to_string(),
             ]
         );
     }
@@ -608,8 +608,8 @@ mod tests {
         assert_eq!(
             skipped_hook_warnings(&config, &runtime),
             vec![
-                "skipping postCreateCommand from feature `node` (--no-scripts)".to_string(),
-                "skipping postCreateCommand (--no-scripts)".to_string(),
+                "skipping postCreateCommand from feature `node` (--skip-lifecycle)".to_string(),
+                "skipping postCreateCommand (--skip-lifecycle)".to_string(),
             ]
         );
     }
