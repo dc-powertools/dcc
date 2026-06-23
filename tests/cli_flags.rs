@@ -14,6 +14,18 @@ fn strict_rejects_unknown_fields() {
 }
 
 #[test]
+fn strict_after_subcommand_rejects_unknown_fields() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{ "image": "rust:1", "unknownField": "value" }"#,
+    );
+    let output = fx.dcc(&["build", "--strict"]).output().unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "unknownField");
+}
+
+#[test]
 fn default_mode_warns_on_unknown_fields_but_does_not_fail_early() {
     let fx = Fixture::new();
     fx.write_config(
@@ -111,6 +123,13 @@ fn profile_flag_before_subcommand_overrides_default() {
         with_profile.stdout, default.stdout,
         "`-p base` before the subcommand should differ from the default profile"
     );
+}
+
+#[test]
+fn strict_flag_after_subcommand_accepted() {
+    let fx = Fixture::new();
+    let output = fx.dcc(&["id", "--strict"]).output().unwrap();
+    assert_success(&output);
 }
 
 #[test]

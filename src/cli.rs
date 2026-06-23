@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "dcc", about = "Dev Container CLI", version)]
 pub(crate) struct Cli {
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub(crate) strict: bool,
     /// Profile to operate on. Global so it may appear before or after the
     /// subcommand (`dcc -p base build` and `dcc build -p base` are equivalent).

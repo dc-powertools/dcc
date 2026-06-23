@@ -735,7 +735,7 @@ must include the full command that was attempted.
 ## CLI Definition (`cli.rs`)
 
 ```
-dcc [--strict] [-p/--profile <name>] <command> [-p/--profile <name>] [command-flags] [--] [args...]
+dcc [--strict] [-p/--profile <name>] <command> [--strict] [-p/--profile <name>] [command-flags] [--] [args...]
 
 Commands:
   build  [--no-cache]
@@ -744,20 +744,17 @@ Commands:
   stop
 ```
 
-`--profile` (`-p`) is a clap **global argument** declared once on `Cli` and
-read from the single `Cli::profile` field. As a global argument it is accepted
-in both positions — `dcc -p claude run` and `dcc run -p claude` are equivalent —
-so users are not forced to remember whether the flag precedes or follows the
-subcommand. Earlier versions declared `-p` on each subcommand to allow it after
-the subcommand; the global argument supersedes that, supporting both orderings
-with no duplication. `--profile` defaults to `"devcontainer"`. (For commands
-like `dcc exec`/`dcc run` whose trailing arguments form the in-container
-command, `-p` must precede the first positional argument, otherwise it is passed
-through to that command.)
-
-`--strict` is declared on `Cli` but is **not** global, so it is accepted only
-before the subcommand (`dcc --strict build`). It affects config parsing, which
-applies identically across all subcommands.
+`--profile` (`-p`) and `--strict` are clap **global arguments** declared once on
+`Cli` and read from the single `Cli::profile` / `Cli::strict` fields. As global
+arguments they are accepted in both positions — `dcc -p claude --strict run` and
+`dcc run -p claude --strict` are equivalent — so users are not forced to remember
+whether the flags precede or follow the subcommand. Earlier versions declared
+`-p` on each subcommand to allow it after the subcommand; the global argument
+supersedes that, supporting both orderings with no duplication. `--profile`
+defaults to `"devcontainer"`. `--strict` affects config parsing, which applies
+identically across all subcommands. (For commands like `dcc exec`/`dcc run` whose
+trailing arguments form the in-container command, global flags must precede the
+first positional argument, otherwise they are passed through to that command.)
 
 Implemented with `clap` derive macros. `trailing_var_arg = true` is set on the
 `run` subcommand so that clap stops flag parsing at the first positional

@@ -158,6 +158,8 @@ empty tmpfs mount, to prevent data from leaking across profiles.
 All commands accept the flag `--profile <name>` that indicates which profile to load.
 The default profile is simply `devcontainer`, which loads from the standard config
 file location `.devcontainer/devcontainer.json`.
+Pass `--strict` before or after the subcommand to treat unrecognised
+configuration fields as errors instead of warnings.
 
 ### `dcc build`
 
