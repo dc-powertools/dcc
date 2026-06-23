@@ -31,6 +31,17 @@ impl LifecycleCommandSingle {
             Self::Exec(argv) => Self::Exec(argv.iter().map(|s| f(s)).collect()),
         }
     }
+
+    fn try_substitute(&self, f: &impl Fn(&str) -> anyhow::Result<String>) -> anyhow::Result<Self> {
+        Ok(match self {
+            Self::Shell(s) => Self::Shell(f(s)?),
+            Self::Exec(argv) => Self::Exec(
+                argv.iter()
+                    .map(|s| f(s))
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            ),
+        })
+    }
 }
 
 /// A devcontainer lifecycle hook value: a shell string, an argv array, or a
@@ -73,6 +84,30 @@ impl LifecycleCommand {
                     .collect(),
             ),
         }
+    }
+
+    /// Fallible mirror of [`substitute`](Self::substitute): maps `f` over every
+    /// string leaf, returning the first error. Used for run-time
+    /// `${containerEnv:…}` resolution, which can fail on an undefined/empty variable.
+    pub(crate) fn try_substitute(
+        &self,
+        f: &impl Fn(&str) -> anyhow::Result<String>,
+    ) -> anyhow::Result<Self> {
+        Ok(match self {
+            Self::Shell(s) => Self::Shell(f(s)?),
+            Self::Exec(argv) => Self::Exec(
+                argv.iter()
+                    .map(|s| f(s))
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            ),
+            Self::Parallel(map) => {
+                let mut out = IndexMap::new();
+                for (k, v) in map {
+                    out.insert(k.clone(), v.try_substitute(f)?);
+                }
+                Self::Parallel(out)
+            }
+        })
     }
 }
 
@@ -366,6 +401,42 @@ mod tests {
             }
             other => panic!("expected Parallel, got {other:?}"),
         }
+    }
+
+    // --- LifecycleCommand::try_substitute ---
+
+    #[test]
+    fn try_substitute_maps_each_leaf() {
+        let cmd = LifecycleCommand::Exec(vec!["echo".to_string(), "hi".to_string()]);
+        let out = cmd.try_substitute(&|s: &str| Ok(s.to_uppercase())).unwrap();
+        assert_eq!(
+            out,
+            LifecycleCommand::Exec(vec!["ECHO".to_string(), "HI".to_string()])
+        );
+    }
+
+    #[test]
+    fn try_substitute_propagates_first_error() {
+        let mut map = IndexMap::new();
+        map.insert(
+            "a".to_string(),
+            LifecycleCommandSingle::Shell("ok".to_string()),
+        );
+        map.insert(
+            "b".to_string(),
+            LifecycleCommandSingle::Shell("boom".to_string()),
+        );
+        let cmd = LifecycleCommand::Parallel(map);
+        let err = cmd
+            .try_substitute(&|s: &str| {
+                if s == "boom" {
+                    anyhow::bail!("bad leaf: {s}")
+                } else {
+                    Ok(s.to_string())
+                }
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("bad leaf: boom"), "got: {err}");
     }
 
     // --- LifecycleHooks ---

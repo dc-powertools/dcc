@@ -207,7 +207,7 @@ build time, so only container-side constants are substituted:
 | `${containerCacheFolder}` | `/cache` |
 | `${containerWorkspaceFolder}` | `/workspace` |
 | `${localEnv:VAR}` / `${localEnv:VAR:default}` | Host process env var `VAR` |
-| `${containerEnv:VAR}` / `${containerEnv:VAR:default}` | `VAR` from the **built image** env (base image `ENV` + baked `containerEnv`) |
+| `${containerEnv:VAR}` / `${containerEnv:VAR:default}` | `VAR` from the **built image** env (base image `ENV` + baked `containerEnv`), plus the configured user's runtime `HOME` and `USER` |
 
 Resolution timing differs. The path variables and `${localEnv:…}` are resolved at
 config-load (`vars::apply_substitution`) since they are knowable on the host.
@@ -216,14 +216,25 @@ and resolved at run time in `exec.rs` by `vars::resolve_container_env` against t
 image's `Config.Env` (read via `docker::inspect_image_env`). The resolved literal
 is placed into the `-e`/`--mount`/command/hook strings, so it lands in the
 container config env and is inherited uniformly (PID 1, its children, and
-`docker exec`). Because the source is the image, `${containerEnv:…}` sees neither
-`remoteEnv` values nor variables set only at container start.
+`docker exec`). `${containerEnv:…}` does not see `remoteEnv` values.
 
-An undefined `${localEnv:…}` / `${containerEnv:…}` resolves to its `:default` text
-if present, otherwise the empty string. Local and env-namespace variables are not
-substituted inside a `containerEnv` value (it is build-time). Any other unknown
-`${…}` is left as-is and triggers a warning; the run path additionally prints a
-user-facing warning for unresolved references left in a mount or `remoteEnv`.
+`HOME` and `USER` are set by the container runtime (from `/etc/passwd` and the
+`-u` user), not baked into `Config.Env`. When any runtime-applied field references
+`${containerEnv:…}`, `exec.rs` therefore probes the configured user's `HOME`/`USER`
+once (`docker::probe_user_env` — a throwaway `docker run … sh -c 'echo $HOME; id -un'`)
+and merges them into the resolution map. The probe is gated on actual use
+(`exec::references_container_env`) so configs that don't use containerEnv pay nothing;
+a probe failure is a warning, leaving them unresolved (which then errors below).
+
+A `${containerEnv:VAR}` that is **undefined or empty** with no `:default` is a hard
+error (`resolve_container_env` returns `Result`), so a typo or an unsupported variable
+(e.g. `${containerEnv:HOSTNAME}`) fails loudly instead of silently becoming empty. An
+explicit empty default (`${containerEnv:VAR:}`) opts back into an empty value. An
+undefined `${localEnv:…}` still resolves to its `:default` or the empty string. Local
+and env-namespace variables are not substituted inside a `containerEnv` value (it is
+build-time). Any other unknown `${…}` is left as-is and triggers a warning; the run
+path additionally prints a user-facing warning for unresolved references left in a
+mount or `remoteEnv`.
 
 ---
 

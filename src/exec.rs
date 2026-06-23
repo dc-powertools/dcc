@@ -78,18 +78,36 @@ pub(crate) async fn exec(
     // The image's baked environment (base image ENV + all containerEnv), used to
     // resolve `${containerEnv:VAR}` references in the runtime properties below.
     // remoteEnv is intentionally absent (it is not part of the image).
-    let container_env = docker::inspect_image_env(image_tag.as_str())
+    let mut container_env = docker::inspect_image_env(image_tag.as_str())
         .await
         .with_context(|| format!("failed to inspect image env `{image_tag}`"))?;
+
+    // `${containerEnv:HOME}`/`${containerEnv:USER}` are set by the container runtime
+    // (from /etc/passwd + the `-u` user), not baked into the image's Config.Env. When
+    // any runtime-applied field references `${containerEnv:…}`, probe the configured
+    // user's HOME/USER and merge them in. Best-effort: a probe failure warns and
+    // leaves them unset, so the undefined-variable error below points at the cause.
+    if references_container_env(override_args, &config, &feature_runtime) {
+        match docker::probe_user_env(image_tag.as_str(), &config.container_user).await {
+            Ok(probed) => container_env.extend(probed),
+            Err(e) => eprintln!(
+                "warning: could not probe container HOME/USER ({e:#}); \
+                 ${{containerEnv:HOME}}/${{containerEnv:USER}} may be unresolved"
+            ),
+        }
+    }
 
     // The container command (a `dcc run` script or `dcc exec` args) supports the
     // same substitution (`${localEnv:VAR}`, `${containerEnv:VAR}`, …) as
     // mounts/remoteEnv.
     let override_args: Vec<String> = override_args
         .iter()
-        .map(|a| config::vars::apply_substitution(a, &local_workspace, &local_cache))
-        .map(|a| config::vars::resolve_container_env(&a, &container_env))
-        .collect();
+        .map(|a| {
+            let a = config::vars::apply_substitution(a, &local_workspace, &local_cache);
+            config::vars::resolve_container_env(&a, &container_env)
+                .with_context(|| format!("in command argument `{a}`"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     // Mounts: feature contributions first, then devcontainer.json mounts. Feature
     // values get host/localEnv substitution; `${containerEnv:…}` is then resolved
@@ -99,8 +117,11 @@ pub(crate) async fn exec(
         .iter()
         .map(|m| config::vars::apply_substitution(m, &local_workspace, &local_cache))
         .chain(config.mounts.iter().cloned())
-        .map(|m| config::vars::resolve_container_env(&m, &container_env))
-        .collect();
+        .map(|m| {
+            config::vars::resolve_container_env(&m, &container_env)
+                .with_context(|| format!("in mount `{m}`"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
 
@@ -117,8 +138,12 @@ pub(crate) async fn exec(
                 config::vars::apply_substitution(v, &local_workspace, &local_cache),
             )
         }))
-        .map(|(k, v)| (k, config::vars::resolve_container_env(&v, &container_env)))
-        .collect();
+        .map(|(k, v)| {
+            let resolved = config::vars::resolve_container_env(&v, &container_env)
+                .with_context(|| format!("in remoteEnv `{k}`"))?;
+            anyhow::Ok((k, resolved))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     // Warn about any ${...} reference still unresolved in a mount or remoteEnv
     // value (e.g. an unsupported ${localEnv:…}); these otherwise make `docker run`
@@ -280,7 +305,9 @@ pub(crate) async fn exec(
         if opts.skip_lifecycle {
             eprintln!("warning: skipping initializeCommand (--skip-lifecycle)");
         } else {
-            let cmd = cmd.substitute(&|s| config::vars::resolve_container_env(s, &container_env));
+            let cmd = cmd
+                .try_substitute(&|s| config::vars::resolve_container_env(s, &container_env))
+                .context("initializeCommand")?;
             lifecycle::run_on_host(&cmd, &workspace.root)
                 .await
                 .context("initializeCommand failed")?;
@@ -392,7 +419,7 @@ async fn exec_lifecycle_hooks(
     // Feature hooks need host/localEnv substitution; `${containerEnv:…}` is then
     // resolved for both feature and devcontainer.json hooks. devcontainer.json
     // hooks were already host-substituted at config-load (containerEnv deferred).
-    let substitute = |s: &str| {
+    let substitute = |s: &str| -> anyhow::Result<String> {
         let s = config::vars::apply_substitution(s, local_workspace, local_cache);
         config::vars::resolve_container_env(&s, container_env)
     };
@@ -401,7 +428,9 @@ async fn exec_lifecycle_hooks(
     for (name, get) in lifecycle::HOOKS {
         for (feature_id, hooks) in &feature_runtime.feature_hooks {
             if let Some(cmd) = get(hooks) {
-                let cmd = cmd.substitute(&substitute);
+                let cmd = cmd
+                    .try_substitute(&substitute)
+                    .with_context(|| format!("{name} from feature `{feature_id}`"))?;
                 lifecycle::run_in_container(
                     &cmd,
                     container,
@@ -414,7 +443,9 @@ async fn exec_lifecycle_hooks(
         }
 
         if let Some(cmd) = get(&config.lifecycle) {
-            let cmd = cmd.substitute(&resolve_cenv);
+            let cmd = cmd
+                .try_substitute(&resolve_cenv)
+                .with_context(|| name.to_string())?;
             lifecycle::run_in_container(
                 &cmd,
                 container,
@@ -451,6 +482,40 @@ fn skipped_hook_warnings(
         }
     }
     warnings
+}
+
+/// Returns true when any runtime-applied field references `${containerEnv:…}`. Used to
+/// gate the HOME/USER probe so configs that don't use containerEnv pay no extra cost.
+fn references_container_env(
+    override_args: &[String],
+    config: &config::DevcontainerConfig,
+    feature_runtime: &FeatureRuntimeConfig,
+) -> bool {
+    const NEEDLE: &str = "${containerEnv:";
+    let has = |s: &str| s.contains(NEEDLE);
+
+    if override_args.iter().any(|s| has(s)) {
+        return true;
+    }
+    if config.mounts.iter().any(|s| has(s)) || feature_runtime.mounts.iter().any(|s| has(s)) {
+        return true;
+    }
+    if config.remote_env.values().any(|s| has(s))
+        || feature_runtime.remote_env.values().any(|s| has(s))
+    {
+        return true;
+    }
+    // Lifecycle commands: host initializeCommand plus the in-container hooks from both
+    // devcontainer.json and features.
+    let mut cmds: Vec<&lifecycle::LifecycleCommand> = config.initialize_command.iter().collect();
+    for (_name, get) in lifecycle::HOOKS {
+        cmds.extend(get(&config.lifecycle));
+        for (_id, hooks) in &feature_runtime.feature_hooks {
+            cmds.extend(get(hooks));
+        }
+    }
+    cmds.into_iter()
+        .any(|c| has(&describe_lifecycle_command(c)))
 }
 
 /// Renders a `docker --mount` string (`type=bind,src=…,dst=…,opts…`) into a
@@ -930,5 +995,51 @@ mod tests {
             debug_lifecycle_lines(&config, &FeatureRuntimeConfig::default(), true),
             vec!["  onCreateCommand: x  (skipped: --skip-lifecycle)".to_string()]
         );
+    }
+
+    // --- references_container_env ---
+
+    #[test]
+    fn references_container_env_false_when_absent() {
+        let config = empty_config();
+        assert!(!references_container_env(
+            &["ls".to_string()],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+    }
+
+    #[test]
+    fn references_container_env_true_in_mount() {
+        let mut config = empty_config();
+        config
+            .mounts
+            .push("type=bind,src=${containerEnv:HOME}/.cache,dst=/c".to_string());
+        assert!(references_container_env(
+            &[],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+    }
+
+    #[test]
+    fn references_container_env_true_in_override_args() {
+        let config = empty_config();
+        assert!(references_container_env(
+            &["echo".to_string(), "${containerEnv:USER}".to_string()],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+    }
+
+    #[test]
+    fn references_container_env_true_in_hook() {
+        let mut config = empty_config();
+        config.lifecycle.post_create_command = shell("echo ${containerEnv:HOME}");
+        assert!(references_container_env(
+            &[],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
     }
 }

@@ -308,6 +308,62 @@ fn parse_env_list(env: Vec<String>) -> HashMap<String, String> {
         .collect()
 }
 
+/// Probes the configured user's runtime `HOME` and `USER` by running a throwaway
+/// container as that user. The runtime sets `HOME` from `/etc/passwd` (and we read
+/// `USER` via `id`); neither is part of the static image `Config.Env`, which is why
+/// `${containerEnv:HOME}`/`${containerEnv:USER}` need this probe. Returns a map with
+/// `HOME` and/or `USER` (absent when the probe produced an empty value).
+pub(crate) async fn probe_user_env(
+    image: &str,
+    user: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-u",
+            user,
+            "--entrypoint",
+            "sh",
+            image,
+            "-c",
+            r#"printf '%s\n%s\n' "$HOME" "$(id -un)""#,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to spawn `docker run` to probe env in `{image}`"))?;
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(command_failure(
+            &format!("docker run {image} (HOME/USER probe)"),
+            code,
+            &output.stderr,
+        ));
+    }
+
+    Ok(parse_user_env(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Parses the env-probe stdout: line 1 → `HOME`, line 2 → `USER`. Empty values are
+/// skipped (left unset rather than mapped to an empty string).
+fn parse_user_env(stdout: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut lines = stdout.lines();
+    for key in ["HOME", "USER"] {
+        if let Some(value) = lines.next() {
+            let value = value.trim();
+            if !value.is_empty() {
+                map.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    map
+}
+
 pub(crate) async fn inspect_running(container: &str) -> anyhow::Result<bool> {
     let output = Command::new("docker")
         .args(["inspect", "--format", "{{.State.Running}}", container])
@@ -481,5 +537,31 @@ mod tests {
                 "-la"
             ]
         );
+    }
+
+    #[test]
+    fn parse_user_env_both_lines() {
+        let m = parse_user_env("/home/dev\ndev\n");
+        assert_eq!(m.get("HOME").map(String::as_str), Some("/home/dev"));
+        assert_eq!(m.get("USER").map(String::as_str), Some("dev"));
+    }
+
+    #[test]
+    fn parse_user_env_skips_empty_home() {
+        let m = parse_user_env("\ndev\n");
+        assert!(!m.contains_key("HOME"));
+        assert_eq!(m.get("USER").map(String::as_str), Some("dev"));
+    }
+
+    #[test]
+    fn parse_user_env_trims_and_handles_missing_second_line() {
+        let m = parse_user_env("  /root  \n");
+        assert_eq!(m.get("HOME").map(String::as_str), Some("/root"));
+        assert!(!m.contains_key("USER"));
+    }
+
+    #[test]
+    fn parse_user_env_empty() {
+        assert!(parse_user_env("").is_empty());
     }
 }

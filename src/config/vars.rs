@@ -100,12 +100,17 @@ pub(crate) fn unresolved_variables(s: &str) -> Vec<String> {
 }
 
 /// Resolves `${containerEnv:NAME}` / `${containerEnv:NAME:default}` references in
-/// `s` against `env` (the image's baked environment from `docker.rs`). A name
-/// absent from `env` falls back to the `:default` text if present, else the empty
-/// string — matching the spec and dcc's `${localEnv:…}` behavior. All other text,
-/// including non-`containerEnv` `${…}` tokens, is copied through unchanged. Run at
-/// run time, after host/`localEnv` substitution has already deferred these tokens.
-pub(crate) fn resolve_container_env(s: &str, env: &HashMap<String, String>) -> String {
+/// `s` against `env` (the image's baked environment plus the container user's runtime
+/// HOME/USER, from `exec.rs`). A name that is absent from `env` *or* maps to an empty
+/// value falls back to the `:default` text if one is given (an explicit empty default,
+/// `${containerEnv:NAME:}`, opts into an empty value); otherwise it is an error, so a
+/// typo or unsupported variable fails loudly instead of silently becoming empty. All
+/// other text, including non-`containerEnv` `${…}` tokens, is copied through unchanged.
+/// Run at run time, after host/`localEnv` substitution has already deferred these tokens.
+pub(crate) fn resolve_container_env(
+    s: &str,
+    env: &HashMap<String, String>,
+) -> anyhow::Result<String> {
     let mut result = String::with_capacity(s.len());
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -120,11 +125,20 @@ pub(crate) fn resolve_container_env(s: &str, env: &HashMap<String, String>) -> S
                         Some((var, default)) => (var, Some(default)),
                         None => (rest, None),
                     };
-                    let value = env
-                        .get(var)
-                        .cloned()
-                        .or_else(|| default.map(str::to_owned))
-                        .unwrap_or_default();
+                    // Treat an empty value as unset, so it falls back to a default or errors.
+                    let value = match env.get(var) {
+                        Some(v) if !v.is_empty() => v.clone(),
+                        _ => match default {
+                            Some(d) => d.to_owned(),
+                            None => anyhow::bail!(
+                                "containerEnv variable `{var}` is undefined or empty; dcc \
+                                 resolves ${{containerEnv:VAR}} against the image environment \
+                                 plus the container user's HOME and USER. Add a default (e.g. \
+                                 ${{containerEnv:{var}:/fallback}}) to allow an empty or \
+                                 fallback value."
+                            ),
+                        },
+                    };
                     result.push_str(&value);
                 } else {
                     result.push_str(token);
@@ -143,7 +157,7 @@ pub(crate) fn resolve_container_env(s: &str, env: &HashMap<String, String>) -> S
             i += ch.len_utf8();
         }
     }
-    result
+    Ok(result)
 }
 
 fn apply_to_string(
@@ -450,24 +464,48 @@ mod tests {
     fn container_env_resolves_from_map() {
         let e = env(&[("PATH", "/usr/bin:/bin")]);
         assert_eq!(
-            resolve_container_env("${containerEnv:PATH}:/x", &e),
+            resolve_container_env("${containerEnv:PATH}:/x", &e).unwrap(),
             "/usr/bin:/bin:/x"
         );
     }
 
     #[test]
-    fn container_env_unset_resolves_to_empty() {
-        assert_eq!(
-            resolve_container_env("a${containerEnv:MISSING}b", &env(&[])),
-            "ab"
+    fn container_env_unset_errors() {
+        let err = resolve_container_env("a${containerEnv:MISSING}b", &env(&[])).unwrap_err();
+        assert!(
+            err.to_string().contains("MISSING"),
+            "error should name the variable, got: {err}"
         );
+    }
+
+    #[test]
+    fn container_env_empty_value_errors() {
+        // A present-but-empty value is treated as unset.
+        let err = resolve_container_env("${containerEnv:X}", &env(&[("X", "")])).unwrap_err();
+        assert!(err.to_string().contains('X'), "got: {err}");
     }
 
     #[test]
     fn container_env_default_used_when_unset() {
         assert_eq!(
-            resolve_container_env("${containerEnv:MISSING:/fallback}", &env(&[])),
+            resolve_container_env("${containerEnv:MISSING:/fallback}", &env(&[])).unwrap(),
             "/fallback"
+        );
+    }
+
+    #[test]
+    fn container_env_default_used_when_empty() {
+        assert_eq!(
+            resolve_container_env("${containerEnv:X:/fallback}", &env(&[("X", "")])).unwrap(),
+            "/fallback"
+        );
+    }
+
+    #[test]
+    fn container_env_explicit_empty_default_allows_empty() {
+        assert_eq!(
+            resolve_container_env("a${containerEnv:MISSING:}b", &env(&[])).unwrap(),
+            "ab"
         );
     }
 
@@ -475,7 +513,7 @@ mod tests {
     fn container_env_default_ignored_when_set() {
         let e = env(&[("X", "real")]);
         assert_eq!(
-            resolve_container_env("${containerEnv:X:fallback}", &e),
+            resolve_container_env("${containerEnv:X:fallback}", &e).unwrap(),
             "real"
         );
     }
@@ -483,7 +521,7 @@ mod tests {
     #[test]
     fn container_env_default_preserves_colons() {
         assert_eq!(
-            resolve_container_env("${containerEnv:X:a:b:c}", &env(&[])),
+            resolve_container_env("${containerEnv:X:a:b:c}", &env(&[])).unwrap(),
             "a:b:c"
         );
     }
@@ -495,7 +533,8 @@ mod tests {
             resolve_container_env(
                 "${localEnv:HOME}|${localWorkspaceFolder}|${unknown}|${containerEnv:PATH}",
                 &e
-            ),
+            )
+            .unwrap(),
             "${localEnv:HOME}|${localWorkspaceFolder}|${unknown}|/p"
         );
     }
@@ -503,7 +542,7 @@ mod tests {
     #[test]
     fn container_env_malformed_no_closing_brace_left_literal() {
         assert_eq!(
-            resolve_container_env("${containerEnv:X", &env(&[("X", "v")])),
+            resolve_container_env("${containerEnv:X", &env(&[("X", "v")])).unwrap(),
             "${containerEnv:X"
         );
     }
