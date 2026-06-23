@@ -13,7 +13,7 @@ use crate::{
     docker,
     features::{self, FeatureRuntimeConfig},
     forward, lifecycle,
-    profile::{ContainerName, ProfileName},
+    profile::{ContainerId, ContainerName, ProfileName},
     workspace::Workspace,
 };
 
@@ -45,14 +45,18 @@ pub(crate) async fn exec(
     let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
-    let container = ContainerName::new(workspace, profile);
-    let image_tag = container.as_image_tag();
+    let container_id = ContainerId::new(workspace, profile);
+    let container = ContainerName::resolve(config.name.as_deref(), &container_id);
+    let image_tag = container_id.as_image_tag();
 
     // Check if already running
-    if docker::inspect_running(container.as_str()).await? {
+    if let Some(running_container) =
+        running_container_name(container_id.as_str(), container.as_str()).await?
+    {
         anyhow::bail!(
-            "container `{}` is already running; use `dcc join` to reattach",
-            container.as_str()
+            "container `{}` is already running for dcc container id `{}`; use `dcc join` to reattach",
+            running_container,
+            container_id.as_str()
         );
     }
 
@@ -161,6 +165,10 @@ pub(crate) async fn exec(
     args.extend(["--name".into(), container.as_str().to_owned()]);
     args.extend([
         "--label".into(),
+        format!("dcc.container_id={}", container_id.as_str()),
+    ]);
+    args.extend([
+        "--label".into(),
         format!("devcontainer.local_folder={}", workspace.root.display()),
     ]);
     args.extend([
@@ -231,6 +239,9 @@ pub(crate) async fn exec(
             container.as_str(),
             image_tag.as_str()
         ));
+        if container.as_str() != container_id.as_str() {
+            dbg.push(format!("container id: {}", container_id.as_str()));
+        }
         dbg.push(format!(
             "user: {}   memory: {}   cpus: {}   workdir: {CONTAINER_WORKSPACE}",
             config.container_user, opts.limits.memory, opts.limits.cpus
@@ -375,6 +386,22 @@ pub(crate) async fn exec(
         .with_context(|| format!("failed to stop container `{}`", container.as_str()))?;
 
     Ok(status)
+}
+
+async fn running_container_name(
+    container_id: &str,
+    fallback_container_name: &str,
+) -> anyhow::Result<Option<String>> {
+    if let Some(name) = docker::running_container_name_by_id(container_id).await? {
+        return Ok(Some(name));
+    }
+    if docker::inspect_running(fallback_container_name).await? {
+        return Ok(Some(fallback_container_name.to_string()));
+    }
+    if fallback_container_name != container_id && docker::inspect_running(container_id).await? {
+        return Ok(Some(container_id.to_string()));
+    }
+    Ok(None)
 }
 
 async fn wait_for_running(container: &str) -> anyhow::Result<()> {
@@ -829,6 +856,7 @@ mod tests {
 
     fn empty_config() -> config::DevcontainerConfig {
         config::DevcontainerConfig {
+            name: None,
             image: "img".into(),
             features: IndexMap::new(),
             container_env: HashMap::new(),

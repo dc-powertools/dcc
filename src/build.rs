@@ -7,7 +7,7 @@ use crate::{
     cache::CacheDir,
     config, docker,
     features::LockEntry,
-    profile::{ContainerName, ProfileName},
+    profile::{ContainerId, ProfileName},
     workspace::Workspace,
 };
 
@@ -24,8 +24,8 @@ pub(crate) async fn build(
     let config = config::load_config(config_path, workspace, &cache_dir, strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
-    let container_name = ContainerName::new(workspace, profile);
-    let image_tag = container_name.as_image_tag();
+    let container_id = ContainerId::new(workspace, profile);
+    let image_tag = container_id.as_image_tag();
 
     if config.features.is_empty()
         && config.container_user == "root"

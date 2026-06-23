@@ -26,6 +26,24 @@ fn strict_after_subcommand_rejects_unknown_fields() {
 }
 
 #[test]
+fn strict_exec_accepts_devcontainer_name_field() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{ "name": "example/project", "image": "rust:1" }"#,
+    );
+    let output = fx
+        .dcc(&["--strict", "exec", "echo", "OK"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unrecognized field 'name'"),
+        "`--strict exec` should accept devcontainer `name`\nstderr: {stderr}"
+    );
+}
+
+#[test]
 fn default_mode_warns_on_unknown_fields_but_does_not_fail_early() {
     let fx = Fixture::new();
     fx.write_config(
@@ -79,7 +97,7 @@ fn positional_args_after_run_accepted() {
 #[test]
 fn profile_flag_before_and_after_subcommand_are_equivalent() {
     let fx = Fixture::new();
-    // `dcc id` resolves the profile and prints the container name; it needs
+    // `dcc id` resolves the profile and prints the dcc container id; it needs
     // neither a Docker daemon nor a config file on disk for a named profile.
     let before = fx.dcc(&["-p", "base", "id"]).output().unwrap();
     let after = fx.dcc(&["id", "-p", "base"]).output().unwrap();
@@ -95,7 +113,7 @@ fn profile_flag_before_and_after_subcommand_are_equivalent() {
     );
     assert!(
         String::from_utf8_lossy(&before.stdout).contains("base"),
-        "container name should reflect the `base` profile, got: {}",
+        "container id should reflect the `base` profile, got: {}",
         String::from_utf8_lossy(&before.stdout),
     );
 }
@@ -107,8 +125,25 @@ fn long_profile_flag_before_subcommand_accepted() {
     assert_success(&output);
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("base"),
-        "container name should reflect the `base` profile, got: {}",
+        "container id should reflect the `base` profile, got: {}",
         String::from_utf8_lossy(&output.stdout),
+    );
+}
+
+#[test]
+fn id_ignores_devcontainer_name_field() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{ "name": "human-readable-name", "image": "rust:1" }"#,
+    );
+    let output = fx.dcc(&["id"]).output().unwrap();
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("dcc-"), "expected dcc id, got: {stdout}");
+    assert!(
+        !stdout.contains("human-readable-name"),
+        "`dcc id` should print the stable dcc id, not devcontainer `name`"
     );
 }
 

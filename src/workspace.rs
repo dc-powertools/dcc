@@ -6,7 +6,7 @@ use anyhow::Context as _;
 #[derive(Debug)]
 pub(crate) struct Workspace {
     pub(crate) root: PathBuf,
-    /// Stable string identifying this repository, used to derive container names.
+    /// Stable string identifying this repository, used to derive dcc container ids.
     /// For git repos with an `origin` remote, this is the remote URL (same on every
     /// machine that clones the repo). Falls back to the canonical workspace root path
     /// for non-git workspaces or repos without a configured origin.

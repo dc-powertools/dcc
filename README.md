@@ -264,7 +264,7 @@ configurations must be located within the `.devcontainer` directory.
 
 ### Container identity
 
-Each profile's container is identified by a name in the form:
+Each profile has a stable dcc container id in the form:
 
 ```
 dcc-<12hex>--<profile>
@@ -275,19 +275,26 @@ The `<12hex>` part is the first 12 characters of the SHA-256 hash of a stable
 this is the remote URL (e.g. `https://github.com/org/repo`). For workspaces
 without a git remote, it falls back to the canonical workspace root path.
 
-Using the remote URL means the container name is the same on every machine that
+Using the remote URL means the container id is the same on every machine that
 clones the same repository, regardless of where the directory is located. Renaming
-or moving the directory does not change the container name.
+or moving the directory does not change the container id.
+
+The Docker container name comes from the devcontainer `name` field when present,
+falling back to the dcc container id. If `name` contains characters Docker does
+not accept in container names, `dcc` converts them to `-` and prints a warning.
+Images, caches, and `dcc id` continue to use the stable dcc container id.
 
 `dcc run` also attaches the standard `devcontainer.local_folder` and
-`devcontainer.config_file` labels to every container it starts, making dcc
-containers discoverable by VS Code and other devcontainer-compatible tools via
+`devcontainer.config_file` labels, plus `dcc.container_id`, to every container it
+starts, making dcc containers discoverable by VS Code and other
+devcontainer-compatible tools via
 `docker ps --filter label=devcontainer.local_folder=<path>`.
 
 ### Supported devcontainer configuration properties
 
 | Field | Description |
 |---|---|
+| `name` | Human-readable Docker container name. Invalid Docker name characters are converted to `-`; `dcc id`, image tags, and caches still use dcc's stable derived id. |
 | `image` | Base Docker image |
 | `features` | devcontainer Features to install |
 | `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |

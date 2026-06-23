@@ -29,14 +29,14 @@ fn path_profile_inside_workspace_loads_config() {
 }
 
 #[test]
-fn path_profile_container_name_consistent_across_commands() {
-    // dcc -p ./X build and dcc -p ./X stop must target the same container.
+fn path_profile_container_id_consistent_across_commands() {
+    // dcc -p ./X build and dcc -p ./X stop must target the same dcc container id.
     // We can't run Docker here, but we can verify that stop reaches Docker
     // (not failing earlier on config resolution) when given a valid path arg.
     let fx = Fixture::new();
     fx.write_config("claude.json", r#"{ "image": "rust:1" }"#);
     // stop is idempotent (treats "no such container" as success), so success
-    // with a path arg confirms the name was derived and passed to Docker.
+    // with a path arg confirms the id was derived and passed to Docker.
     let output = fx
         .dcc(&["stop", "-p", "./.devcontainer/claude.json"])
         .output()

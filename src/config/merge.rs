@@ -7,6 +7,7 @@ use crate::config::RawConfig;
 pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
     RawConfig {
         extends: None,
+        name: child.name.or(parent.name),
         image: child.image.or(parent.image),
         features: merge_option_index_maps(parent.features, child.features),
         container_env: merge_option_hash_maps(parent.container_env, child.container_env),
@@ -99,6 +100,7 @@ mod tests {
     fn empty() -> RawConfig {
         RawConfig {
             extends: None,
+            name: None,
             image: None,
             features: None,
             container_env: None,
@@ -129,6 +131,48 @@ mod tests {
         };
         let result = merge(parent, child);
         assert!(result.extends.is_none());
+    }
+
+    #[test]
+    fn name_child_wins() {
+        let parent = RawConfig {
+            name: Some("parent".to_string()),
+            ..empty()
+        };
+        let child = RawConfig {
+            name: Some("child".to_string()),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        assert_eq!(result.name.as_deref(), Some("child"));
+    }
+
+    #[test]
+    fn name_child_none_uses_parent() {
+        let parent = RawConfig {
+            name: Some("parent".to_string()),
+            ..empty()
+        };
+        let child = empty();
+        let result = merge(parent, child);
+        assert_eq!(result.name.as_deref(), Some("parent"));
+    }
+
+    #[test]
+    fn name_parent_none_uses_child() {
+        let parent = empty();
+        let child = RawConfig {
+            name: Some("child".to_string()),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        assert_eq!(result.name.as_deref(), Some("child"));
+    }
+
+    #[test]
+    fn name_both_none_stays_none() {
+        let result = merge(empty(), empty());
+        assert!(result.name.is_none());
     }
 
     #[test]

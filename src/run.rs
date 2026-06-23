@@ -8,7 +8,7 @@ use crate::{
     cache::CacheDir,
     config, docker, exec,
     features::{self, FeatureRuntimeConfig},
-    profile::{ContainerName, ProfileName},
+    profile::{ContainerId, ProfileName},
     workspace::Workspace,
 };
 
@@ -23,8 +23,8 @@ pub(crate) async fn run(
     let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
-    let container = ContainerName::new(workspace, profile);
-    let image_tag = container.as_image_tag();
+    let container_id = ContainerId::new(workspace, profile);
+    let image_tag = container_id.as_image_tag();
 
     let feature_runtime = match docker::inspect_image_label(image_tag.as_str()).await? {
         None => FeatureRuntimeConfig::default(),

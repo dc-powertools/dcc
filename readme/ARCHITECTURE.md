@@ -24,7 +24,7 @@ src/
   main.rs             Entry point; parses CLI args and dispatches to commands
   cli.rs              clap CLI definitions (Cli struct, Command enum)
   workspace.rs        Workspace discovery (walks ancestor dirs to find .devcontainer)
-  profile.rs          ProfileName and ContainerName newtypes; naming logic
+  profile.rs          ProfileName, ContainerId, and ContainerName newtypes; naming logic
   cache.rs            Cache directory creation and path resolution
   docker.rs           Thin wrappers around docker CLI subcommands
   build.rs            dcc build command
@@ -95,6 +95,7 @@ via `extends`.
 #[serde(rename_all = "camelCase")]
 struct RawConfig {
     extends: Option<String>,
+    name: Option<String>,
     image: Option<String>,
     features: Option<HashMap<String, serde_json::Value>>,
     container_env: Option<HashMap<String, String>>,
@@ -118,6 +119,7 @@ resolution fails if no `image` is present after the full extends chain is merged
 
 ```rust
 pub struct DevcontainerConfig {
+    pub name: Option<String>,
     pub image: String,
     pub features: IndexMap<String, serde_json::Value>,
     pub container_env: HashMap<String, String>,
@@ -172,6 +174,7 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 | Field | Rule |
 |---|---|
 | `extends` | Dropped; not propagated |
+| `name` | Child overwrites parent |
 | `image` | Child overwrites parent |
 | `features` | Map union; child value wins on key conflict |
 | `container_env` | Map union; child value wins on key conflict |
@@ -255,15 +258,16 @@ pub fn find_workspace() -> anyhow::Result<Workspace>
 
 ---
 
-## Profile Names and Container Names
+## Profile Names and Container Identity
 
 Three newtypes prevent mixing up the string identifiers that flow through the
 system.
 
 ```rust
 pub struct ProfileName(String);   // e.g. "claude" or "devcontainer"
-pub struct ContainerName(String); // e.g. "my-project--claude"
-pub struct ImageTag(String);      // same string as ContainerName
+pub struct ContainerId(String);   // e.g. "dcc-abc123def456--claude"
+pub struct ContainerName(String); // Docker-visible name, from config `name`
+pub struct ImageTag(String);      // same string as ContainerId
 ```
 
 `ProfileName` encapsulates the path-to-config-file logic:
@@ -277,18 +281,23 @@ impl ProfileName {
 }
 ```
 
-`ContainerName` is derived as `<workspace-basename>--<profile-name>`. It
-doubles as the image tag produced by `dcc build` and consumed by `dcc run`.
+`ContainerId` is derived as `dcc-<12hex>--<profile-name>`, where `<12hex>` is
+derived from the stable workspace identity. It doubles as the image tag produced
+by `dcc build` and consumed by `dcc run`, and it is what `dcc id` prints.
 
 ```rust
-impl ContainerName {
+impl ContainerId {
     pub fn new(workspace: &Workspace, profile: &ProfileName) -> Self
     pub fn as_image_tag(&self) -> ImageTag
 }
 ```
 
-Docker image tags and container names occupy separate namespaces, so reusing
-the same string for both is safe.
+`ContainerName` is the Docker-visible container name. It resolves from the
+devcontainer `name` field when present, falling back to `ContainerId`. Invalid
+Docker name characters are converted to `-`, repeated `-` characters are
+collapsed, invalid edge characters are trimmed, and a warning is emitted when the
+configured value changes. If no valid characters remain, it falls back to
+`ContainerId`.
 
 ---
 
@@ -402,6 +411,9 @@ The container is started with `-dit` (detached, interactive, TTY pre-allocated):
 ```
 docker run
   --name <container-name>
+  --label dcc.container_id=<container-id>
+  --label devcontainer.local_folder=<workspace-root>
+  --label devcontainer.config_file=<config-path>
   --rm
   -dit
   --memory <memory>          (default: 4g)

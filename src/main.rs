@@ -77,7 +77,7 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Join {} => join::join(&workspace, &profile).await,
         cli::Command::Stop {} => stop::stop(&workspace, &profile).await,
         cli::Command::Id {} => {
-            println!("{}", profile::ContainerName::new(&workspace, &profile));
+            println!("{}", profile::ContainerId::new(&workspace, &profile));
             Ok(())
         }
         cli::Command::Run {

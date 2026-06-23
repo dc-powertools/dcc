@@ -227,6 +227,46 @@ pub(crate) async fn stop_container(container: &str) -> anyhow::Result<()> {
     anyhow::bail!("`docker stop {container}` failed: {}", stderr.trim())
 }
 
+pub(crate) async fn running_container_name_by_id(
+    container_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let output = Command::new("docker")
+        .args([
+            "ps",
+            "--filter",
+            &format!("label=dcc.container_id={container_id}"),
+            "--format",
+            "{{.Names}}",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| {
+            format!("failed to spawn `docker ps` for dcc container id {container_id}")
+        })?;
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(command_failure("docker ps", code, &output.stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut names = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned);
+    let first = names.next();
+    if let (Some(first), Some(second)) = (&first, names.next()) {
+        anyhow::bail!(
+            "multiple running containers found for dcc container id `{container_id}`: `{first}`, `{second}`"
+        );
+    }
+    Ok(first)
+}
+
 /// Reads the `devcontainer.metadata` label from a local Docker image.
 /// Returns `None` when the image exists but the label is absent.
 /// Returns `Err` when the image does not exist or the Docker daemon is unreachable.

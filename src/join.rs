@@ -2,21 +2,24 @@ use anyhow::Context as _;
 
 use crate::{
     docker,
-    profile::{ContainerName, ProfileName},
+    profile::{ContainerId, ProfileName},
     workspace::Workspace,
 };
 
 pub(crate) async fn join(workspace: &Workspace, profile: &ProfileName) -> anyhow::Result<()> {
-    let container = ContainerName::new(workspace, profile);
-    let status = docker::attach(container.as_str())
+    let container_id = ContainerId::new(workspace, profile);
+    let container = docker::running_container_name_by_id(container_id.as_str())
+        .await?
+        .unwrap_or_else(|| container_id.as_str().to_string());
+    let status = docker::attach(&container)
         .await
-        .with_context(|| format!("failed to attach to container `{}`", container.as_str()))?;
+        .with_context(|| format!("failed to attach to container `{container}`"))?;
 
     if !status.success() {
         anyhow::bail!(
             "could not attach to container `{}`; \
              make sure it is running (try `dcc run` first)",
-            container.as_str()
+            container
         );
     }
 

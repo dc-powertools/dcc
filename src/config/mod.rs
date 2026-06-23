@@ -23,6 +23,7 @@ pub(crate) const DEFAULT_CONTAINER_USER: &str = "dev";
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawConfig {
     pub(crate) extends: Option<String>,
+    pub(crate) name: Option<String>,
     pub(crate) image: Option<String>,
     pub(crate) features: Option<IndexMap<String, serde_json::Value>>,
     pub(crate) container_env: Option<HashMap<String, String>>,
@@ -43,6 +44,7 @@ pub(crate) struct RawConfig {
 
 #[derive(Debug)]
 pub(crate) struct DevcontainerConfig {
+    pub(crate) name: Option<String>,
     pub(crate) image: String,
     pub(crate) features: IndexMap<String, serde_json::Value>,
     pub(crate) container_env: HashMap<String, String>,
@@ -110,6 +112,7 @@ mod tests {
         let file = write_temp(
             r#"{
                 "extends": "base.json",
+                "name": "example",
                 "image": "rust:latest",
                 "features": { "ghcr.io/devcontainers/features/node:1": { "version": "20" } },
                 "containerEnv": { "FOO": "bar" },
@@ -128,6 +131,7 @@ mod tests {
         );
         let raw = parse_config_file(file.path(), false).unwrap();
         assert_eq!(raw.extends.as_deref(), Some("base.json"));
+        assert_eq!(raw.name.as_deref(), Some("example"));
         assert_eq!(raw.image.as_deref(), Some("rust:latest"));
         assert!(raw.features.is_some());
         assert!(raw.container_env.is_some());
@@ -213,10 +217,19 @@ mod tests {
     }
 
     #[test]
+    fn name_is_known_in_strict_mode() {
+        let file = write_temp(r#"{ "name": "example", "image": "rust:1" }"#);
+        let raw = parse_config_file(file.path(), true).unwrap();
+        assert_eq!(raw.name.as_deref(), Some("example"));
+        assert!(raw.extra.is_empty());
+    }
+
+    #[test]
     fn empty_object() {
         let file = write_temp("{}");
         let raw = parse_config_file(file.path(), false).unwrap();
         assert!(raw.extends.is_none());
+        assert!(raw.name.is_none());
         assert!(raw.image.is_none());
         assert!(raw.features.is_none());
         assert!(raw.container_env.is_none());

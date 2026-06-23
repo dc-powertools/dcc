@@ -841,6 +841,7 @@ mod tests {
         let mut features = IndexMap::new();
         features.insert("./local-feat".to_string(), serde_json::json!({}));
         DevcontainerConfig {
+            name: None,
             image: "rust:1".to_string(),
             features,
             container_env: HashMap::new(),

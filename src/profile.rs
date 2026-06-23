@@ -9,10 +9,13 @@ use crate::workspace::Workspace;
 pub(crate) struct ProfileName(String);
 
 #[derive(Debug, Clone)]
-pub(crate) struct ContainerName(String);
+pub(crate) struct ContainerId(String);
 
 #[derive(Debug, Clone)]
 pub(crate) struct ImageTag(String);
+
+#[derive(Debug, Clone)]
+pub(crate) struct ContainerName(String);
 
 impl ProfileName {
     pub(crate) fn new(name: impl Into<String>) -> Self {
@@ -81,13 +84,13 @@ impl AsRef<str> for ProfileName {
     }
 }
 
-impl ContainerName {
-    /// Derives a stable container name from the workspace identity and profile.
+impl ContainerId {
+    /// Derives a stable dcc container id from the workspace identity and profile.
     ///
     /// Format: `dcc-<12hex>--<profile>` where `<12hex>` is the first 6 bytes of
     /// the SHA-256 of the workspace identity string rendered as lowercase hex.
     /// The identity is the git `origin` remote URL when available, falling back
-    /// to the canonical workspace root path — so the name is identical on every
+    /// to the canonical workspace root path — so the id is identical on every
     /// machine that clones the same repository.
     pub(crate) fn new(workspace: &Workspace, profile: &ProfileName) -> Self {
         use sha2::{Digest as _, Sha256};
@@ -103,10 +106,82 @@ impl ContainerName {
         &self.0
     }
 
-    /// Returns an ImageTag with the same string.
-    /// Docker image tags and container names are separate namespaces.
+    /// Returns an ImageTag with the same string. Docker image tags and container
+    /// ids are separate namespaces.
     pub(crate) fn as_image_tag(&self) -> ImageTag {
         ImageTag(self.0.clone())
+    }
+}
+
+impl fmt::Display for ContainerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for ContainerId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl ContainerName {
+    pub(crate) fn resolve(configured_name: Option<&str>, fallback: &ContainerId) -> Self {
+        let Some(configured_name) = configured_name else {
+            return Self(fallback.0.clone());
+        };
+        let Some(sanitized) = sanitize_container_name(configured_name) else {
+            eprintln!(
+                "warning: devcontainer name `{}` cannot be used as a Docker container name; \
+                 using `{}` instead",
+                configured_name.trim(),
+                fallback.as_str()
+            );
+            return Self(fallback.0.clone());
+        };
+
+        if configured_name.trim() != sanitized {
+            eprintln!(
+                "warning: devcontainer name `{}` was converted to Docker container name `{}`",
+                configured_name.trim(),
+                sanitized
+            );
+        }
+        Self(sanitized)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn sanitize_container_name(name: &str) -> Option<String> {
+    let mut result = String::new();
+    let mut previous_dash = false;
+    for ch in name.trim().chars() {
+        let mapped = if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-') {
+            ch
+        } else {
+            '-'
+        };
+        if mapped == '-' {
+            if previous_dash {
+                continue;
+            }
+            previous_dash = true;
+        } else {
+            previous_dash = false;
+        }
+        result.push(mapped);
+    }
+
+    let trimmed = result
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+        .to_owned();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
     }
 }
 
@@ -162,56 +237,54 @@ mod tests {
     }
 
     #[test]
-    fn container_name_basic() {
+    fn container_id_basic() {
         let ws = workspace("/home/user/my-project");
         let p = ProfileName::new("claude");
         let hex = expected_hex("/home/user/my-project");
         assert_eq!(
-            ContainerName::new(&ws, &p).as_str(),
+            ContainerId::new(&ws, &p).as_str(),
             format!("dcc-{hex}--claude")
         );
     }
 
     #[test]
-    fn container_name_default_profile() {
+    fn container_id_default_profile() {
         let ws = workspace("/home/user/my-project");
         let p = ProfileName::new("devcontainer");
         let hex = expected_hex("/home/user/my-project");
         assert_eq!(
-            ContainerName::new(&ws, &p).as_str(),
+            ContainerId::new(&ws, &p).as_str(),
             format!("dcc-{hex}--devcontainer")
         );
     }
 
     #[test]
-    fn container_name_root_fallback() {
+    fn container_id_root_fallback() {
         let ws = workspace("/");
         let p = ProfileName::new("dev");
         let hex = expected_hex("/");
         assert_eq!(
-            ContainerName::new(&ws, &p).as_str(),
+            ContainerId::new(&ws, &p).as_str(),
             format!("dcc-{hex}--dev")
         );
     }
 
     #[test]
-    fn container_name_dcc_prefix() {
+    fn container_id_dcc_prefix() {
         let ws = workspace("/any/path");
         let p = ProfileName::new("test");
-        assert!(ContainerName::new(&ws, &p).as_str().starts_with("dcc-"));
+        assert!(ContainerId::new(&ws, &p).as_str().starts_with("dcc-"));
     }
 
     #[test]
-    fn container_name_profile_in_suffix() {
+    fn container_id_profile_in_suffix() {
         let ws = workspace("/any/path");
         let p = ProfileName::new("myprofile");
-        assert!(ContainerName::new(&ws, &p)
-            .as_str()
-            .ends_with("--myprofile"));
+        assert!(ContainerId::new(&ws, &p).as_str().ends_with("--myprofile"));
     }
 
     #[test]
-    fn container_name_same_identity_same_name() {
+    fn container_id_same_identity_same_id() {
         let ws1 = Workspace {
             root: PathBuf::from("/path/a"),
             identity: "https://github.com/org/repo".to_string(),
@@ -222,20 +295,20 @@ mod tests {
         };
         let p = ProfileName::new("dev");
         assert_eq!(
-            ContainerName::new(&ws1, &p).as_str(),
-            ContainerName::new(&ws2, &p).as_str(),
-            "same identity must produce the same container name regardless of root path"
+            ContainerId::new(&ws1, &p).as_str(),
+            ContainerId::new(&ws2, &p).as_str(),
+            "same identity must produce the same container id regardless of root path"
         );
     }
 
     #[test]
-    fn container_name_different_identity_different_name() {
+    fn container_id_different_identity_different_id() {
         let ws1 = workspace("/home/user/project-a");
         let ws2 = workspace("/home/user/project-b");
         let p = ProfileName::new("dev");
         assert_ne!(
-            ContainerName::new(&ws1, &p).as_str(),
-            ContainerName::new(&ws2, &p).as_str(),
+            ContainerId::new(&ws1, &p).as_str(),
+            ContainerId::new(&ws2, &p).as_str(),
         );
     }
 
@@ -260,11 +333,64 @@ mod tests {
     }
 
     #[test]
-    fn as_image_tag_equals_container_name() {
+    fn as_image_tag_equals_container_id() {
         let ws = workspace("/home/user/project");
         let p = ProfileName::new("dev");
-        let cn = ContainerName::new(&ws, &p);
+        let cn = ContainerId::new(&ws, &p);
         assert_eq!(cn.as_image_tag().as_str(), cn.as_str());
+    }
+
+    #[test]
+    fn container_name_uses_configured_name() {
+        let id = ContainerId("dcc-abc123--dev".to_string());
+        let name = ContainerName::resolve(Some("example"), &id);
+        assert_eq!(name.as_str(), "example");
+    }
+
+    #[test]
+    fn container_name_falls_back_to_id_when_missing() {
+        let id = ContainerId("dcc-abc123--dev".to_string());
+        let name = ContainerName::resolve(None, &id);
+        assert_eq!(name.as_str(), id.as_str());
+    }
+
+    #[test]
+    fn sanitize_container_name_converts_invalid_chars() {
+        assert_eq!(
+            sanitize_container_name("example/project app"),
+            Some("example-project-app".to_string())
+        );
+    }
+
+    #[test]
+    fn sanitize_container_name_keeps_valid_chars() {
+        assert_eq!(
+            sanitize_container_name("example_project.dev-1"),
+            Some("example_project.dev-1".to_string())
+        );
+    }
+
+    #[test]
+    fn sanitize_container_name_trims_invalid_edges() {
+        assert_eq!(
+            sanitize_container_name(" --.example.-- "),
+            Some("example".to_string())
+        );
+    }
+
+    #[test]
+    fn sanitize_container_name_collapses_repeated_dashes() {
+        assert_eq!(
+            sanitize_container_name("example///project"),
+            Some("example-project".to_string())
+        );
+    }
+
+    #[test]
+    fn container_name_falls_back_when_sanitized_name_is_empty() {
+        let id = ContainerId("dcc-abc123--dev".to_string());
+        let name = ContainerName::resolve(Some(" /// "), &id);
+        assert_eq!(name.as_str(), id.as_str());
     }
 
     #[test]

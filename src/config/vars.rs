@@ -19,6 +19,7 @@ pub(crate) fn apply_substitutions(
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
 
     DevcontainerConfig {
+        name: config.name,
         image: config.image,
         features: config.features,
         container_env: config

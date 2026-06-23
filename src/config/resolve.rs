@@ -63,6 +63,7 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         )
     })?;
     Ok(DevcontainerConfig {
+        name: raw.name,
         image,
         features: raw.features.unwrap_or_default(),
         container_env: raw.container_env.unwrap_or_default(),
