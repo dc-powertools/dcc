@@ -76,8 +76,9 @@ pub(crate) async fn build(
 }
 
 /// Starts a container detached (`docker run -d …`) and returns once Docker
-/// confirms the container was created. The caller is responsible for attaching
-/// via [`attach`] and for aborting any port-forwarding tasks on exit.
+/// confirms the container was created. The caller is responsible for running the
+/// command (via [`exec_foreground`]), aborting port-forwarding tasks, and stopping
+/// the container on exit.
 pub(crate) async fn start_detached(args: &[String]) -> anyhow::Result<()> {
     // stderr is captured (not inherited) so that, on failure, Docker's own
     // diagnostic — e.g. "invalid mount config ... bind source path does not
@@ -99,17 +100,42 @@ pub(crate) async fn start_detached(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Runs `argv` inside `container` as `user` from `workdir` via `docker exec`,
-/// with stdio inherited from the current process.
-pub(crate) async fn exec(
+/// Builds the argument list for a `docker exec` invocation. `interactive` adds
+/// `-i` (keep stdin open) and `tty` adds `-t` (allocate a pseudo-TTY).
+fn exec_args(
     container: &str,
     user: &str,
     workdir: &str,
     argv: &[String],
+    interactive: bool,
+    tty: bool,
+) -> Vec<String> {
+    let mut args = vec!["exec".to_string()];
+    if interactive {
+        args.push("-i".to_string());
+    }
+    if tty {
+        args.push("-t".to_string());
+    }
+    args.extend([
+        "-u".to_string(),
+        user.to_string(),
+        "-w".to_string(),
+        workdir.to_string(),
+        container.to_string(),
+    ]);
+    args.extend(argv.iter().cloned());
+    args
+}
+
+/// Spawns `docker <args>` with stdio inherited and waits for it to finish.
+async fn spawn_inherit(
+    args: &[String],
+    container: &str,
+    argv: &[String],
 ) -> anyhow::Result<ExitStatus> {
     Command::new("docker")
-        .args(["exec", "-u", user, "-w", workdir, container])
-        .args(argv)
+        .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -128,6 +154,41 @@ pub(crate) async fn exec(
                 argv.join(" ")
             )
         })
+}
+
+/// Runs `argv` inside `container` as `user` from `workdir` via `docker exec`,
+/// with stdio inherited. Non-interactive (no `-i`/`-t`): used for lifecycle hooks.
+pub(crate) async fn exec(
+    container: &str,
+    user: &str,
+    workdir: &str,
+    argv: &[String],
+) -> anyhow::Result<ExitStatus> {
+    spawn_inherit(
+        &exec_args(container, user, workdir, argv, false, false),
+        container,
+        argv,
+    )
+    .await
+}
+
+/// Runs `argv` inside `container` as `user` from `workdir` via an interactive
+/// `docker exec -i` (adding `-t` when `tty` is set), with stdio inherited. Used for
+/// the foreground command of `dcc exec`/`dcc run`, so both one-off commands (`ls`)
+/// and interactive shells (`bash`) stream correctly and report the real exit code.
+pub(crate) async fn exec_foreground(
+    container: &str,
+    user: &str,
+    workdir: &str,
+    argv: &[String],
+    tty: bool,
+) -> anyhow::Result<ExitStatus> {
+    spawn_inherit(
+        &exec_args(container, user, workdir, argv, true, tty),
+        container,
+        argv,
+    )
+    .await
 }
 
 pub(crate) async fn attach(container: &str) -> anyhow::Result<ExitStatus> {
@@ -373,5 +434,52 @@ mod tests {
     #[test]
     fn parse_env_list_empty() {
         assert!(parse_env_list(vec![]).is_empty());
+    }
+
+    #[test]
+    fn exec_args_non_interactive_has_no_i_or_t() {
+        let argv = vec!["ls".to_string()];
+        assert_eq!(
+            exec_args("c", "dev", "/workspace", &argv, false, false),
+            vec!["exec", "-u", "dev", "-w", "/workspace", "c", "ls"]
+        );
+    }
+
+    #[test]
+    fn exec_args_foreground_tty_has_i_and_t() {
+        let argv = vec!["bash".to_string()];
+        assert_eq!(
+            exec_args("c", "dev", "/workspace", &argv, true, true),
+            vec![
+                "exec",
+                "-i",
+                "-t",
+                "-u",
+                "dev",
+                "-w",
+                "/workspace",
+                "c",
+                "bash"
+            ]
+        );
+    }
+
+    #[test]
+    fn exec_args_foreground_no_tty_has_i_only() {
+        let argv = vec!["ls".to_string(), "-la".to_string()];
+        assert_eq!(
+            exec_args("c", "dev", "/workspace", &argv, true, false),
+            vec![
+                "exec",
+                "-i",
+                "-u",
+                "dev",
+                "-w",
+                "/workspace",
+                "c",
+                "ls",
+                "-la"
+            ]
+        );
     }
 }

@@ -1,3 +1,4 @@
+use std::io::IsTerminal as _;
 use std::path::Path;
 use std::process::ExitStatus;
 
@@ -179,14 +180,22 @@ pub(crate) async fn exec(
     // mask .dcc directory inside container
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
-    // Entrypoint and post-image arguments come from the required CLI args.
-    args.extend(["--entrypoint".into(), override_args[0].clone()]);
+    // Keep-alive entrypoint: PID 1 must outlive the user command, which is run
+    // separately in the foreground via `docker exec` below. Making the command PID 1
+    // and attaching breaks for anything that exits quickly (e.g. `ls`) — the container
+    // is gone before we can attach. `tail -f /dev/null` blocks forever and exists on
+    // both glibc and BusyBox/Alpine images.
+    args.extend(["--entrypoint".into(), "tail".into()]);
 
     // Image tag (must come after all flags)
     args.push(image_tag.as_str().to_owned());
 
-    // Remaining CLI args become post-image arguments
-    args.extend(override_args[1..].iter().cloned());
+    // Keep-alive command (arguments to the `tail` entrypoint)
+    args.extend(["-f".into(), "/dev/null".into()]);
+
+    // Allocate a TTY for the foreground command only when our own stdin is a
+    // terminal, so non-interactive use (pipes, CI) still works.
+    let tty = std::io::stdin().is_terminal();
 
     // Print the fully-resolved launch picture before doing anything irreversible.
     if opts.debug {
@@ -255,6 +264,11 @@ pub(crate) async fn exec(
         ));
 
         dbg.push(format!("docker run {}", args.join(" ")));
+        dbg.push(format!(
+            "command runs via docker exec ({}): {}",
+            if tty { "-it" } else { "-i" },
+            override_args.join(" ")
+        ));
 
         for line in dbg {
             eprintln!("{line}");
@@ -273,8 +287,8 @@ pub(crate) async fn exec(
         }
     }
 
-    // Start the container in the background (-d); TTY is pre-allocated (-t)
-    // so that `docker attach` below provides a proper interactive terminal.
+    // Start the keep-alive container in the background; the user command runs in the
+    // foreground via `docker exec` once the container and lifecycle hooks are ready.
     docker::start_detached(&args)
         .await
         .with_context(|| format!("failed to start container `{}`", container.as_str()))?;
@@ -307,16 +321,31 @@ pub(crate) async fn exec(
             )
         })?;
 
-    // Attach to the container's interactive session; blocks until it exits or
-    // the user detaches with the Docker escape sequence (Ctrl-P, Ctrl-Q).
-    let status = docker::attach(container.as_str())
-        .await
-        .with_context(|| format!("failed to attach to container `{}`", container.as_str()))?;
+    // Run the user command in the foreground via `docker exec`. Unlike attaching to
+    // PID 1, this works for both one-off commands (`ls`) and interactive shells
+    // (`bash`): output streams live and the command's real exit code is returned.
+    let status = docker::exec_foreground(
+        container.as_str(),
+        &config.container_user,
+        CONTAINER_WORKSPACE,
+        &override_args,
+        tty,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to run command in container `{}`",
+            container.as_str()
+        )
+    })?;
 
-    // Tear down port forwarders now that the container has exited or detached.
+    // Tear down port forwarders, then stop the keep-alive container (`--rm` removes it).
     for handle in relay_handles {
         handle.abort();
     }
+    docker::stop_container(container.as_str())
+        .await
+        .with_context(|| format!("failed to stop container `{}`", container.as_str()))?;
 
     Ok(status)
 }

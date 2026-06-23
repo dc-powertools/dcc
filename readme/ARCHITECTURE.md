@@ -402,15 +402,19 @@ docker run
   -v <workspace-root>:/workspace
   -v <host-cache-path>:/cache
   --tmpfs /workspace/.dcc
-  [--entrypoint <command[0]>]
+  --entrypoint tail          (keep-alive; the user command runs via docker exec)
   <image-tag>
-  [<command[1:]>]
+  -f /dev/null
 ```
 
-`-d` starts the container in the background; `-it` pre-allocates a
-pseudo-TTY and keeps stdin open so that `docker attach` (phase 4) provides a
-proper interactive terminal. `dcc run` then polls `docker inspect` at 100 ms
-intervals (up to 10 s) until the container reports as running.
+The container's PID 1 is a keep-alive process (`tail -f /dev/null`) so it stays
+running independent of the user command. This is deliberate: making the user
+command PID 1 and attaching to it fails for commands that exit quickly (e.g.
+`ls`) — the container is gone before the readiness poll observes it as running,
+and `docker attach` would not show output produced before the attach. The user
+command instead runs in the foreground via `docker exec` (phase 4). `dcc run`
+polls `docker inspect` at 100 ms intervals (up to 10 s) until the keep-alive
+container reports as running.
 
 Once the container is running, the container-side lifecycle hooks
 (`onCreateCommand` through `postAttachCommand`) run in spec order before port
@@ -429,30 +433,33 @@ IP rather than `127.0.0.1`. Port forwarding is handled separately in phase 3.
 
 For each port in `forwardPorts`, `dcc run` binds a `TcpListener` on
 `127.0.0.1:<port>` on the host and spawns a Tokio task (see Port Forwarding
-below). The listeners are bound before attaching so that ports are ready as
-soon as the interactive session begins.
+below). The listeners are bound before the command runs so that ports are ready
+as soon as the session begins.
 
-**Phase 4 — interactive attach**
+**Phase 4 — foreground command**
 
 ```
-docker attach <container-name>
+docker exec -i [-t] -u <containerUser> -w /workspace <container-name> <command...>
 ```
 
-This reattaches to the container's pre-allocated TTY and blocks until the
-container exits or the user detaches with the Docker escape sequence
-(Ctrl-P, Ctrl-Q). The exit status is propagated via `std::process::exit`.
+The user command runs in the foreground via `docker exec`, with stdio inherited,
+so output streams live and the command's real exit code is returned. This works
+uniformly for one-off commands (`ls`) and interactive shells (`bash`). `-t` is
+requested only when dcc's own stdin is a terminal, so non-interactive use (pipes,
+CI) still works. The exit status is propagated via `std::process::exit`.
 
 **Phase 5 — teardown**
 
-After `docker attach` returns, all relay task handles are aborted. In-flight
-`docker exec nc` processes terminate on their own because the container is
-already gone; the abort releases the host-side port bindings.
+After the foreground command returns, all relay task handles are aborted and the
+keep-alive container is stopped (`docker stop`; `--rm` then removes it). In-flight
+`docker exec nc` processes terminate as the container goes away; the abort
+releases the host-side port bindings.
 
 **Command resolution** (descending priority):
 
 1. If the user supplies override args (everything after `--` or the first
-   non-flag argument), the first arg becomes `--entrypoint` and the rest become
-   post-image arguments. All configured commands are ignored.
+   non-flag argument), they are run in the foreground via `docker exec` against
+   the keep-alive container. All configured commands are ignored.
 2. If `command` is set in `devcontainer.json`, it is used. A warning is
    emitted if any feature also declared a command.
 3. If no devcontainer.json command but a feature contributed one (from the
