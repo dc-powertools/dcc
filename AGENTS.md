@@ -16,3 +16,12 @@ must always follow. It is imported here so it is always loaded into context:
 @readme/ARCHITECTURE.md
 
 Ignore all directories in `.gitignore`.
+
+
+# Specific Agent Instructions
+
+## Codex
+
+When asking the user a question, always wait for the answer. NEVER use
+auto-resolving questions or default-assumption timeouts. If using
+`request_user_input`, omit `autoResolutionMs`.
