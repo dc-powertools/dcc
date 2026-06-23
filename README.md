@@ -13,6 +13,22 @@ devcontainer spec that make this possible:
 Spinning up and tearing down sessions must be easy, automatic, and safe.
 
 
+## Platforms
+
+Linux and macOS.
+
+
+## Installation
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dc-powertools/dcc/main/install.sh | bash
+```
+
+The script installs the `dcc` binary to `~/.local/bin/dcc`. Ensure `~/.local/bin` is on your `PATH`.
+
+Requires Docker to be installed and running.
+
+
 ## Working with profiles
 
 `dcc` enables the use of many ephemeral environments called profiles.
@@ -337,20 +353,6 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 dcc run --memory 8g --cpus 6
 dcc run --memory 512m npm test
 ```
-
-## Installation
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/dc-powertools/dcc/main/install.sh | bash
-```
-
-The script installs the `dcc` binary to `~/.local/bin/dcc`. Ensure `~/.local/bin` is on your `PATH`.
-
-Requires Docker to be installed and running.
-
-## Platforms
-
-Linux and macOS.
 
 ## Releasing
 

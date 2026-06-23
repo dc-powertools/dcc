@@ -5,6 +5,7 @@
     "ghcr.io/dc-powertools/features/sudo:latest": {},
     "ghcr.io/dc-powertools/features/git:latest": {},
     "ghcr.io/dc-powertools/features/rust:latest": {},
-    "ghcr.io/dc-powertools/features/claude:latest": {}
+    "ghcr.io/dc-powertools/features/claude:latest": {},
+    "ghcr.io/dc-powertools/features/codex:latest": {}
   },
 }

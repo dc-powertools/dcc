@@ -1,5 +1,5 @@
 {
-  "dccVersion": "0.0.23",
+  "dccVersion": "0.0.27",
   "features": [
     {
       "direct": true,
@@ -24,6 +24,12 @@
       "options": {},
       "ref": "ghcr.io/dc-powertools/features/claude:latest",
       "resolved": "sha256:21311d1c6f6691cb7aa0d70598e27d7b6c7d9fde0aad8f097a963044c9c8a9c1"
+    },
+    {
+      "direct": true,
+      "options": {},
+      "ref": "ghcr.io/dc-powertools/features/codex:latest",
+      "resolved": "sha256:5837b425b44d2a1f1c59d0b897a9d80a7921b83981e85044f65d791a4ffb64c4"
     }
   ]
 }
