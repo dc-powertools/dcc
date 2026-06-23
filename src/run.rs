@@ -17,12 +17,10 @@ pub(crate) async fn run(
     profile: &ProfileName,
     config_path: &Path,
     script_arg: Option<&str>,
-    memory: &str,
-    cpus: &str,
-    strict: bool,
+    opts: exec::ExecOptions<'_>,
 ) -> anyhow::Result<()> {
     let cache_dir = CacheDir::new(workspace, profile);
-    let config = config::load_config(config_path, workspace, &cache_dir, strict)
+    let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
     let container = ContainerName::new(workspace, profile);
@@ -46,16 +44,7 @@ pub(crate) async fn run(
         .with_context(|| format!("failed to resolve script `{arg}`"))?;
 
     let exec_args = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()];
-    let status = exec::exec(
-        workspace,
-        profile,
-        config_path,
-        exec::ResourceLimits { memory, cpus },
-        &exec_args,
-        false,
-        strict,
-    )
-    .await?;
+    let status = exec::exec(workspace, profile, config_path, &exec_args, opts).await?;
     std::process::exit(status.code().unwrap_or(1));
 }
 

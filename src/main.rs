@@ -53,19 +53,23 @@ async fn run() -> anyhow::Result<()> {
             memory,
             cpus,
             skip_lifecycle,
+            debug,
             args,
         } => {
             let status = exec::exec(
                 &workspace,
                 &profile,
                 &config_path,
-                exec::ResourceLimits {
-                    memory: &memory,
-                    cpus: &cpus,
-                },
                 &args,
-                skip_lifecycle,
-                cli.strict,
+                exec::ExecOptions {
+                    limits: exec::ResourceLimits {
+                        memory: &memory,
+                        cpus: &cpus,
+                    },
+                    skip_lifecycle,
+                    debug,
+                    strict: cli.strict,
+                },
             )
             .await?;
             std::process::exit(status.code().unwrap_or(1));
@@ -79,6 +83,7 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Run {
             memory,
             cpus,
+            debug,
             script,
         } => {
             run::run(
@@ -86,9 +91,15 @@ async fn run() -> anyhow::Result<()> {
                 &profile,
                 &config_path,
                 script.as_deref(),
-                &memory,
-                &cpus,
-                cli.strict,
+                exec::ExecOptions {
+                    limits: exec::ResourceLimits {
+                        memory: &memory,
+                        cpus: &cpus,
+                    },
+                    skip_lifecycle: false,
+                    debug,
+                    strict: cli.strict,
+                },
             )
             .await
         }

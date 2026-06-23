@@ -23,18 +23,25 @@ pub(crate) struct ResourceLimits<'a> {
     pub(crate) cpus: &'a str,
 }
 
+/// Behavioral options for a container launch, shared by `dcc exec` and `dcc run`.
+#[derive(Clone, Copy)]
+pub(crate) struct ExecOptions<'a> {
+    pub(crate) limits: ResourceLimits<'a>,
+    pub(crate) skip_lifecycle: bool,
+    pub(crate) debug: bool,
+    pub(crate) strict: bool,
+}
+
 pub(crate) async fn exec(
     workspace: &Workspace,
     profile: &ProfileName,
     config_path: &Path,
-    limits: ResourceLimits<'_>,
     override_args: &[String],
-    skip_lifecycle: bool,
-    strict: bool,
+    opts: ExecOptions<'_>,
 ) -> anyhow::Result<ExitStatus> {
     let cache_dir = CacheDir::new(workspace, profile);
 
-    let config = config::load_config(config_path, workspace, &cache_dir, strict)
+    let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
     let container = ContainerName::new(workspace, profile);
@@ -137,8 +144,8 @@ pub(crate) async fn exec(
     args.push("--rm".into());
     args.push("-dit".into());
     args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
-    args.extend(["--memory".into(), limits.memory.to_owned()]);
-    args.extend(["--cpus".into(), limits.cpus.to_owned()]);
+    args.extend(["--memory".into(), opts.limits.memory.to_owned()]);
+    args.extend(["--cpus".into(), opts.limits.cpus.to_owned()]);
 
     // containerUser (defaults to "dev" when not set in the devcontainer config)
     args.extend(["-u".into(), config.container_user.clone()]);
@@ -181,9 +188,82 @@ pub(crate) async fn exec(
     // Remaining CLI args become post-image arguments
     args.extend(override_args[1..].iter().cloned());
 
+    // Print the fully-resolved launch picture before doing anything irreversible.
+    if opts.debug {
+        let mut dbg: Vec<String> = Vec::new();
+        dbg.push(format!("── dcc debug {}", "─".repeat(40)));
+        dbg.push(format!(
+            "container : {}   image: {}",
+            container.as_str(),
+            image_tag.as_str()
+        ));
+        dbg.push(format!(
+            "user: {}   memory: {}   cpus: {}   workdir: {CONTAINER_WORKSPACE}",
+            config.container_user, opts.limits.memory, opts.limits.cpus
+        ));
+        dbg.push(format!("command   : {}", override_args.join(" ")));
+
+        dbg.push("remoteEnv (-e at runtime):".to_string());
+        if remote_env.is_empty() {
+            dbg.push("  (none)".to_string());
+        } else {
+            for (k, v) in &remote_env {
+                dbg.push(format!("  {k}={v}"));
+            }
+        }
+
+        dbg.push("containerEnv (baked into image at build):".to_string());
+        let mut cenv: Vec<(&String, &String)> = config.container_env.iter().collect();
+        cenv.sort_by(|a, b| a.0.cmp(b.0));
+        if cenv.is_empty() {
+            dbg.push("  (none)".to_string());
+        } else {
+            for (k, v) in cenv {
+                dbg.push(format!("  {k}={v}"));
+            }
+        }
+
+        dbg.push("mounts:".to_string());
+        dbg.push(format!(
+            "  bind   {local_workspace} -> {CONTAINER_WORKSPACE}"
+        ));
+        dbg.push(format!("  bind   {local_cache} -> {CONTAINER_CACHE}"));
+        dbg.push(format!("  tmpfs  -> {CONTAINER_WORKSPACE}/.dcc"));
+        for m in &all_mounts {
+            dbg.push(format!("  {}", describe_mount(m)));
+        }
+
+        dbg.push(format!(
+            "forwardPorts: {}",
+            if config.forward_ports.is_empty() {
+                "(none)".to_string()
+            } else {
+                config
+                    .forward_ports
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        ));
+
+        dbg.push("lifecycle scripts:".to_string());
+        dbg.extend(debug_lifecycle_lines(
+            &config,
+            &feature_runtime,
+            opts.skip_lifecycle,
+        ));
+
+        dbg.push(format!("docker run {}", args.join(" ")));
+
+        for line in dbg {
+            eprintln!("{line}");
+        }
+    }
+
     // initializeCommand runs on the host before the container is created/started.
     if let Some(cmd) = &config.initialize_command {
-        if skip_lifecycle {
+        if opts.skip_lifecycle {
             eprintln!("warning: skipping initializeCommand (--skip-lifecycle)");
         } else {
             let cmd = cmd.substitute(&|s| config::vars::resolve_container_env(s, &container_env));
@@ -213,7 +293,7 @@ pub(crate) async fn exec(
         &local_workspace,
         &local_cache,
         &container_env,
-        skip_lifecycle,
+        opts.skip_lifecycle,
     )
     .await?;
 
@@ -342,6 +422,108 @@ fn skipped_hook_warnings(
         }
     }
     warnings
+}
+
+/// Renders a `docker --mount` string (`type=bind,src=…,dst=…,opts…`) into a
+/// readable `type  src -> dst  [opts]` line for `--debug` output. Accepts the
+/// `src`/`source` and `dst`/`destination`/`target` key spellings.
+fn describe_mount(mount: &str) -> String {
+    let mut typ = "";
+    let mut src: Option<&str> = None;
+    let mut dst: Option<&str> = None;
+    let mut opts: Vec<&str> = Vec::new();
+    for part in mount.split(',') {
+        let part = part.trim();
+        if let Some(v) = part.strip_prefix("type=") {
+            typ = v;
+        } else if let Some(v) = part
+            .strip_prefix("src=")
+            .or_else(|| part.strip_prefix("source="))
+        {
+            src = Some(v);
+        } else if let Some(v) = part
+            .strip_prefix("dst=")
+            .or_else(|| part.strip_prefix("destination="))
+            .or_else(|| part.strip_prefix("target="))
+        {
+            dst = Some(v);
+        } else if !part.is_empty() {
+            opts.push(part);
+        }
+    }
+    let typ = if typ.is_empty() { "?" } else { typ };
+    let mut line = match (src, dst) {
+        (Some(s), Some(d)) => format!("{typ}  {s} -> {d}"),
+        (None, Some(d)) => format!("{typ}  -> {d}"),
+        (Some(s), None) => format!("{typ}  {s}"),
+        (None, None) => typ.to_string(),
+    };
+    if !opts.is_empty() {
+        line.push_str(&format!("  [{}]", opts.join(", ")));
+    }
+    line
+}
+
+/// Renders a lifecycle command for `--debug` output: a shell string as-is, an
+/// argv joined by spaces, and an object (parallel) form as `name: cmd` entries.
+fn describe_lifecycle_command(cmd: &lifecycle::LifecycleCommand) -> String {
+    use lifecycle::{LifecycleCommand as C, LifecycleCommandSingle as S};
+    let single = |s: &S| match s {
+        S::Shell(sh) => sh.clone(),
+        S::Exec(argv) => argv.join(" "),
+    };
+    match cmd {
+        C::Shell(s) => s.clone(),
+        C::Exec(argv) => argv.join(" "),
+        C::Parallel(map) => map
+            .iter()
+            .map(|(k, v)| format!("{k}: {}", single(v)))
+            .collect::<Vec<_>>()
+            .join(" | "),
+    }
+}
+
+/// Builds the `--debug` lifecycle listing in execution order: `initializeCommand`
+/// (host) first, then for each hook type the feature-contributed hooks (in
+/// installation order) followed by the devcontainer.json hook. Each present
+/// command is annotated when `skip_lifecycle` is set.
+fn debug_lifecycle_lines(
+    config: &config::DevcontainerConfig,
+    feature_runtime: &FeatureRuntimeConfig,
+    skip_lifecycle: bool,
+) -> Vec<String> {
+    let suffix = if skip_lifecycle {
+        "  (skipped: --skip-lifecycle)"
+    } else {
+        ""
+    };
+    let mut lines = Vec::new();
+    if let Some(cmd) = &config.initialize_command {
+        lines.push(format!(
+            "  initializeCommand (host): {}{suffix}",
+            describe_lifecycle_command(cmd)
+        ));
+    }
+    for (name, get) in lifecycle::HOOKS {
+        for (feature_id, hooks) in &feature_runtime.feature_hooks {
+            if let Some(cmd) = get(hooks) {
+                lines.push(format!(
+                    "  {name} (feature {feature_id}): {}{suffix}",
+                    describe_lifecycle_command(cmd)
+                ));
+            }
+        }
+        if let Some(cmd) = get(&config.lifecycle) {
+            lines.push(format!(
+                "  {name}: {}{suffix}",
+                describe_lifecycle_command(cmd)
+            ));
+        }
+    }
+    if lines.is_empty() {
+        lines.push("  (none)".to_string());
+    }
+    lines
 }
 
 /// Prints a user-facing warning for a value that still contains a `${...}`
@@ -611,6 +793,113 @@ mod tests {
                 "skipping postCreateCommand from feature `node` (--skip-lifecycle)".to_string(),
                 "skipping postCreateCommand (--skip-lifecycle)".to_string(),
             ]
+        );
+    }
+
+    // --- describe_mount ---
+
+    #[test]
+    fn describe_mount_standard_bind() {
+        assert_eq!(
+            describe_mount("type=bind,src=/host,dst=/container"),
+            "bind  /host -> /container"
+        );
+    }
+
+    #[test]
+    fn describe_mount_source_target_synonyms() {
+        assert_eq!(
+            describe_mount("type=bind,source=/h,target=/c"),
+            "bind  /h -> /c"
+        );
+    }
+
+    #[test]
+    fn describe_mount_extra_options() {
+        assert_eq!(
+            describe_mount("type=bind,src=/h,dst=/c,readonly"),
+            "bind  /h -> /c  [readonly]"
+        );
+    }
+
+    #[test]
+    fn describe_mount_tmpfs_has_no_source() {
+        assert_eq!(describe_mount("type=tmpfs,dst=/tmp"), "tmpfs  -> /tmp");
+    }
+
+    #[test]
+    fn describe_mount_volume() {
+        assert_eq!(
+            describe_mount("type=volume,source=vol,target=/data"),
+            "volume  vol -> /data"
+        );
+    }
+
+    // --- describe_lifecycle_command ---
+
+    #[test]
+    fn describe_lifecycle_command_renders_each_form() {
+        use crate::lifecycle::LifecycleCommandSingle;
+        assert_eq!(
+            describe_lifecycle_command(&LifecycleCommand::Shell("echo hi".into())),
+            "echo hi"
+        );
+        assert_eq!(
+            describe_lifecycle_command(&LifecycleCommand::Exec(vec!["echo".into(), "hi".into()])),
+            "echo hi"
+        );
+        let mut map = IndexMap::new();
+        map.insert("a".to_string(), LifecycleCommandSingle::Shell("x".into()));
+        map.insert(
+            "b".to_string(),
+            LifecycleCommandSingle::Exec(vec!["y".into(), "z".into()]),
+        );
+        assert_eq!(
+            describe_lifecycle_command(&LifecycleCommand::Parallel(map)),
+            "a: x | b: y z"
+        );
+    }
+
+    // --- debug_lifecycle_lines ---
+
+    #[test]
+    fn debug_lifecycle_lines_empty() {
+        assert_eq!(
+            debug_lifecycle_lines(&empty_config(), &FeatureRuntimeConfig::default(), false),
+            vec!["  (none)".to_string()]
+        );
+    }
+
+    #[test]
+    fn debug_lifecycle_lines_order_initialize_feature_then_devcontainer() {
+        let mut config = empty_config();
+        config.initialize_command = Some(LifecycleCommand::Shell("echo init".into()));
+        config.lifecycle.post_create_command = shell("cargo fetch");
+        let mut runtime = FeatureRuntimeConfig::default();
+        runtime.feature_hooks.push((
+            "node".to_string(),
+            LifecycleHooks {
+                post_create_command: shell("npm ci"),
+                ..Default::default()
+            },
+        ));
+        assert_eq!(
+            debug_lifecycle_lines(&config, &runtime, false),
+            vec![
+                "  initializeCommand (host): echo init".to_string(),
+                "  postCreateCommand (feature node): npm ci".to_string(),
+                "  postCreateCommand: cargo fetch".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn debug_lifecycle_lines_annotates_skip() {
+        let mut config = empty_config();
+        config.lifecycle.on_create_command = shell("x");
+        assert_eq!(
+            debug_lifecycle_lines(&config, &FeatureRuntimeConfig::default(), true),
+            vec!["  onCreateCommand: x  (skipped: --skip-lifecycle)".to_string()]
         );
     }
 }

@@ -130,6 +130,25 @@ fn skip_lifecycle_flag_accepted_by_exec() {
     );
 }
 
+#[test]
+fn debug_flag_accepted_by_exec_and_run() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    // `--debug` must precede the trailing command on exec. Both may still fail (no
+    // Docker daemon), but clap must not reject the flag as unexpected.
+    for args in [
+        ["exec", "--debug", "/bin/true"].as_slice(),
+        ["run", "--debug", "noop"].as_slice(),
+    ] {
+        let output = fx.dcc(args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unexpected argument") && !stderr.contains("--debug"),
+            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
+        );
+    }
+}
+
 // Tests below require a live Docker daemon — skipped in CI
 #[test]
 #[ignore]

@@ -188,6 +188,15 @@ The argument `--` can be supplied to explicitly indicate the boundary between
 `dcc` flags and the container launch command. All arguments following `--` will
 be passed through to the container.
 
+#### Debugging a launch
+
+Pass `--debug` to `dcc run` or `dcc exec` to print the fully-resolved launch
+details to stderr just before the container starts: the container name and image,
+the runtime environment (`remoteEnv`) and image-baked `containerEnv`, every mount
+with its resolved `src -> dst` and options, forwarded ports, the lifecycle scripts
+in execution order, and the exact `docker run` command. It does not change
+behavior — the container still starts and attaches.
+
 #### Lifecycle hooks
 
 Because containers are always created fresh, `dcc run` runs **every**

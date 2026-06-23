@@ -32,6 +32,10 @@ pub(crate) enum Command {
         /// misbehaving script.
         #[arg(long)]
         skip_lifecycle: bool,
+        /// Print the resolved launch details (env, mounts, lifecycle scripts, and
+        /// the docker command) to stderr before starting the container.
+        #[arg(long)]
+        debug: bool,
         #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },
@@ -43,6 +47,10 @@ pub(crate) enum Command {
         memory: String,
         #[arg(long, default_value = "4")]
         cpus: String,
+        /// Print the resolved launch details (env, mounts, lifecycle scripts, and
+        /// the docker command) to stderr before starting the container.
+        #[arg(long)]
+        debug: bool,
         script: Option<String>,
     },
 }
