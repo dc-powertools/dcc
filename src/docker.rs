@@ -271,14 +271,17 @@ pub(crate) async fn running_container_name_by_id(
 /// Returns `None` when the image exists but the label is absent.
 /// Returns `Err` when the image does not exist or the Docker daemon is unreachable.
 pub(crate) async fn inspect_image_label(image: &str) -> anyhow::Result<Option<String>> {
+    inspect_image_label_value(image, "devcontainer.metadata").await
+}
+
+pub(crate) async fn inspect_image_dcc_version(image: &str) -> anyhow::Result<Option<String>> {
+    inspect_image_label_value(image, "dcc.version").await
+}
+
+async fn inspect_image_label_value(image: &str, label: &str) -> anyhow::Result<Option<String>> {
+    let template = format!(r#"{{{{index .Config.Labels "{label}"}}}}"#);
     let output = Command::new("docker")
-        .args([
-            "image",
-            "inspect",
-            "--format",
-            r#"{{index .Config.Labels "devcontainer.metadata"}}"#,
-            image,
-        ])
+        .args(["image", "inspect", "--format", &template, image])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -293,7 +296,7 @@ pub(crate) async fn inspect_image_label(image: &str) -> anyhow::Result<Option<St
 
     let value = String::from_utf8_lossy(&output.stdout);
     let trimmed = value.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed == "<no value>" {
         Ok(None)
     } else {
         Ok(Some(trimmed.to_owned()))

@@ -14,6 +14,7 @@ use crate::{
     features::{self, FeatureRuntimeConfig},
     forward, lifecycle,
     profile::{ContainerId, ContainerName, ProfileName},
+    version,
     workspace::Workspace,
 };
 
@@ -31,6 +32,7 @@ pub(crate) struct ExecOptions<'a> {
     pub(crate) skip_lifecycle: bool,
     pub(crate) debug: bool,
     pub(crate) strict: bool,
+    pub(crate) profile_arg: &'a str,
 }
 
 pub(crate) async fn exec(
@@ -48,6 +50,7 @@ pub(crate) async fn exec(
     let container_id = ContainerId::new(workspace, profile);
     let container = ContainerName::resolve(config.name.as_deref(), &container_id);
     let image_tag = container_id.as_image_tag();
+    let current_uses_fast_path = crate::build::uses_fast_path(&config);
 
     // Check if already running
     if let Some(running_container) =
@@ -64,6 +67,14 @@ pub(crate) async fn exec(
     // referenced as bind-mount sources (e.g. ${localCacheFolder}/node_modules).
     // Docker requires bind-mount source paths to exist on the host before startup.
     cache_dir.ensure_exists()?;
+
+    version::warn_if_image_version_mismatch(
+        image_tag.as_str(),
+        Some(current_uses_fast_path),
+        opts.profile_arg,
+        opts.strict,
+    )
+    .await?;
 
     // Read runtime contributions from the image's devcontainer.metadata label.
     let feature_runtime = match docker::inspect_image_label(image_tag.as_str())

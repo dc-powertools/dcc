@@ -11,6 +11,7 @@ mod lifecycle;
 mod profile;
 mod run;
 mod stop;
+mod version;
 mod workspace;
 
 use std::path::{Path, PathBuf};
@@ -69,13 +70,18 @@ async fn run() -> anyhow::Result<()> {
                     skip_lifecycle,
                     debug,
                     strict: cli.strict,
+                    profile_arg: &cli.profile,
                 },
             )
             .await?;
             std::process::exit(status.code().unwrap_or(1));
         }
-        cli::Command::Join {} => join::join(&workspace, &profile).await,
-        cli::Command::Stop {} => stop::stop(&workspace, &profile).await,
+        cli::Command::Join {} => {
+            join::join(&workspace, &profile, &config_path, cli.strict, &cli.profile).await
+        }
+        cli::Command::Stop {} => {
+            stop::stop(&workspace, &profile, &config_path, cli.strict, &cli.profile).await
+        }
         cli::Command::Id {} => {
             println!("{}", profile::ContainerId::new(&workspace, &profile));
             Ok(())
@@ -99,6 +105,7 @@ async fn run() -> anyhow::Result<()> {
                     skip_lifecycle: false,
                     debug,
                     strict: cli.strict,
+                    profile_arg: &cli.profile,
                 },
             )
             .await

@@ -27,11 +27,7 @@ pub(crate) async fn build(
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
 
-    if config.features.is_empty()
-        && config.container_user == "root"
-        && config.container_env.is_empty()
-        && config.forward_ports.is_empty()
-    {
+    if uses_fast_path(&config) {
         // Fast path: pull and retag without a Dockerfile build.
         // --no-cache is a no-op here: docker pull always contacts the registry.
         let _ = no_cache; // accepted for API uniformity; docker pull ignores it
@@ -78,6 +74,13 @@ pub(crate) async fn build(
     Ok(())
 }
 
+pub(crate) fn uses_fast_path(config: &config::DevcontainerConfig) -> bool {
+    config.features.is_empty()
+        && config.container_user == "root"
+        && config.container_env.is_empty()
+        && config.forward_ports.is_empty()
+}
+
 fn load_locked_digests(config_path: &Path) -> HashMap<String, String> {
     let lock_path = config_path.with_extension("lock");
     let Ok(content) = std::fs::read(&lock_path) else {
@@ -113,4 +116,64 @@ fn write_lockfile(config_path: &Path, lock_entries: &[LockEntry]) -> anyhow::Res
         serde_json::to_string_pretty(&lock_json).context("failed to serialise lockfile")?,
     )
     .with_context(|| format!("failed to write lockfile `{}`", lock_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lifecycle::LifecycleHooks;
+    use indexmap::IndexMap;
+
+    fn config() -> config::DevcontainerConfig {
+        config::DevcontainerConfig {
+            name: None,
+            image: "rust:1".to_string(),
+            features: IndexMap::new(),
+            container_env: HashMap::new(),
+            remote_env: HashMap::new(),
+            container_user: "root".to_string(),
+            mounts: Vec::new(),
+            forward_ports: Vec::new(),
+            initialize_command: None,
+            lifecycle: LifecycleHooks::default(),
+            scripts: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn uses_fast_path_for_root_image_without_dcc_changes() {
+        assert!(uses_fast_path(&config()));
+    }
+
+    #[test]
+    fn uses_fast_path_false_for_default_dev_user() {
+        let mut config = config();
+        config.container_user = "dev".to_string();
+        assert!(!uses_fast_path(&config));
+    }
+
+    #[test]
+    fn uses_fast_path_false_when_features_present() {
+        let mut config = config();
+        config
+            .features
+            .insert("feature".to_string(), serde_json::json!({}));
+        assert!(!uses_fast_path(&config));
+    }
+
+    #[test]
+    fn uses_fast_path_false_when_container_env_present() {
+        let mut config = config();
+        config
+            .container_env
+            .insert("RUST_BACKTRACE".to_string(), "1".to_string());
+        assert!(!uses_fast_path(&config));
+    }
+
+    #[test]
+    fn uses_fast_path_false_when_forward_ports_present() {
+        let mut config = config();
+        config.forward_ports.push(8080);
+        assert!(!uses_fast_path(&config));
+    }
 }
