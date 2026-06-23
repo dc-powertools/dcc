@@ -25,7 +25,7 @@ pub(crate) enum Command {
     Exec {
         #[arg(long, default_value = "4g")]
         memory: String,
-        #[arg(long, default_value = "4")]
+        #[arg(long, default_value = "2")]
         cpus: String,
         /// Skip lifecycle scripts (initializeCommand and the in-container hooks),
         /// printing a warning for each one skipped. Useful for debugging a
@@ -45,7 +45,7 @@ pub(crate) enum Command {
     Run {
         #[arg(long, default_value = "4g")]
         memory: String,
-        #[arg(long, default_value = "4")]
+        #[arg(long, default_value = "2")]
         cpus: String,
         /// Print the resolved launch details (env, mounts, lifecycle scripts, and
         /// the docker command) to stderr before starting the container.

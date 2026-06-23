@@ -331,7 +331,7 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 
 ## Resource Limits
 
-`dcc run` defaults to **4 GB memory** and **4 CPUs**. Override with Docker-equivalent flags:
+`dcc run` defaults to **4 GB memory** and **2 CPUs**. Override with Docker-equivalent flags:
 
 ```sh
 dcc run --memory 8g --cpus 6

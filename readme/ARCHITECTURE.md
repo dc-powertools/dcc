@@ -394,7 +394,7 @@ docker run
   --rm
   -dit
   --memory <memory>          (default: 4g)
-  --cpus <cpus>              (default: 4)
+  --cpus <cpus>              (default: 2)
   [-u <containerUser>]       (omitted when containerUser is not set)
   -e KEY=VALUE ...           (remoteEnv after variable substitution)
   -e KEY=VALUE ...           (feature remoteEnv after template substitution)
