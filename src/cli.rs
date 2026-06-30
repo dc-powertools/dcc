@@ -39,7 +39,6 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },
-    Join {},
     Stop {},
     Id {},
     Run {

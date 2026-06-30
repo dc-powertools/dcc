@@ -231,18 +231,13 @@ tracking as in other devcontainer tools. The order is:
 For steps 2–6, feature-contributed hooks of that type run first, in feature
 installation order, followed by the `devcontainer.json` hook of that type. A
 non-zero exit from any hook aborts `dcc run` immediately and skips all
-subsequent hooks. `dcc join` does not re-run `postAttachCommand`.
+subsequent hooks.
 
 To bypass the lifecycle scripts for a single invocation — for example when one
 is misbehaving and you want a shell to debug it — run
 `dcc exec --skip-lifecycle <command>`. Every lifecycle script is skipped:
 `initializeCommand` (step 1) and all in-container hooks (steps 2–6). `dcc`
 prints a warning naming each skipped script, so nothing is silently omitted.
-
-### `dcc join`
-
-Reattaches to the original process's stdin/stdout after detaching from a running
-container via Docker's escape key sequence. This should not normally be required.
 
 ### `dcc stop`
 
