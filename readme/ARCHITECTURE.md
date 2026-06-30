@@ -29,7 +29,6 @@ src/
   docker.rs           Thin wrappers around docker CLI subcommands
   build.rs            dcc build command
   run.rs              dcc run command
-  join.rs             dcc join command
   stop.rs             dcc stop command
   forward.rs          Host-side TCP relay for forwardPorts
   config/
@@ -43,7 +42,7 @@ src/
     context.rs        In-memory tar build context and Dockerfile generation
 ```
 
-Modules are organized by feature area (STYLE.md). Build, run, join, and stop
+Modules are organized by feature area (STYLE.md). Build, run, and stop
 live at the top level rather than in a `commands/` subdirectory to avoid a
 third level of nesting.
 
@@ -330,9 +329,9 @@ The container-side mount path (`/cache`) is defined as the constant
 
 ### Why CLI, Not API
 
-`dcc run` and `dcc join` require transparent interactive TTY pass-through.
+`dcc run` and `dcc exec` require transparent interactive TTY pass-through.
 Achieving this via the `bollard` API requires explicit TTY multiplexing and
-`SIGWINCH` relay. Shelling out to `docker run -it` and `docker attach` gives
+`SIGWINCH` relay. Shelling out to `docker run -it` and `docker exec -it` gives
 correct TTY behavior by construction, with the Docker client handling all
 terminal details natively.
 
@@ -492,16 +491,6 @@ releases the host-side port bindings.
 
 The `--tmpfs /workspace/.dcc` mount places an empty tmpfs at that path inside
 the container, hiding the host `.dcc/` directory from the container.
-
-### dcc join
-
-```
-docker attach <container-name>
-```
-
-Reattaches to the running container's main process stdin/stdout/stderr. The
-default Docker detach key sequence (Ctrl-P, Ctrl-Q) is inherited from the Docker
-client.
 
 ### dcc stop
 
@@ -752,7 +741,6 @@ dcc [--strict] [-p/--profile <name>] <command> [--strict] [-p/--profile <name>] 
 Commands:
   build  [--no-cache]
   run    [--memory <size>] [--cpus <n>] [--] [command...]
-  join
   stop
 ```
 

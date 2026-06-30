@@ -191,19 +191,6 @@ pub(crate) async fn exec_foreground(
     .await
 }
 
-pub(crate) async fn attach(container: &str) -> anyhow::Result<ExitStatus> {
-    Command::new("docker")
-        .args(["attach", container])
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("failed to spawn `docker attach {container}`"))?
-        .wait()
-        .await
-        .with_context(|| format!("failed to wait for `docker attach {container}`"))
-}
-
 pub(crate) async fn stop_container(container: &str) -> anyhow::Result<()> {
     let output = Command::new("docker")
         .args(["stop", container])

@@ -6,7 +6,6 @@ mod docker;
 mod exec;
 mod features;
 mod forward;
-mod join;
 mod lifecycle;
 mod profile;
 mod run;
@@ -75,9 +74,6 @@ async fn run() -> anyhow::Result<()> {
             )
             .await?;
             std::process::exit(status.code().unwrap_or(1));
-        }
-        cli::Command::Join {} => {
-            join::join(&workspace, &profile, &config_path, cli.strict, &cli.profile).await
         }
         cli::Command::Stop {} => {
             stop::stop(&workspace, &profile, &config_path, cli.strict, &cli.profile).await

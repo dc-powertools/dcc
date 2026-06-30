@@ -57,7 +57,7 @@ pub(crate) async fn exec(
         running_container_name(container_id.as_str(), container.as_str()).await?
     {
         anyhow::bail!(
-            "container `{}` is already running for dcc container id `{}`; use `dcc join` to reattach",
+            "container `{}` is already running for dcc container id `{}`; stop it with `dcc stop` before starting a new session",
             running_container,
             container_id.as_str()
         );
