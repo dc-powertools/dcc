@@ -1,5 +1,5 @@
 {
-  "dccVersion": "0.0.27",
+  "dccVersion": "0.0.33",
   "features": [
     {
       "direct": true,
@@ -17,7 +17,7 @@
       "direct": true,
       "options": {},
       "ref": "ghcr.io/dc-powertools/features/rust:latest",
-      "resolved": "sha256:1fd03210f82effae17063d5f0db0a9524ce8db4102c648237693d4e6cba89287"
+      "resolved": "sha256:18e3a7af295ecb9ce294ebc711ec85a51b9c8ae60061ab7c843ec1aeb88e13f9"
     },
     {
       "direct": true,
