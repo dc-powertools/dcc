@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `readme/tasks/README.md`
-- Primary task: T-0004
-- Primary details: `readme/tasks/0004-dcc-rewrite-brief.md`; `readme/tasks/0004-dcc-rewrite-notes.md`
+- Primary task: T-0005
+- Primary details: `readme/tasks/0005-config-schema-brief.md`
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -34,6 +34,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 - Reusable framework: `readme/meta/README.md`
 - Task catalog: `readme/tasks/README.md`
+- Rewrite quality record: `readme/quality/0004-dcc-rewrite-quality.md`
+- Runtime threat model: `readme/threat-models/0004-dcc-runtime.md`
 - Product brief: `readme/project/brief.md`
 - Implementation context: `readme/project/context.md`
 - Project standards and command catalog: `readme/project/standards.md`
