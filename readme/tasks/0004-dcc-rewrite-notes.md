@@ -233,3 +233,47 @@ Residual risk: no live Docker smoke test was run in this slice. Runtime mode and
 active-command state are host-side cache records rather than PID-1-owned controller
 state. `dcc start` does not leave a background host-side port-forwarding process behind;
 foreground `run`, `exec`, and `attach` invocations still own their relay tasks.
+
+## 2026-07-14 T-0010 Completion And Parent Closure Checkpoint
+
+T-0010 completed the final compatibility, validation, and review slice. A worker handled
+the parser/runtime implementation; the root session reviewed it, ran checks, requested a
+read-only security review, fixed the blocking mount-normalization finding, updated docs
+and records, and closed parent T-0004 with residual risks recorded.
+
+Implemented behavior:
+
+- Top-level `portsAttributes` and `otherPortsAttributes` parse `label`, `protocol`, and
+  `onAutoForward` values `openBrowser`, `openBrowserOnce`, `openPreview`, `silent`, and
+  `ignore`. Browser/preview auto-open behavior is not implemented.
+- Top-level `runArgs` parses and passes a conservative safe Docker runtime flag subset.
+  Unknown flags are rejected.
+- Top-level `privileged`, `capAdd`, `securityOpt`, unsafe `runArgs`, and sensitive mounts
+  require `--allow-unsafe-runtime`.
+- Sensitive mount checks cover non-normalized parent-directory source paths, Docker
+  sockets, `/`, `/etc`, `/var/run`, SSH paths, and SSH-agent-like mount targets.
+- Cache mount source auto-creation rejects parent-directory source paths before creating
+  anything under the host filesystem.
+- `overrideCommand` and `workspaceMount` parse for schema compatibility and warn because
+  `dcc` owns keepalive startup and workspace mounting.
+- `workspaceFolder` is used as the build-prep hook, runtime hook, and foreground command
+  workdir; it warns when outside `/workspace`.
+
+T-0010 observed checks after review fixes:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy -- -D warnings`: passed.
+- `cargo test`: passed; 406 unit tests, 23 runnable CLI/config tests with 2 ignored, and
+  9 config error integration tests.
+- `cargo build`: passed.
+
+Official devcontainer CLI validation was not run because `devcontainer`, `node`, `npm`,
+and `npx` are absent from `PATH` in this environment.
+
+Residual risks accepted for parent closure:
+
+- No live Docker smoke test was run for the final durable lifecycle/build-prep behavior.
+- Port attributes are parsed for compatibility, but browser/preview auto-open behavior is
+  not implemented.
+- Mutable runtime mode and active-command state remain host-cache records rather than
+  PID-1-owned controller state.

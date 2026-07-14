@@ -87,26 +87,40 @@ dependency on OpenSSL, which simplifies the four-target release matrix.
 
 ### Structs
 
-`RawConfig` is the direct deserialization target. Every field is optional
-because any field may be absent in a partial config that is completed by a parent
-via `extends`.
+`RawConfig` is the direct deserialization target. Every field is optional because any
+field may be absent in a partial config that is completed by a parent via
+`customizations.dcc.extends`. The parser accepts the official and dcc-owned fields used
+by the current implementation, including:
 
 ```rust
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RawConfig {
     extends: Option<String>,
     name: Option<String>,
     image: Option<String>,
+    build: Option<BuildConfig>,
     features: Option<HashMap<String, serde_json::Value>>,
     container_env: Option<HashMap<String, String>>,
     remote_env: Option<HashMap<String, String>>,
     container_user: Option<String>,
     mounts: Option<Vec<String>>,
+    run_args: Option<Vec<String>>,
+    privileged: Option<bool>,
+    cap_add: Option<Vec<String>>,
+    security_opt: Option<Vec<String>>,
     forward_ports: Option<Vec<u16>>,
-    command: Option<Vec<String>>,
-    #[serde(flatten)]
-    extra: HashMap<String, serde_json::Value>,
+    ports_attributes: Option<HashMap<String, PortAttributes>>,
+    other_ports_attributes: Option<PortAttributes>,
+    override_command: Option<bool>,
+    workspace_folder: Option<String>,
+    workspace_mount: Option<serde_json::Value>,
+    initialize_command: Option<LifecycleCommand>,
+    on_create_command: Option<LifecycleCommand>,
+    update_content_command: Option<LifecycleCommand>,
+    post_create_command: Option<LifecycleCommand>,
+    post_start_command: Option<LifecycleCommand>,
+    post_attach_command: Option<LifecycleCommand>,
+    customizations: Option<Customizations>,
+    extra: HashMap<String, serde_json::Value>, // serde flatten
 }
 ```
 
@@ -114,21 +128,28 @@ The `extra` field collects all unrecognized keys via `#[serde(flatten)]`. After
 parsing, dcc iterates `extra` and emits a warning for each key. In `--strict`
 mode, the first unrecognized key is a fatal error.
 
-`DevcontainerConfig` is the resolved form after merging and validation. All
-collection fields are non-optional (empty by default). `image` is required;
-resolution fails if no `image` is present after the full extends chain is merged.
+`DevcontainerConfig` is the resolved form after merging and validation. All collection
+fields are non-optional (empty by default). Exactly one of `image` or official `build`
+is required after the full extends chain is merged.
 
 ```rust
 pub struct DevcontainerConfig {
     pub name: Option<String>,
-    pub image: String,
+    pub image: Option<String>,
+    pub build: Option<BuildConfig>,
     pub features: IndexMap<String, serde_json::Value>,
     pub container_env: HashMap<String, String>,
     pub remote_env: HashMap<String, String>,
-    pub container_user: Option<String>,            // None → use image's USER directive
+    pub container_user: String, // defaults to "dev"
     pub mounts: Vec<String>,
+    pub run_args: Vec<String>,
+    pub unsafe_runtime: UnsafeRuntimeConfig,
     pub forward_ports: Vec<u16>,
-    pub command: Option<Vec<String>>,
+    pub ports_attributes: HashMap<String, PortAttributes>,
+    pub other_ports_attributes: Option<PortAttributes>,
+    pub override_command: Option<bool>,
+    pub workspace_folder: String,
+    pub workspace_mount: Option<serde_json::Value>,
     pub state: Vec<StateEntry>,
 }
 ```
@@ -136,9 +157,9 @@ pub struct DevcontainerConfig {
 `IndexMap` is used for `features` to preserve declaration order, which
 determines Feature installation order.
 
-The `mounts` field supports only the string form
-(`"type=bind,src=...,dst=..."`). The structured object form from the
-devcontainer spec is not supported.
+The top-level `mounts` field currently supports the string form
+(`"type=bind,src=...,dst=..."`). Feature `mounts` support the official object form and
+are converted to Docker `--mount` strings through Feature metadata parsing.
 
 ### Extends Resolution
 
@@ -152,8 +173,9 @@ load_config(path, strict) -> anyhow::Result<DevcontainerConfig>:
   visited = {}
   raw = load_raw(path, &mut visited, strict)
   validate and convert raw to DevcontainerConfig
-    - error if image is None
-    - container_user kept as Option<String>; None means use the image's USER directive
+    - error unless exactly one of image or build is present
+    - container_user defaults to "dev"
+    - compatibility fields such as runArgs, workspaceFolder, and port attributes default to empty/default values
 
 load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
   canonical = fs::canonicalize(path)?
@@ -183,11 +205,13 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 | `remote_env` | Map union; child value wins on key conflict |
 | `container_user` | Child overwrites parent |
 | `mounts` | Array union; duplicates removed, parent entries first |
+| `run_args` | Array union; duplicates removed, parent entries first |
+| `privileged`, `cap_add`, `security_opt` | Child overwrites scalar `privileged`; arrays union |
 | `forward_ports` | Array union; duplicates removed, parent entries first |
-| `command` | Child overwrites parent (never merged) |
+| `ports_attributes` | Map union; child value wins on key conflict |
+| `other_ports_attributes`, `override_command`, `workspace_folder`, `workspace_mount` | Child overwrites parent |
 
-`command` does not follow the general array-union rule because a child's
-command is a complete replacement, not an addendum.
+Lifecycle hook fields are not merged as arrays; the child value wins for each hook.
 
 ### Variable Substitution
 
@@ -201,8 +225,8 @@ build time, so only container-side constants are substituted:
 | `${containerCacheFolder}` | `/cache` |
 | `${containerWorkspaceFolder}` | `/workspace` |
 
-**Runtime-applied properties** — `remoteEnv`, `mounts`, the container command
-(`dcc run` scripts / `dcc exec` args), and the lifecycle commands
+**Runtime-applied properties** — `remoteEnv`, `mounts`, `runArgs`, `workspaceFolder`,
+the container command (`dcc run` scripts / `dcc exec` args), and the lifecycle commands
 (`initializeCommand` plus the in-container hooks) — additionally substitute:
 
 | Variable | Value |
@@ -449,8 +473,12 @@ Before starting or reusing Docker containers, the runtime planner:
    error. It also reads the image's `Config.Env` (`{{json .Config.Env}}`, via
    `docker::inspect_image_env`) to resolve `${containerEnv:VAR}` references in the
    runtime properties.
-2. Resolves runtime state paths and prepares their profile-local host sources.
-3. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
+2. Resolves `workspaceFolder`, `runArgs`, mounts, and state paths against the image
+   environment when they contain `${containerEnv:...}`.
+3. Rejects unsafe devcontainer runtime settings, unsupported or unsafe `runArgs`, and
+   sensitive host mounts unless `--allow-unsafe-runtime` is present.
+4. Resolves runtime state paths and prepares their profile-local host sources.
+5. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
    the host cache directory. Docker requires bind mount source paths to exist on
    the host before the container starts.
 
@@ -467,9 +495,12 @@ docker run
   --label devcontainer.config_file=<config-path>
   --rm
   -dit
-  --memory <memory>          (default: 4g)
-  --cpus <cpus>              (default: 2)
-  [-u <containerUser>]       (omitted when containerUser is not set)
+  --workdir <workspaceFolder>  (default: /workspace)
+  --memory <memory>            (default: 4g)
+  --cpus <cpus>                (default: 2)
+  <safe runArgs...>
+  <allowed unsafe runtime args...>
+  -u <containerUser>
   -e KEY=VALUE ...           (remoteEnv after variable substitution)
   -e KEY=VALUE ...           (feature remoteEnv after template substitution)
   --mount <spec> ...         (mounts after variable substitution)
@@ -494,6 +525,19 @@ Feature-contributed startup hooks run before the project hook for that phase.
 Build-preparation hooks (`onCreateCommand`, `updateContentCommand`,
 `postCreateCommand`) are not part of ordinary runtime commands; `dcc build` owns them.
 
+`runArgs` are deliberately allowlisted. Safe value-taking flags such as `--add-host`,
+`--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`,
+`--cap-drop`, and explicit `--env KEY=VALUE` are passed through. Privileged or
+host-integrating flags (`--privileged`, `--cap-add`, `--security-opt`, `--pid=host`,
+`--ipc=host`, `--network=host`, `--device`, and sensitive mounts/volumes) require
+`--allow-unsafe-runtime`. Unknown flags are rejected. Top-level `privileged`, `capAdd`,
+and `securityOpt` use the same explicit unsafe gate.
+
+`workspaceMount` is parsed but ignored because `dcc` owns the project mount. `overrideCommand`
+is parsed but ignored because `dcc` owns PID 1 keepalive startup. `portsAttributes` and
+`otherPortsAttributes` are parsed for compatibility; browser/preview auto-open behavior is
+not implemented.
+
 Note that `forwardPorts` no longer translates to `-p` flags. Publishing ports
 with Docker's `-p` mechanism routes traffic through the Docker bridge network,
 so the container application sees connections as coming from the bridge gateway
@@ -510,7 +554,7 @@ container; it does not leave a background host-side port-forwarding process behi
 **Phase 4 — foreground command**
 
 ```
-docker exec -i [-t] -u <containerUser> -w /workspace <container-name> <command...>
+docker exec -i [-t] -u <containerUser> -w <workspaceFolder> <container-name> <command...>
 ```
 
 The foreground command runs via `docker exec`, with stdio inherited, so output streams

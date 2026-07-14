@@ -15,21 +15,21 @@
 
 | Threat | Impact | Likelihood | Existing Control | Gap |
 | --- | --- | --- | --- | --- |
-| Malicious config requests sensitive host mounts or privileged runtime flags. | Host compromise or secret exposure. | Medium | T-0004 requires unsafe settings rejected by default. | Safe allowlist and tests still pending. |
-| State path points at system/runtime paths or overlaps workspace internals. | Container breakage, data leakage, or cache corruption. | Medium | T-0004 brief defines rejected paths. | Validation implementation pending. |
-| Generated controller or hook scripts quote user data incorrectly. | Command injection or broken lifecycle behavior. | Medium | Existing project has shell-quoting tests around features. | Controller script generation not implemented yet. |
-| Lifecycle hooks run in the wrong phase or user context. | Unexpected code execution or persistent state drift. | Medium | T-0004 brief defines hook phase/user behavior. | Build/runtime implementation pending. |
+| Malicious config requests sensitive host mounts or privileged runtime flags. | Host compromise or secret exposure. | Medium | Unsafe Feature/devcontainer settings, unsafe `runArgs`, and sensitive mounts are rejected by default and require `--allow-unsafe-runtime`. | Real Docker smoke coverage pending. |
+| State path points at system/runtime paths or overlaps workspace internals. | Container breakage, data leakage, or cache corruption. | Medium | State validation rejects root, relative, unresolved, duplicate/conflicting, overlapping, system/runtime, and reserved workspace paths. | None known. |
+| Generated controller or hook scripts quote user data incorrectly. | Command injection or broken lifecycle behavior. | Medium | Generated scripts are small; hook execution uses structured lifecycle command handling and unit tests. | Live Docker coverage pending. |
+| Lifecycle hooks run in the wrong phase or user context. | Unexpected code execution or persistent state drift. | Medium | Build-prep, startup, and attach hooks are scoped separately; hooks run as `containerUser` from `workspaceFolder`. | Live Docker coverage pending. |
 | Logs expose secrets from env or commands. | Secret disclosure. | Low | Project standards prohibit logging secrets. | Review needed when debug output changes. |
 
 ## Mitigations
 
 | Mitigation | Owner | Verification | Status |
 | --- | --- | --- | --- |
-| Reject or gate privileged Feature/devcontainer settings with `--allow-unsafe-runtime`. | T-0007/T-0010 | Unit and integration tests for allowed/rejected args. | Feature settings complete; devcontainer `runArgs` pending T-0010 |
+| Reject or gate privileged Feature/devcontainer settings with `--allow-unsafe-runtime`. | T-0007/T-0010 | Unit and integration tests for allowed/rejected args. | Complete for Feature metadata, devcontainer unsafe fields, unsafe `runArgs`, and sensitive mounts |
 | Validate state paths before mount planning. | T-0006/T-0007 | Unit tests for relative, unresolved, duplicate, overlap, root, system, reserved paths, and Feature state metadata. | Complete for project and Feature state |
-| Use structured shell escaping helpers for generated scripts and add regression tests. | T-0008/T-0009 | Unit tests inspect generated scripts and command arrays. | Planned |
-| Keep `initializeCommand` unsupported by default. | T-0005/T-0010 | Parser/docs tests and warnings. | Planned |
-| Run specialist security review before final closure. | T-0010 | Recorded review findings in quality record. | Planned |
+| Use structured shell escaping helpers for generated scripts and add regression tests. | T-0008/T-0009 | Unit tests inspect generated scripts and command arrays. | Complete for current shell assets; live Docker coverage pending |
+| Make host-side `initializeCommand` explicit. | T-0009/T-0010 | Docs and debug output show the phase; `--skip-lifecycle` warns when skipped. | Complete |
+| Run specialist security review before final closure. | T-0010 | Recorded review findings in quality record. | In progress |
 
 ## Agentic Risks
 
@@ -49,4 +49,4 @@
 - Accepted risk: local Docker execution can run repository-supplied container hooks; the
   tool must make phases explicit and reject unsafe host integration by default.
 - Approval or decision record: T-0004 brief and any later decisions.
-- Review trigger: before closing T-0007, T-0008, T-0009, and T-0010.
+- Review trigger: before closing parent T-0004.

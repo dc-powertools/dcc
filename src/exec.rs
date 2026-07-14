@@ -179,7 +179,7 @@ async fn execute_foreground(
         docker::exec_foreground(
             &container_name,
             &plan.config.container_user,
-            CONTAINER_WORKSPACE,
+            &plan.config.workspace_folder,
             &plan.command_args,
             plan.tty,
         )
@@ -308,7 +308,7 @@ impl RuntimePlan {
         let opts = OwnedExecOptions::from(opts);
         let cache_dir = CacheDir::new(workspace, profile);
 
-        let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
+        let mut config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
             .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
         let container_id = ContainerId::new(workspace, profile);
@@ -339,7 +339,7 @@ impl RuntimePlan {
                 format!("failed to parse devcontainer.metadata label from image `{image_tag}`")
             })?,
         };
-        ensure_unsafe_runtime_allowed(&feature_runtime, opts.allow_unsafe_runtime)?;
+        ensure_unsafe_runtime_allowed(&config, &feature_runtime, opts.allow_unsafe_runtime)?;
 
         let local_workspace = workspace.root.to_string_lossy().into_owned();
         let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
@@ -365,6 +365,18 @@ impl RuntimePlan {
                 ),
             }
         }
+
+        config.workspace_folder =
+            config::vars::resolve_container_env(&config.workspace_folder, &container_env)
+                .with_context(|| format!("in workspaceFolder `{}`", config.workspace_folder))?;
+        config.run_args = config
+            .run_args
+            .iter()
+            .map(|arg| {
+                config::vars::resolve_container_env(arg, &container_env)
+                    .with_context(|| format!("in runArgs entry `{arg}`"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         let state = resolve_runtime_state(&config, &feature_runtime, &container_env)
             .context("invalid customizations.dcc.state after resolving containerEnv")?;
@@ -401,7 +413,9 @@ impl RuntimePlan {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        ensure_mounts_safe(&all_mounts, opts.allow_unsafe_runtime)?;
         ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
+        let safe_run_args = sanitize_run_args(&config.run_args, opts.allow_unsafe_runtime)?;
 
         // Combined remoteEnv (devcontainer.json first, then features), fully resolved:
         // feature values get host/localEnv substitution, then `${containerEnv:…}` is
@@ -451,12 +465,14 @@ impl RuntimePlan {
         ]);
         args.push("--rm".into());
         args.push("-dit".into());
-        args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
+        args.extend(["--workdir".into(), config.workspace_folder.clone()]);
         args.extend(["--memory".into(), opts.limits_memory.clone()]);
         args.extend(["--cpus".into(), opts.limits_cpus.clone()]);
+        args.extend(safe_run_args);
 
         append_unsafe_runtime_args(
             &mut args,
+            &config.unsafe_runtime,
             &feature_runtime.unsafe_runtime,
             opts.allow_unsafe_runtime,
         );
@@ -529,8 +545,11 @@ impl RuntimePlan {
                 dbg.push(format!("container id: {}", container_id.as_str()));
             }
             dbg.push(format!(
-                "user: {}   memory: {}   cpus: {}   workdir: {CONTAINER_WORKSPACE}",
-                config.container_user, opts.limits_memory, opts.limits_cpus
+                "user: {}   memory: {}   cpus: {}   workdir: {}",
+                config.container_user,
+                opts.limits_memory,
+                opts.limits_cpus,
+                config.workspace_folder
             ));
             dbg.push(format!("command   : {}", override_args.join(" ")));
 
@@ -704,7 +723,7 @@ async fn run_runtime_hooks(
                 &cmd,
                 container,
                 &plan.config.container_user,
-                CONTAINER_WORKSPACE,
+                &plan.config.workspace_folder,
             )
             .await
             .with_context(|| format!("{name} from feature `{feature_id}` failed"))?;
@@ -719,7 +738,7 @@ async fn run_runtime_hooks(
             &cmd,
             container,
             &plan.config.container_user,
-            CONTAINER_WORKSPACE,
+            &plan.config.workspace_folder,
         )
         .await
         .with_context(|| format!("{name} failed"))?;
@@ -765,11 +784,20 @@ fn resolve_runtime_state(
 }
 
 fn ensure_unsafe_runtime_allowed(
+    config: &config::DevcontainerConfig,
     feature_runtime: &FeatureRuntimeConfig,
     allow_unsafe_runtime: bool,
 ) -> anyhow::Result<()> {
-    if allow_unsafe_runtime || feature_runtime.unsafe_runtime.is_empty() {
+    if allow_unsafe_runtime
+        || (config.unsafe_runtime.is_empty() && feature_runtime.unsafe_runtime.is_empty())
+    {
         return Ok(());
+    }
+    if !config.unsafe_runtime.is_empty() {
+        anyhow::bail!(
+            "devcontainer config contains unsafe runtime setting(s) {}; rerun with `--allow-unsafe-runtime` to allow them",
+            config.unsafe_runtime.property_names().join(", ")
+        );
     }
     anyhow::bail!(
         "image metadata contains unsafe Feature runtime setting(s) {}; rerun with `--allow-unsafe-runtime` to allow them",
@@ -779,11 +807,23 @@ fn ensure_unsafe_runtime_allowed(
 
 fn append_unsafe_runtime_args(
     args: &mut Vec<String>,
+    config_unsafe_runtime: &config::UnsafeRuntimeConfig,
     unsafe_runtime: &FeatureUnsafeRuntime,
     allow_unsafe_runtime: bool,
 ) {
     if !allow_unsafe_runtime {
         return;
+    }
+    if config_unsafe_runtime.privileged {
+        args.push("--privileged".to_string());
+    }
+    for cap in &config_unsafe_runtime.cap_add {
+        args.push("--cap-add".to_string());
+        args.push(cap.clone());
+    }
+    for opt in &config_unsafe_runtime.security_opt {
+        args.push("--security-opt".to_string());
+        args.push(opt.clone());
     }
     if unsafe_runtime.privileged {
         args.push("--privileged".to_string());
@@ -812,6 +852,235 @@ fn unsafe_runtime_property_names(unsafe_runtime: &FeatureUnsafeRuntime) -> Vec<&
     names
 }
 
+fn sanitize_run_args(args: &[String], allow_unsafe_runtime: bool) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg.is_empty() || !arg.starts_with('-') {
+            anyhow::bail!(
+                "unsupported runArgs entry `{arg}`; runArgs must contain docker run flags only"
+            );
+        }
+
+        if arg == "--privileged" {
+            require_unsafe_run_arg(arg, allow_unsafe_runtime)?;
+            out.push(arg.clone());
+            i += 1;
+            continue;
+        }
+
+        if let Some((flag, value)) = split_equals_flag(arg) {
+            handle_run_arg_value(flag, value, arg, allow_unsafe_runtime, &mut out)?;
+            i += 1;
+            continue;
+        }
+
+        match arg.as_str() {
+            "--cap-add" | "--security-opt" | "--device" | "--pid" | "--ipc" | "--network"
+            | "--mount" | "-v" | "--volume" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("runArgs flag `{arg}` requires a value"))?;
+                handle_run_arg_value(arg, value, arg, allow_unsafe_runtime, &mut out)?;
+                i += 2;
+            }
+            "--add-host" | "--dns" | "--dns-search" | "--dns-option" | "--hostname" | "--label"
+            | "--tmpfs" | "--shm-size" | "--ulimit" | "--platform" | "--cap-drop"
+            | "--stop-signal" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("runArgs flag `{arg}` requires a value"))?;
+                out.push(arg.clone());
+                out.push(value.clone());
+                i += 2;
+            }
+            "-e" | "--env" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("runArgs flag `{arg}` requires a value"))?;
+                ensure_explicit_env_value(arg, value)?;
+                out.push(arg.clone());
+                out.push(value.clone());
+                i += 2;
+            }
+            _ => {
+                anyhow::bail!(
+                    "unsupported runArgs flag `{arg}`; dcc only passes a conservative safe subset by default"
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn split_equals_flag(arg: &str) -> Option<(&str, &str)> {
+    let (flag, value) = arg.split_once('=')?;
+    if flag.starts_with("--") {
+        Some((flag, value))
+    } else {
+        None
+    }
+}
+
+fn handle_run_arg_value(
+    flag: &str,
+    value: &str,
+    original: &str,
+    allow_unsafe_runtime: bool,
+    out: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    match flag {
+        "--cap-add" | "--security-opt" | "--device" => {
+            require_unsafe_run_arg(flag, allow_unsafe_runtime)?;
+        }
+        "--pid" | "--ipc" => {
+            if value == "host" {
+                require_unsafe_run_arg(original, allow_unsafe_runtime)?;
+            } else {
+                anyhow::bail!("unsupported runArgs flag `{original}`; only `host` mode is recognized and requires `--allow-unsafe-runtime`");
+            }
+        }
+        "--network" => {
+            if value == "host" {
+                require_unsafe_run_arg(original, allow_unsafe_runtime)?;
+            } else if !matches!(value, "bridge" | "none" | "default") {
+                anyhow::bail!(
+                    "unsupported runArgs network mode `{value}`; supported safe modes are bridge, none, and default"
+                );
+            }
+        }
+        "--mount" => {
+            if mount_value_is_sensitive(value) {
+                require_unsafe_run_arg(original, allow_unsafe_runtime)?;
+            }
+        }
+        "-v" | "--volume" => {
+            if volume_value_is_sensitive(value) {
+                require_unsafe_run_arg(original, allow_unsafe_runtime)?;
+            }
+        }
+        "-e" | "--env" => ensure_explicit_env_value(flag, value)?,
+        "--add-host" | "--dns" | "--dns-search" | "--dns-option" | "--hostname" | "--label"
+        | "--tmpfs" | "--shm-size" | "--ulimit" | "--platform" | "--cap-drop" | "--stop-signal" => {
+        }
+        _ => {
+            anyhow::bail!(
+                "unsupported runArgs flag `{flag}`; dcc only passes a conservative safe subset by default"
+            );
+        }
+    }
+
+    if original.contains('=') {
+        out.push(original.to_string());
+    } else {
+        out.push(flag.to_string());
+        out.push(value.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_explicit_env_value(flag: &str, value: &str) -> anyhow::Result<()> {
+    if value.contains('=') {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "runArgs flag `{flag}` must use an explicit KEY=VALUE pair; host environment passthrough is not allowed"
+    )
+}
+
+fn require_unsafe_run_arg(arg: &str, allow_unsafe_runtime: bool) -> anyhow::Result<()> {
+    if allow_unsafe_runtime {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "runArgs contains unsafe runtime flag `{arg}`; rerun with `--allow-unsafe-runtime` to allow it"
+    )
+}
+
+fn ensure_mounts_safe(mounts: &[String], allow_unsafe_runtime: bool) -> anyhow::Result<()> {
+    if allow_unsafe_runtime {
+        return Ok(());
+    }
+    for mount in mounts {
+        if mount_value_is_sensitive(mount) {
+            anyhow::bail!(
+                "mount `{mount}` exposes a sensitive host path; rerun with `--allow-unsafe-runtime` to allow it"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn mount_value_is_sensitive(mount: &str) -> bool {
+    parse_bind_src(mount)
+        .as_deref()
+        .is_some_and(is_sensitive_host_source)
+        || parse_bind_dst(mount)
+            .as_deref()
+            .is_some_and(is_sensitive_mount_target)
+}
+
+fn volume_value_is_sensitive(value: &str) -> bool {
+    volume_source(value).is_some_and(is_sensitive_host_source)
+        || volume_target(value).is_some_and(is_sensitive_mount_target)
+}
+
+fn volume_source(value: &str) -> Option<&str> {
+    if value.starts_with(':') {
+        return None;
+    }
+    let (src, _rest) = value.split_once(':')?;
+    if src.starts_with('/') || src.starts_with('~') {
+        Some(src)
+    } else {
+        None
+    }
+}
+
+fn volume_target(value: &str) -> Option<&str> {
+    let mut parts = value.splitn(3, ':');
+    let _src = parts.next()?;
+    parts.next()
+}
+
+fn is_sensitive_host_source(src: &str) -> bool {
+    let trimmed = src.trim();
+    if has_parent_dir_component(trimmed) {
+        return true;
+    }
+    if matches!(trimmed, "/" | "/etc" | "/var/run" | "/var/run/") {
+        return true;
+    }
+    if trimmed == "/var/run/docker.sock" || trimmed.ends_with("/docker.sock") {
+        return true;
+    }
+    if trimmed.starts_with("/etc/") || trimmed.starts_with("/var/run/") {
+        return true;
+    }
+    trimmed.contains("/.ssh/") || trimmed.ends_with("/.ssh") || is_ssh_agent_path(trimmed)
+}
+
+fn is_sensitive_mount_target(target: &str) -> bool {
+    is_ssh_agent_path(target.trim())
+}
+
+fn has_parent_dir_component(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+fn is_ssh_agent_path(path: &str) -> bool {
+    let path = path.to_ascii_lowercase();
+    path.contains("ssh_auth_sock")
+        || path.contains("ssh-agent")
+        || path.contains("/ssh-")
+        || path.contains("/agent.")
+        || path.ends_with("/ssh")
+        || path.ends_with("/agent")
+}
+
 /// Returns true when any runtime-applied field references `${containerEnv:…}`. Used to
 /// gate the HOME/USER probe so configs that don't use containerEnv pay no extra cost.
 fn references_container_env(
@@ -823,6 +1092,9 @@ fn references_container_env(
     let has = |s: &str| s.contains(NEEDLE);
 
     if override_args.iter().any(|s| has(s)) {
+        return true;
+    }
+    if config.workspace_folder.contains(NEEDLE) || config.run_args.iter().any(|s| has(s)) {
         return true;
     }
     if config.mounts.iter().any(|s| has(s)) || feature_runtime.mounts.iter().any(|s| has(s)) {
@@ -980,6 +1252,11 @@ fn ensure_cache_mount_sources(mounts: &[String], cache_dir: &CacheDir) -> anyhow
         let Some(src) = parse_bind_src(mount) else {
             continue;
         };
+        if has_parent_dir_component(&src) {
+            anyhow::bail!(
+                "mount source `{src}` contains parent directory segments; dcc will not create cache mount sources through non-normalized paths"
+            );
+        }
         if Path::new(&src).starts_with(&cache_dir.host_path) {
             std::fs::create_dir_all(&src)
                 .with_context(|| format!("failed to create mount source directory `{src}`"))?;
@@ -993,21 +1270,26 @@ fn ensure_cache_mount_sources(mounts: &[String], cache_dir: &CacheDir) -> anyhow
 /// Accepts both `src=` and `source=` key spellings. Returns `None` for volume/tmpfs mounts
 /// or bind mounts with no explicit source.
 fn parse_bind_src(mount: &str) -> Option<String> {
+    parse_bind_field(mount, &["src=", "source="])
+}
+
+fn parse_bind_dst(mount: &str) -> Option<String> {
+    parse_bind_field(mount, &["dst=", "destination=", "target="])
+}
+
+fn parse_bind_field(mount: &str, keys: &[&str]) -> Option<String> {
     let mut is_bind = false;
-    let mut src: Option<&str> = None;
+    let mut value: Option<&str> = None;
     for part in mount.split(',') {
         let part = part.trim();
         if part == "type=bind" {
             is_bind = true;
-        } else if let Some(v) = part
-            .strip_prefix("src=")
-            .or_else(|| part.strip_prefix("source="))
-        {
-            src = Some(v);
+        } else if let Some(v) = keys.iter().find_map(|key| part.strip_prefix(key)) {
+            value = Some(v);
         }
     }
     if is_bind {
-        src.map(str::to_owned)
+        value.map(str::to_owned)
     } else {
         None
     }
@@ -1172,7 +1454,14 @@ mod tests {
             remote_env: HashMap::new(),
             container_user: "dev".into(),
             mounts: Vec::new(),
+            run_args: Vec::new(),
+            unsafe_runtime: config::UnsafeRuntimeConfig::default(),
             forward_ports: Vec::new(),
+            ports_attributes: HashMap::new(),
+            other_ports_attributes: None,
+            override_command: None,
+            workspace_folder: CONTAINER_WORKSPACE.to_string(),
+            workspace_mount: None,
             initialize_command: None,
             lifecycle: LifecycleHooks::default(),
             scripts: HashMap::new(),
@@ -1431,6 +1720,27 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn references_container_env_true_in_run_args_and_workspace_folder() {
+        let mut config = empty_config();
+        config
+            .run_args
+            .push("--label=home=${containerEnv:HOME}".to_string());
+        assert!(references_container_env(
+            &[],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+
+        let mut config = empty_config();
+        config.workspace_folder = "${containerEnv:HOME}/project".to_string();
+        assert!(references_container_env(
+            &[],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+    }
+
     // --- runtime state and unsafe Feature settings ---
 
     #[test]
@@ -1483,14 +1793,29 @@ mod tests {
     fn unsafe_runtime_rejected_without_flag() {
         let mut runtime = FeatureRuntimeConfig::default();
         runtime.unsafe_runtime.privileged = true;
-        let err = ensure_unsafe_runtime_allowed(&runtime, false).unwrap_err();
+        let config = empty_config();
+        let err = ensure_unsafe_runtime_allowed(&config, &runtime, false).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("--allow-unsafe-runtime"), "got: {msg}");
         assert!(msg.contains("privileged"), "got: {msg}");
     }
 
     #[test]
+    fn devcontainer_unsafe_runtime_rejected_without_flag() {
+        let mut config = empty_config();
+        config.unsafe_runtime.cap_add.push("SYS_PTRACE".to_string());
+        let runtime = FeatureRuntimeConfig::default();
+        let err = ensure_unsafe_runtime_allowed(&config, &runtime, false).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("devcontainer config"), "got: {msg}");
+        assert!(msg.contains("capAdd"), "got: {msg}");
+        assert!(msg.contains("--allow-unsafe-runtime"), "got: {msg}");
+    }
+
+    #[test]
     fn unsafe_runtime_appended_only_with_flag() {
+        let mut config_unsafe = config::UnsafeRuntimeConfig::default();
+        config_unsafe.security_opt.push("label=disable".to_string());
         let unsafe_runtime = FeatureUnsafeRuntime {
             privileged: true,
             cap_add: vec!["SYS_PTRACE".to_string()],
@@ -1498,13 +1823,15 @@ mod tests {
         };
 
         let mut args = Vec::new();
-        append_unsafe_runtime_args(&mut args, &unsafe_runtime, false);
+        append_unsafe_runtime_args(&mut args, &config_unsafe, &unsafe_runtime, false);
         assert!(args.is_empty());
 
-        append_unsafe_runtime_args(&mut args, &unsafe_runtime, true);
+        append_unsafe_runtime_args(&mut args, &config_unsafe, &unsafe_runtime, true);
         assert_eq!(
             args,
             vec![
+                "--security-opt",
+                "label=disable",
                 "--privileged",
                 "--cap-add",
                 "SYS_PTRACE",
@@ -1512,5 +1839,129 @@ mod tests {
                 "seccomp=unconfined",
             ]
         );
+    }
+
+    #[test]
+    fn sanitize_run_args_allows_safe_subset() {
+        let args = vec![
+            "--add-host".to_string(),
+            "host.docker.internal:host-gateway".to_string(),
+            "--dns=1.1.1.1".to_string(),
+            "--network".to_string(),
+            "none".to_string(),
+            "-e".to_string(),
+            "KEY=value".to_string(),
+            "--mount".to_string(),
+            "type=bind,src=/home/me/project,dst=/project".to_string(),
+        ];
+        assert_eq!(sanitize_run_args(&args, false).unwrap(), args);
+    }
+
+    #[test]
+    fn sanitize_run_args_rejects_host_env_passthrough() {
+        let err =
+            sanitize_run_args(&["--env".to_string(), "TOKEN".to_string()], false).unwrap_err();
+        assert!(err.to_string().contains("KEY=VALUE"), "got: {err:#}");
+    }
+
+    #[test]
+    fn sanitize_run_args_rejects_unknown_flag() {
+        let err =
+            sanitize_run_args(&["--entrypoint".to_string(), "sh".to_string()], false).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported runArgs"),
+            "got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn sanitize_run_args_gates_privileged_flags() {
+        let args = vec!["--privileged".to_string()];
+        let err = sanitize_run_args(&args, false).unwrap_err();
+        assert!(err.to_string().contains("--allow-unsafe-runtime"));
+        assert_eq!(sanitize_run_args(&args, true).unwrap(), args);
+    }
+
+    #[test]
+    fn sanitize_run_args_gates_host_runtime_modes_and_devices() {
+        for args in [
+            vec!["--pid=host".to_string()],
+            vec!["--ipc".to_string(), "host".to_string()],
+            vec!["--network=host".to_string()],
+            vec!["--device".to_string(), "/dev/kvm".to_string()],
+            vec!["--cap-add".to_string(), "SYS_ADMIN".to_string()],
+            vec!["--security-opt=seccomp=unconfined".to_string()],
+        ] {
+            let err = sanitize_run_args(&args, false).unwrap_err();
+            assert!(err.to_string().contains("--allow-unsafe-runtime"));
+            assert_eq!(sanitize_run_args(&args, true).unwrap(), args);
+        }
+    }
+
+    #[test]
+    fn sanitize_run_args_gates_sensitive_mounts() {
+        for args in [
+            vec![
+                "--mount".to_string(),
+                "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock".to_string(),
+            ],
+            vec![
+                "--mount".to_string(),
+                "type=bind,src=/home/me/.ssh,dst=/host-ssh".to_string(),
+            ],
+            vec![
+                "--mount".to_string(),
+                "type=bind,src=/tmp/../etc,dst=/host-etc".to_string(),
+            ],
+            vec![
+                "--mount".to_string(),
+                "type=bind,src=/private/tmp/com.apple.launchd.X/listeners,dst=/ssh-agent"
+                    .to_string(),
+            ],
+            vec!["-v".to_string(), "/:/host".to_string()],
+            vec!["-v".to_string(), "/tmp/../etc:/host-etc".to_string()],
+            vec!["--volume=/tmp/ssh-test/agent.123:/ssh-agent".to_string()],
+        ] {
+            let err = sanitize_run_args(&args, false).unwrap_err();
+            assert!(err.to_string().contains("--allow-unsafe-runtime"));
+            assert_eq!(sanitize_run_args(&args, true).unwrap(), args);
+        }
+    }
+
+    #[test]
+    fn ensure_mounts_safe_gates_sensitive_sources() {
+        let safe = vec!["type=bind,src=/home/me/project,dst=/project".to_string()];
+        ensure_mounts_safe(&safe, false).unwrap();
+
+        let sensitive = vec!["type=bind,src=/etc,dst=/host-etc".to_string()];
+        let err = ensure_mounts_safe(&sensitive, false).unwrap_err();
+        assert!(err.to_string().contains("--allow-unsafe-runtime"));
+        ensure_mounts_safe(&sensitive, true).unwrap();
+    }
+
+    #[test]
+    fn ensure_mounts_safe_gates_parent_dir_escape_and_ssh_agent_target() {
+        for mount in [
+            "type=bind,src=/tmp/../etc,dst=/host-etc",
+            "type=bind,src=/private/tmp/com.apple.launchd.X/listeners,dst=/ssh-agent",
+        ] {
+            let err = ensure_mounts_safe(&[mount.to_string()], false).unwrap_err();
+            assert!(err.to_string().contains("--allow-unsafe-runtime"));
+            ensure_mounts_safe(&[mount.to_string()], true).unwrap();
+        }
+    }
+
+    #[test]
+    fn ensure_cache_mount_sources_rejects_parent_dir_escape_under_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = make_cache(tmp.path());
+        let src = cache.host_path.join("..").join("outside");
+        let mount = format!("type=bind,src={},dst=/outside", src.display());
+        let err = ensure_cache_mount_sources(&[mount], &cache).unwrap_err();
+        assert!(
+            err.to_string().contains("parent directory segments"),
+            "got: {err:#}"
+        );
+        assert!(!tmp.path().join(".dcc").join("outside").exists());
     }
 }

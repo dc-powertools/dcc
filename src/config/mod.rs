@@ -31,7 +31,18 @@ pub(crate) struct RawConfig {
     pub(crate) remote_env: Option<HashMap<String, String>>,
     pub(crate) container_user: Option<String>,
     pub(crate) mounts: Option<Vec<String>>,
+    pub(crate) run_args: Option<Vec<String>>,
+    pub(crate) privileged: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec_option")]
+    pub(crate) cap_add: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec_option")]
+    pub(crate) security_opt: Option<Vec<String>>,
     pub(crate) forward_ports: Option<Vec<u16>>,
+    pub(crate) ports_attributes: Option<HashMap<String, PortAttributes>>,
+    pub(crate) other_ports_attributes: Option<PortAttributes>,
+    pub(crate) override_command: Option<bool>,
+    pub(crate) workspace_folder: Option<String>,
+    pub(crate) workspace_mount: Option<serde_json::Value>,
     pub(crate) initialize_command: Option<LifecycleCommand>,
     pub(crate) on_create_command: Option<LifecycleCommand>,
     pub(crate) update_content_command: Option<LifecycleCommand>,
@@ -70,6 +81,72 @@ pub(crate) enum BuildArgValue {
     String(String),
     Bool(bool),
     Number(serde_json::Number),
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PortAttributes {
+    pub(crate) label: Option<String>,
+    pub(crate) protocol: Option<String>,
+    pub(crate) on_auto_forward: Option<OnAutoForward>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum OnAutoForward {
+    OpenBrowser,
+    OpenBrowserOnce,
+    OpenPreview,
+    Silent,
+    Ignore,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub(crate) struct UnsafeRuntimeConfig {
+    pub(crate) privileged: bool,
+    pub(crate) cap_add: Vec<String>,
+    pub(crate) security_opt: Vec<String>,
+}
+
+impl UnsafeRuntimeConfig {
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.privileged && self.cap_add.is_empty() && self.security_opt.is_empty()
+    }
+
+    pub(crate) fn property_names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.privileged {
+            names.push("privileged");
+        }
+        if !self.cap_add.is_empty() {
+            names.push("capAdd");
+        }
+        if !self.security_opt.is_empty() {
+            names.push("securityOpt");
+        }
+        names
+    }
+}
+
+fn deserialize_string_or_vec_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    Option::<OneOrMany>::deserialize(deserializer).map(|value| {
+        value.map(|value| match value {
+            OneOrMany::One(one) => vec![one],
+            OneOrMany::Many(many) => many,
+        })
+    })
 }
 
 impl BuildArgValue {
@@ -149,7 +226,14 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) remote_env: HashMap<String, String>,
     pub(crate) container_user: String,
     pub(crate) mounts: Vec<String>,
+    pub(crate) run_args: Vec<String>,
+    pub(crate) unsafe_runtime: UnsafeRuntimeConfig,
     pub(crate) forward_ports: Vec<u16>,
+    pub(crate) ports_attributes: HashMap<String, PortAttributes>,
+    pub(crate) other_ports_attributes: Option<PortAttributes>,
+    pub(crate) override_command: Option<bool>,
+    pub(crate) workspace_folder: String,
+    pub(crate) workspace_mount: Option<serde_json::Value>,
     pub(crate) initialize_command: Option<LifecycleCommand>,
     pub(crate) lifecycle: LifecycleHooks,
     pub(crate) scripts: HashMap<String, String>,
@@ -260,9 +344,39 @@ pub(crate) fn load_config(
     let raw = resolve::load_raw(path, &mut visited, strict)?;
     let config = resolve::raw_to_config(raw, path)?;
     let mut config = vars::apply_substitutions(config, workspace, cache_dir);
+    warn_unsupported_compatibility_fields(&config, path);
     config.state = resolve::validate_state_entries_allowing_deferred_container_env(config.state)
         .with_context(|| format!("invalid customizations.dcc.state in `{}`", path.display()))?;
     Ok(config)
+}
+
+fn warn_unsupported_compatibility_fields(config: &DevcontainerConfig, path: &Path) {
+    if config.override_command.is_some() {
+        tracing::warn!(
+            file = %path.display(),
+            "overrideCommand is parsed for devcontainer compatibility, but dcc always uses its managed keepalive startup"
+        );
+    }
+    if config.workspace_mount.is_some() {
+        tracing::warn!(
+            file = %path.display(),
+            "workspaceMount is parsed for devcontainer compatibility, but dcc owns workspace mounting and will ignore it"
+        );
+    }
+    if !workspace_folder_under_managed_workspace(&config.workspace_folder) {
+        tracing::warn!(
+            file = %path.display(),
+            workspaceFolder = %config.workspace_folder,
+            "workspaceFolder is outside /workspace; dcc will use it as the container workdir, but still mounts the project at /workspace"
+        );
+    }
+}
+
+fn workspace_folder_under_managed_workspace(path: &str) -> bool {
+    path == vars::CONTAINER_WORKSPACE
+        || path
+            .strip_prefix(vars::CONTAINER_WORKSPACE)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 #[cfg(test)]
@@ -290,7 +404,26 @@ mod tests {
                 "remoteEnv": { "FOO": "bar" },
                 "containerUser": "dev",
                 "mounts": ["type=bind,src=/tmp,dst=/tmp"],
+                "runArgs": ["--add-host", "host.docker.internal:host-gateway"],
+                "privileged": false,
+                "capAdd": "SYS_PTRACE",
+                "securityOpt": ["seccomp=unconfined"],
                 "forwardPorts": [8080, 3000],
+                "portsAttributes": {
+                    "3000": {
+                        "label": "web",
+                        "protocol": "http",
+                        "onAutoForward": "openBrowser"
+                    }
+                },
+                "otherPortsAttributes": {
+                    "label": "other",
+                    "protocol": "https",
+                    "onAutoForward": "silent"
+                },
+                "overrideCommand": false,
+                "workspaceFolder": "${containerWorkspaceFolder}/app",
+                "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
                 "initializeCommand": "echo init",
                 "onCreateCommand": ["echo", "create"],
                 "updateContentCommand": "echo update",
@@ -343,7 +476,46 @@ mod tests {
             raw.mounts.as_deref(),
             Some(&[String::from("type=bind,src=/tmp,dst=/tmp")][..])
         );
+        assert_eq!(
+            raw.run_args.as_deref(),
+            Some(
+                &[
+                    String::from("--add-host"),
+                    String::from("host.docker.internal:host-gateway")
+                ][..]
+            )
+        );
+        assert_eq!(raw.privileged, Some(false));
+        assert_eq!(
+            raw.cap_add.as_deref(),
+            Some(&[String::from("SYS_PTRACE")][..])
+        );
+        assert_eq!(
+            raw.security_opt.as_deref(),
+            Some(&[String::from("seccomp=unconfined")][..])
+        );
         assert_eq!(raw.forward_ports.as_deref(), Some(&[8080u16, 3000u16][..]));
+        let port = raw
+            .ports_attributes
+            .as_ref()
+            .and_then(|ports| ports.get("3000"))
+            .expect("port attributes should be parsed");
+        assert_eq!(port.label.as_deref(), Some("web"));
+        assert_eq!(port.protocol.as_deref(), Some("http"));
+        assert_eq!(port.on_auto_forward, Some(OnAutoForward::OpenBrowser));
+        let other_ports = raw
+            .other_ports_attributes
+            .as_ref()
+            .expect("otherPortsAttributes should be parsed");
+        assert_eq!(other_ports.label.as_deref(), Some("other"));
+        assert_eq!(other_ports.protocol.as_deref(), Some("https"));
+        assert_eq!(other_ports.on_auto_forward, Some(OnAutoForward::Silent));
+        assert_eq!(raw.override_command, Some(false));
+        assert_eq!(
+            raw.workspace_folder.as_deref(),
+            Some("${containerWorkspaceFolder}/app")
+        );
+        assert!(raw.workspace_mount.is_some());
         assert_eq!(
             raw.initialize_command,
             Some(LifecycleCommand::Shell("echo init".to_string()))
@@ -451,6 +623,56 @@ mod tests {
     }
 
     #[test]
+    fn strict_accepts_final_compatibility_fields() {
+        let file = write_temp(
+            r#"{
+                "image": "rust:1",
+                "portsAttributes": {
+                    "3000": { "onAutoForward": "openBrowser", "label": "web", "protocol": "http" },
+                    "3001": { "onAutoForward": "openBrowserOnce" },
+                    "3002": { "onAutoForward": "openPreview" },
+                    "3003": { "onAutoForward": "silent" },
+                    "3004": { "onAutoForward": "ignore" }
+                },
+                "otherPortsAttributes": { "onAutoForward": "silent" },
+                "runArgs": ["--add-host", "host.docker.internal:host-gateway"],
+                "overrideCommand": false,
+                "workspaceFolder": "${containerWorkspaceFolder}/service",
+                "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind"
+            }"#,
+        );
+        let raw = parse_config_file(file.path(), true).unwrap();
+        let attrs = raw.ports_attributes.expect("portsAttributes should parse");
+        assert_eq!(
+            attrs.get("3000").and_then(|a| a.on_auto_forward),
+            Some(OnAutoForward::OpenBrowser)
+        );
+        assert_eq!(
+            attrs.get("3001").and_then(|a| a.on_auto_forward),
+            Some(OnAutoForward::OpenBrowserOnce)
+        );
+        assert_eq!(
+            attrs.get("3002").and_then(|a| a.on_auto_forward),
+            Some(OnAutoForward::OpenPreview)
+        );
+        assert_eq!(
+            attrs.get("3003").and_then(|a| a.on_auto_forward),
+            Some(OnAutoForward::Silent)
+        );
+        assert_eq!(
+            attrs.get("3004").and_then(|a| a.on_auto_forward),
+            Some(OnAutoForward::Ignore)
+        );
+        assert_eq!(
+            raw.other_ports_attributes.and_then(|a| a.on_auto_forward),
+            Some(OnAutoForward::Silent)
+        );
+        assert_eq!(raw.override_command, Some(false));
+        assert!(raw.workspace_mount.is_some());
+        assert!(raw.extra.is_empty());
+    }
+
+    #[test]
     fn empty_object() {
         let file = write_temp("{}");
         let raw = parse_config_file(file.path(), false).unwrap();
@@ -462,7 +684,16 @@ mod tests {
         assert!(raw.remote_env.is_none());
         assert!(raw.container_user.is_none());
         assert!(raw.mounts.is_none());
+        assert!(raw.run_args.is_none());
+        assert!(raw.privileged.is_none());
+        assert!(raw.cap_add.is_none());
+        assert!(raw.security_opt.is_none());
         assert!(raw.forward_ports.is_none());
+        assert!(raw.ports_attributes.is_none());
+        assert!(raw.other_ports_attributes.is_none());
+        assert!(raw.override_command.is_none());
+        assert!(raw.workspace_folder.is_none());
+        assert!(raw.workspace_mount.is_none());
         assert!(raw.initialize_command.is_none());
         assert!(raw.on_create_command.is_none());
         assert!(raw.update_content_command.is_none());
@@ -488,6 +719,26 @@ mod tests {
         let file = write_temp(r#"{ "forwardPorts": [80, 5432] }"#);
         let raw = parse_config_file(file.path(), false).unwrap();
         assert_eq!(raw.forward_ports, Some(vec![80u16, 5432u16]));
+    }
+
+    #[test]
+    fn workspace_folder_substitutes_container_workspace_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = Workspace {
+            root: tmp.path().to_path_buf(),
+            identity: "workspace".to_string(),
+        };
+        let cache = CacheDir::new(&workspace, &crate::profile::ProfileName::new("dev"));
+        let file = write_temp(
+            r#"{
+                "image": "rust:1",
+                "workspaceFolder": "${containerWorkspaceFolder}/service"
+            }"#,
+        );
+        let raw = parse_config_file(file.path(), false).unwrap();
+        let config = resolve::raw_to_config(raw, file.path()).unwrap();
+        let config = vars::apply_substitutions(config, &workspace, &cache);
+        assert_eq!(config.workspace_folder, "/workspace/service");
     }
 
     #[test]
