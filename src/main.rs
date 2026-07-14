@@ -38,7 +38,11 @@ async fn run() -> anyhow::Result<()> {
         workspace::find_workspace().context("failed to locate .devcontainer directory")?;
     let (profile, config_path) = resolve_profile(&cli.profile, &workspace, &cwd)?;
     match cli.command {
-        cli::Command::Build { no_cache, update } => {
+        cli::Command::Build {
+            no_cache,
+            update,
+            allow_unsafe_runtime,
+        } => {
             build::build(
                 &workspace,
                 &profile,
@@ -46,6 +50,7 @@ async fn run() -> anyhow::Result<()> {
                 no_cache,
                 update,
                 cli.strict,
+                allow_unsafe_runtime,
             )
             .await
         }
@@ -54,6 +59,7 @@ async fn run() -> anyhow::Result<()> {
             cpus,
             skip_lifecycle,
             debug,
+            allow_unsafe_runtime,
             args,
         } => {
             let status = exec::exec(
@@ -70,6 +76,7 @@ async fn run() -> anyhow::Result<()> {
                     debug,
                     strict: cli.strict,
                     profile_arg: &cli.profile,
+                    allow_unsafe_runtime,
                 },
             )
             .await?;
@@ -86,6 +93,7 @@ async fn run() -> anyhow::Result<()> {
             memory,
             cpus,
             debug,
+            allow_unsafe_runtime,
             script,
         } => {
             run::run(
@@ -102,6 +110,7 @@ async fn run() -> anyhow::Result<()> {
                     debug,
                     strict: cli.strict,
                     profile_arg: &cli.profile,
+                    allow_unsafe_runtime,
                 },
             )
             .await

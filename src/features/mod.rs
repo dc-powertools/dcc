@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use indexmap::IndexMap;
 
 use crate::{
-    config::{vars::apply_container_env_substitution, DevcontainerConfig},
+    config::{vars::apply_container_env_substitution, DevcontainerConfig, StateEntry},
     lifecycle::{LifecycleHooks, HOOKS},
 };
 
@@ -44,8 +44,67 @@ struct FeatureMeta {
     /// devcontainer.json hook of the same type, in feature installation order.
     #[serde(flatten)]
     lifecycle: LifecycleHooks,
-    /// Named shell commands that can be invoked with `dcc run <name>`.
+    /// Legacy named shell commands that can be invoked with `dcc run <name>`.
+    /// Prefer `customizations.dcc.commands`.
     scripts: IndexMap<String, String>,
+    /// dcc-specific feature metadata in the schema-compatible namespace.
+    customizations: FeatureCustomizations,
+    /// Parsed for compatibility, but ignored because dcc owns PID 1 startup.
+    init: Option<serde_json::Value>,
+    /// Parsed for compatibility, but ignored because dcc owns PID 1 startup.
+    entrypoint: Option<serde_json::Value>,
+    /// Not permitted in Feature metadata.
+    container_user: Option<serde_json::Value>,
+    /// Not permitted in Feature metadata.
+    remote_user: Option<serde_json::Value>,
+    /// Unsafe runtime settings, gated by `--allow-unsafe-runtime`.
+    privileged: Option<bool>,
+    /// Unsafe runtime settings, gated by `--allow-unsafe-runtime`.
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    cap_add: Vec<String>,
+    /// Unsafe runtime settings, gated by `--allow-unsafe-runtime`.
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    security_opt: Vec<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct FeatureCustomizations {
+    dcc: Option<FeatureDccConfig>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct FeatureDccConfig {
+    /// Named shell commands that can be invoked with `dcc run <name>`.
+    commands: IndexMap<String, String>,
+    /// Profile-local state entries contributed by this feature.
+    state: Vec<StateEntry>,
+}
+
+impl FeatureMeta {
+    fn commands(&self) -> IndexMap<String, String> {
+        let mut commands = self.scripts.clone();
+        if let Some(dcc) = self.customizations.dcc.as_ref() {
+            commands.extend(dcc.commands.clone());
+        }
+        commands
+    }
+
+    fn state(&self) -> Vec<StateEntry> {
+        self.customizations
+            .dcc
+            .as_ref()
+            .map(|dcc| dcc.state.clone())
+            .unwrap_or_default()
+    }
+
+    fn unsafe_runtime(&self) -> FeatureUnsafeRuntime {
+        FeatureUnsafeRuntime {
+            privileged: self.privileged.unwrap_or(false),
+            cap_add: self.cap_add.clone(),
+            security_opt: self.security_opt.clone(),
+        }
+    }
 }
 
 /// A mount from `devcontainer-feature.json`, in the JSON object form.
@@ -88,6 +147,41 @@ pub(crate) struct FeatureRuntimeConfig {
     /// in installation order. Kept per-feature so collision detection in
     /// `dcc run` can identify the source and suggest qualified names.
     pub(crate) feature_scripts: Vec<(String, IndexMap<String, String>)>,
+    /// State entries contributed by installed features, in feature installation
+    /// order. These are merged before devcontainer config state at runtime.
+    pub(crate) state: Vec<StateEntry>,
+    /// Unsafe runtime settings contributed by installed features.
+    pub(crate) unsafe_runtime: FeatureUnsafeRuntime,
+}
+
+#[derive(Debug, Default, Clone, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct FeatureUnsafeRuntime {
+    pub(crate) privileged: bool,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub(crate) cap_add: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub(crate) security_opt: Vec<String>,
+}
+
+impl FeatureUnsafeRuntime {
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.privileged && self.cap_add.is_empty() && self.security_opt.is_empty()
+    }
+
+    fn property_names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.privileged {
+            names.push("privileged");
+        }
+        if !self.cap_add.is_empty() {
+            names.push("capAdd");
+        }
+        if !self.security_opt.is_empty() {
+            names.push("securityOpt");
+        }
+        names
+    }
 }
 
 /// One entry in the feature lockfile — the resolved state of a single feature.
@@ -136,6 +230,7 @@ pub(crate) async fn build_context(
     config: &DevcontainerConfig,
     config_dir: &Path,
     locked_digests: &HashMap<String, String>,
+    allow_unsafe_runtime: bool,
 ) -> anyhow::Result<FeatureBuildOutput> {
     let mut client = OciClient::new().context("failed to initialize OCI HTTP client")?;
 
@@ -151,9 +246,19 @@ pub(crate) async fn build_context(
     let mut feature_contexts: Vec<FeatureContext> = Vec::new();
     let mut label_entries: Vec<serde_json::Value> = Vec::new();
     let mut lock_entries: Vec<LockEntry> = Vec::new();
+    let mut feature_state_entries: Vec<StateEntry> = Vec::new();
 
     for reference in &order {
         let entry = &all[reference];
+        warn_ignored_feature_properties(reference, &entry.meta);
+        validate_feature_meta(reference, &entry.meta, allow_unsafe_runtime)?;
+        let commands = entry.meta.commands();
+        let state = crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
+            entry.meta.state(),
+        )
+        .with_context(|| format!("invalid customizations.dcc.state in feature `{reference}`"))?;
+        feature_state_entries.extend(state.iter().cloned());
+        let unsafe_runtime = entry.meta.unsafe_runtime();
 
         // Build the label entry for this feature (only fields with content are included)
         let mut label_entry = serde_json::json!({ "id": reference });
@@ -168,13 +273,24 @@ pub(crate) async fn build_context(
                 .context("failed to serialize feature remoteEnv")?;
         }
 
-        if !entry.meta.scripts.is_empty() {
+        if !commands.is_empty() {
             // shortId lets dcc run use a colon-free prefix for disambiguation
             // (the full "id" reference contains colons in the tag portion).
             label_entry["shortId"] =
                 serde_json::Value::String(feature_short_id(reference, entry.meta.id.as_deref()));
-            label_entry["scripts"] = serde_json::to_value(&entry.meta.scripts)
-                .context("failed to serialize feature scripts")?;
+            insert_dcc_label_field(
+                &mut label_entry,
+                "commands",
+                serde_json::to_value(&commands).context("failed to serialize feature commands")?,
+            );
+        }
+
+        if !state.is_empty() {
+            insert_dcc_label_field(
+                &mut label_entry,
+                "state",
+                state_entries_to_label_value(&state),
+            );
         }
 
         for (name, get) in HOOKS {
@@ -182,6 +298,18 @@ pub(crate) async fn build_context(
                 label_entry[name] = serde_json::to_value(cmd)
                     .context("failed to serialize feature lifecycle hook")?;
             }
+        }
+
+        if unsafe_runtime.privileged {
+            label_entry["privileged"] = serde_json::Value::Bool(true);
+        }
+        if !unsafe_runtime.cap_add.is_empty() {
+            label_entry["capAdd"] = serde_json::to_value(&unsafe_runtime.cap_add)
+                .context("failed to serialize feature capAdd")?;
+        }
+        if !unsafe_runtime.security_opt.is_empty() {
+            label_entry["securityOpt"] = serde_json::to_value(&unsafe_runtime.security_opt)
+                .context("failed to serialize feature securityOpt")?;
         }
 
         // Only include the entry in the label if there are runtime contributions
@@ -216,6 +344,11 @@ pub(crate) async fn build_context(
             direct: direct_refs.contains(reference.as_str()),
         });
     }
+
+    crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
+        feature_state_entries,
+    )
+    .context("invalid customizations.dcc.state across Feature metadata")?;
 
     let mut devcontainer_env: Vec<(String, String)> = config
         .container_env
@@ -283,10 +416,10 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
             config.remote_env.extend(env);
         }
 
-        // scripts: collect per-feature for collision detection in `dcc run`
-        if let Some(scripts_val) = entry.get("scripts") {
-            let scripts: IndexMap<String, String> = serde_json::from_value(scripts_val.clone())
-                .context("failed to parse 'scripts' in devcontainer.metadata label")?;
+        // commands: collect per-feature for collision detection in `dcc run`.
+        // Labels written by older dcc versions used top-level `scripts`.
+        let scripts = parse_feature_commands_from_label(entry)?;
+        if !scripts.is_empty() {
             // Use shortId when present (labels written by this version of dcc);
             // fall back to the full id for labels from older versions.
             let short_id = entry
@@ -297,6 +430,27 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
                 .to_string();
             config.feature_scripts.push((short_id, scripts));
         }
+
+        // state: collect in feature installation order. New labels store this
+        // under `customizations.dcc.state`; tolerate top-level `state` for
+        // forward/backward compatibility with earlier implementation attempts.
+        if let Some(state_val) = feature_dcc_value(entry, "state").or_else(|| entry.get("state")) {
+            let state: Vec<StateEntry> = serde_json::from_value(state_val.clone()).context(
+                "failed to parse 'customizations.dcc.state' in devcontainer.metadata label",
+            )?;
+            config.state.extend(state);
+        }
+
+        let unsafe_runtime: FeatureUnsafeRuntime = serde_json::from_value(entry.clone())
+            .context("failed to parse unsafe runtime settings in devcontainer.metadata label")?;
+        if unsafe_runtime.privileged {
+            config.unsafe_runtime.privileged = true;
+        }
+        config.unsafe_runtime.cap_add.extend(unsafe_runtime.cap_add);
+        config
+            .unsafe_runtime
+            .security_opt
+            .extend(unsafe_runtime.security_opt);
 
         // lifecycle hooks: collect (id, hooks) for every entry declaring at least one
         let hooks: LifecycleHooks = serde_json::from_value(entry.clone())
@@ -311,15 +465,144 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
         }
     }
 
+    config.state = crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
+        config.state,
+    )
+    .context("invalid customizations.dcc.state in devcontainer.metadata label")?;
+
     Ok(config)
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        String(String),
+        Vec(Vec<String>),
+    }
+
+    match <StringOrVec as serde::Deserialize>::deserialize(deserializer)? {
+        StringOrVec::String(value) => Ok(vec![value]),
+        StringOrVec::Vec(values) => Ok(values),
+    }
+}
+
 fn parse_feature_meta(feature_json: Option<&[u8]>) -> FeatureMeta {
     feature_json
         .and_then(|b| serde_json::from_slice(b).ok())
         .unwrap_or_default()
+}
+
+fn warn_ignored_feature_properties(reference: &str, meta: &FeatureMeta) {
+    if !meta.scripts.is_empty() {
+        eprintln!(
+            "warning: feature `{reference}` top-level `scripts` is deprecated; use `customizations.dcc.commands`"
+        );
+    }
+    if meta.init.is_some() {
+        eprintln!(
+            "warning: feature `{reference}` `init` is unsupported and ignored; dcc owns PID 1 startup"
+        );
+    }
+    if meta.entrypoint.is_some() {
+        eprintln!(
+            "warning: feature `{reference}` `entrypoint` is unsupported and ignored; dcc owns PID 1 startup"
+        );
+    }
+}
+
+fn validate_feature_meta(
+    reference: &str,
+    meta: &FeatureMeta,
+    allow_unsafe_runtime: bool,
+) -> anyhow::Result<()> {
+    if meta.container_user.is_some() {
+        anyhow::bail!(
+            "feature `{reference}` declares `containerUser`, but Feature metadata cannot set container users"
+        );
+    }
+    if meta.remote_user.is_some() {
+        anyhow::bail!(
+            "feature `{reference}` declares `remoteUser`, but Feature metadata cannot set container users"
+        );
+    }
+
+    let unsafe_runtime = meta.unsafe_runtime();
+    if !allow_unsafe_runtime && !unsafe_runtime.is_empty() {
+        anyhow::bail!(
+            "feature `{reference}` declares unsafe runtime setting(s) {}; rerun with `--allow-unsafe-runtime` to allow them",
+            unsafe_runtime.property_names().join(", ")
+        );
+    }
+
+    Ok(())
+}
+
+fn insert_dcc_label_field(entry: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+    let obj = entry
+        .as_object_mut()
+        .expect("label entry is always initialized as an object");
+    let customizations = obj
+        .entry("customizations".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let customizations = customizations
+        .as_object_mut()
+        .expect("customizations label value is always initialized as an object");
+    let dcc = customizations
+        .entry("dcc".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let dcc = dcc
+        .as_object_mut()
+        .expect("customizations.dcc label value is always initialized as an object");
+    dcc.insert(key.to_string(), value);
+}
+
+fn state_entries_to_label_value(state: &[StateEntry]) -> serde_json::Value {
+    serde_json::Value::Array(
+        state
+            .iter()
+            .map(|entry| match entry.kind {
+                crate::config::StateKind::Directory => {
+                    serde_json::Value::String(entry.path.clone())
+                }
+                crate::config::StateKind::File => serde_json::json!({
+                    "path": entry.path.clone(),
+                    "type": "file",
+                }),
+            })
+            .collect(),
+    )
+}
+
+fn feature_dcc_value<'a>(entry: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    entry
+        .get("customizations")
+        .and_then(|v| v.get("dcc"))
+        .and_then(|v| v.get(key))
+}
+
+fn parse_feature_commands_from_label(
+    entry: &serde_json::Value,
+) -> anyhow::Result<IndexMap<String, String>> {
+    let mut commands = IndexMap::new();
+    if let Some(scripts_val) = entry.get("scripts") {
+        let scripts: IndexMap<String, String> = serde_json::from_value(scripts_val.clone())
+            .context("failed to parse 'scripts' in devcontainer.metadata label")?;
+        commands.extend(scripts);
+    }
+    if let Some(commands_val) = feature_dcc_value(entry, "commands") {
+        let nested: IndexMap<String, String> = serde_json::from_value(commands_val.clone())
+            .context(
+                "failed to parse 'customizations.dcc.commands' in devcontainer.metadata label",
+            )?;
+        commands.extend(nested);
+    }
+    Ok(commands)
 }
 
 /// Resolves the full feature set by following `dependsOn` chains.
@@ -863,7 +1146,7 @@ mod tests {
             tmp.path(),
             br#"{"containerEnv":{"PROJECT_ROOT":"${localWorkspaceFolder}/src","CACHE_DIR":"${containerCacheFolder}/data"}}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new())
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
             .await
             .unwrap();
         let dockerfile = extract_dockerfile(&output.context_tar);
@@ -886,7 +1169,7 @@ mod tests {
         config
             .container_env
             .insert("DC_VAR".to_string(), "dc_value".to_string());
-        let output = build_context(&config, tmp.path(), &HashMap::new())
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
             .await
             .unwrap();
         let dockerfile = extract_dockerfile(&output.context_tar);
@@ -914,7 +1197,7 @@ mod tests {
             tmp.path(),
             br#"{"remoteEnv":{"TOKEN":"${localCacheFolder}/tok"}}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new())
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
             .await
             .unwrap();
         let label = output.metadata_label.expect("expected metadata label");
@@ -933,7 +1216,7 @@ mod tests {
             tmp.path(),
             br#"{"postCreateCommand":"echo hello from feature"}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new())
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
             .await
             .unwrap();
         let label = output
@@ -1057,6 +1340,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_meta_nested_commands_win_over_legacy_scripts() {
+        let json = serde_json::json!({
+            "id": "my-feature",
+            "scripts": { "build": "legacy", "test": "legacy-test" },
+            "customizations": {
+                "dcc": {
+                    "commands": { "build": "nested" },
+                    "state": ["/home/dev/.cache"]
+                }
+            }
+        });
+        let bytes = serde_json::to_vec(&json).unwrap();
+        let meta = parse_feature_meta(Some(&bytes));
+        let commands = meta.commands();
+        assert_eq!(commands.get("build").map(String::as_str), Some("nested"));
+        assert_eq!(
+            commands.get("test").map(String::as_str),
+            Some("legacy-test")
+        );
+        assert_eq!(
+            meta.state(),
+            vec![StateEntry {
+                path: "/home/dev/.cache".to_string(),
+                kind: crate::config::StateKind::Directory,
+            }]
+        );
+    }
+
+    #[test]
     fn parse_label_scripts_collected() {
         let json = r#"[{"id":"feat","scripts":{"build":"make all","lint":"make lint"}}]"#;
         let config = parse_runtime_from_label(json).unwrap();
@@ -1107,6 +1419,69 @@ mod tests {
         assert_eq!(config.feature_scripts[0].0, "./local-feat");
     }
 
+    #[test]
+    fn parse_label_nested_commands_win_over_legacy_scripts() {
+        let json = r#"[{
+            "id":"feat",
+            "shortId":"tool",
+            "scripts":{"build":"legacy","test":"legacy-test"},
+            "customizations":{"dcc":{"commands":{"build":"nested"}}}
+        }]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(config.feature_scripts.len(), 1);
+        let (id, scripts) = &config.feature_scripts[0];
+        assert_eq!(id, "tool");
+        assert_eq!(scripts.get("build").map(String::as_str), Some("nested"));
+        assert_eq!(scripts.get("test").map(String::as_str), Some("legacy-test"));
+    }
+
+    #[test]
+    fn parse_label_nested_state_validated() {
+        let json = r#"[{
+            "id":"feat",
+            "customizations":{"dcc":{"state":["/home/dev/.cache",{"path":"/home/dev/.npmrc","type":"file"}]}}
+        }]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.state,
+            vec![
+                StateEntry {
+                    path: "/home/dev/.cache".to_string(),
+                    kind: crate::config::StateKind::Directory,
+                },
+                StateEntry {
+                    path: "/home/dev/.npmrc".to_string(),
+                    kind: crate::config::StateKind::File,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_label_invalid_state_errors() {
+        let json = r#"[{"id":"feat","customizations":{"dcc":{"state":["relative/cache"]}}}]"#;
+        let err = parse_runtime_from_label(json).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("absolute"), "got: {msg}");
+    }
+
+    #[test]
+    fn parse_label_unsafe_runtime_collected() {
+        let json = r#"[{
+            "id":"feat",
+            "privileged": true,
+            "capAdd": "SYS_PTRACE",
+            "securityOpt": ["seccomp=unconfined"]
+        }]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert!(config.unsafe_runtime.privileged);
+        assert_eq!(config.unsafe_runtime.cap_add, vec!["SYS_PTRACE"]);
+        assert_eq!(
+            config.unsafe_runtime.security_opt,
+            vec!["seccomp=unconfined"]
+        );
+    }
+
     // --- feature_short_id ---
 
     #[test]
@@ -1145,7 +1520,7 @@ mod tests {
             tmp.path(),
             br#"{"id":"my-tool","scripts":{"lint":"cargo clippy"}}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new())
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
             .await
             .unwrap();
         let label = output
@@ -1154,14 +1529,17 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&label).unwrap();
         let entry = &parsed[0];
         assert_eq!(entry["shortId"].as_str(), Some("my-tool"));
-        assert_eq!(entry["scripts"]["lint"].as_str(), Some("cargo clippy"));
+        assert_eq!(
+            entry["customizations"]["dcc"]["commands"]["lint"].as_str(),
+            Some("cargo clippy")
+        );
     }
 
     #[tokio::test]
     async fn build_context_no_short_id_when_no_scripts() {
         let tmp = tempfile::tempdir().unwrap();
         let config = local_config(tmp.path(), br#"{"postCreateCommand":"echo hello"}"#);
-        let output = build_context(&config, tmp.path(), &HashMap::new())
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
             .await
             .unwrap();
         let label = output
@@ -1170,5 +1548,143 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&label).unwrap();
         let entry = &parsed[0];
         assert!(entry.get("shortId").is_none());
+    }
+
+    #[tokio::test]
+    async fn build_context_nested_commands_and_state_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{
+                "id":"my-tool",
+                "customizations":{
+                    "dcc":{
+                        "commands":{"lint":"cargo clippy"},
+                        "state":["/home/dev/.cargo",{"path":"/home/dev/.npmrc","type":"file"}]
+                    }
+                }
+            }"#,
+        );
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+            .await
+            .unwrap();
+        let label = output.metadata_label.expect("feature should produce label");
+        let runtime = parse_runtime_from_label(&label).unwrap();
+        assert_eq!(runtime.feature_scripts[0].0, "my-tool");
+        assert_eq!(
+            runtime.feature_scripts[0].1.get("lint").map(String::as_str),
+            Some("cargo clippy")
+        );
+        assert_eq!(
+            runtime.state,
+            vec![
+                StateEntry {
+                    path: "/home/dev/.cargo".to_string(),
+                    kind: crate::config::StateKind::Directory,
+                },
+                StateEntry {
+                    path: "/home/dev/.npmrc".to_string(),
+                    kind: crate::config::StateKind::File,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn build_context_rejects_feature_user_properties() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(tmp.path(), br#"{"containerUser":"root"}"#);
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+            .await
+            .err()
+            .expect("feature containerUser should be rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("containerUser"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn build_context_rejects_invalid_feature_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"customizations":{"dcc":{"state":["relative/cache"]}}}"#,
+        );
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+            .await
+            .err()
+            .expect("invalid feature state should be rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("absolute"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn build_context_rejects_overlapping_feature_state_across_features() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("install.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(second.join("install.sh"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(
+            first.join("devcontainer-feature.json"),
+            br#"{"customizations":{"dcc":{"state":["/home/dev/.cache"]}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            second.join("devcontainer-feature.json"),
+            br#"{"customizations":{"dcc":{"state":["/home/dev/.cache/tool"]}}}"#,
+        )
+        .unwrap();
+        let mut features = IndexMap::new();
+        features.insert("./first".to_string(), serde_json::json!({}));
+        features.insert("./second".to_string(), serde_json::json!({}));
+        let mut config = local_config(tmp.path(), br#"{}"#);
+        config.features = features;
+
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+            .await
+            .err()
+            .expect("overlapping feature state should be rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("overlap"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn build_context_rejects_unsafe_runtime_without_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"privileged":true,"capAdd":["SYS_PTRACE"],"securityOpt":["seccomp=unconfined"]}"#,
+        );
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+            .await
+            .err()
+            .expect("unsafe runtime settings should be rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--allow-unsafe-runtime"), "got: {msg}");
+        assert!(msg.contains("privileged"), "got: {msg}");
+        assert!(msg.contains("capAdd"), "got: {msg}");
+        assert!(msg.contains("securityOpt"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn build_context_serializes_unsafe_runtime_with_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"privileged":true,"capAdd":["SYS_PTRACE"],"securityOpt":["seccomp=unconfined"]}"#,
+        );
+        let output = build_context(&config, tmp.path(), &HashMap::new(), true)
+            .await
+            .unwrap();
+        let label = output.metadata_label.expect("feature should produce label");
+        let runtime = parse_runtime_from_label(&label).unwrap();
+        assert!(runtime.unsafe_runtime.privileged);
+        assert_eq!(runtime.unsafe_runtime.cap_add, vec!["SYS_PTRACE"]);
+        assert_eq!(
+            runtime.unsafe_runtime.security_opt,
+            vec!["seccomp=unconfined"]
+        );
     }
 }

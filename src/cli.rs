@@ -20,6 +20,8 @@ pub(crate) enum Command {
         no_cache: bool,
         #[arg(long)]
         update: bool,
+        #[arg(long)]
+        allow_unsafe_runtime: bool,
     },
     #[command(trailing_var_arg = true)]
     Exec {
@@ -36,6 +38,8 @@ pub(crate) enum Command {
         /// the docker command) to stderr before starting the container.
         #[arg(long)]
         debug: bool,
+        #[arg(long)]
+        allow_unsafe_runtime: bool,
         #[arg(trailing_var_arg = true, required = true)]
         args: Vec<String>,
     },
@@ -50,6 +54,8 @@ pub(crate) enum Command {
         /// the docker command) to stderr before starting the container.
         #[arg(long)]
         debug: bool,
+        #[arg(long)]
+        allow_unsafe_runtime: bool,
         script: Option<String>,
     },
 }

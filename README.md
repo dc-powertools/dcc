@@ -348,13 +348,19 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | Property | Description |
 |---|---|
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. User-supplied values override declared defaults. |
-| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The last feature in installation order wins; if multiple features declare a command a warning is emitted. The top-level `command` in `devcontainer.json` always overrides feature-contributed commands (with a warning). |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives, set before the feature's `install.sh` runs. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Stored as templates; `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}` are substituted at run time. |
 | `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, `${localEnv:VAR}`, `${containerEnv:VAR}`, etc.). |
+| `customizations.dcc.commands` | Named shell commands invokable through `dcc run`. Feature commands are addressed as `<feature-id>:<command>`; legacy top-level `scripts` still works with a deprecation warning. |
+| `customizations.dcc.state` | Feature-contributed persistent state paths. Uses the same validation and cache mount behavior as project `customizations.dcc.state`; Feature state is mounted before project state. |
 | `installsAfter` | Soft ordering hint. An array of feature IDs (the `id` field from `devcontainer-feature.json`). This feature is installed after the listed features if they are already in the installation set. Not evaluated recursively. |
 | `dependsOn` | Hard dependencies. An object whose keys are feature references (same format as `devcontainer.json` `features`) and values are the options for each dependency. Missing dependencies are added to the installation set automatically. Evaluated recursively. Circular dependencies are an error. |
 | `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Lifecycle hooks. Same forms and variable substitution as the identically-named `devcontainer.json` properties. For each hook type, feature-contributed hooks run before the `devcontainer.json` hook of that type, in feature installation order. |
+| `init`, `entrypoint` | Parsed for compatibility but ignored with a warning because `dcc` owns PID 1 startup. |
+| `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc run`, or `dcc exec` invocation includes `--allow-unsafe-runtime`. |
+
+Feature `containerUser` and `remoteUser` are rejected because the Feature schema does
+not permit Features to set users.
 
 ### Example
 

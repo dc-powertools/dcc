@@ -289,6 +289,24 @@ fn debug_flag_accepted_by_exec_and_run() {
     }
 }
 
+#[test]
+fn allow_unsafe_runtime_flag_accepted_by_build_exec_and_run() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    for args in [
+        ["build", "--allow-unsafe-runtime"].as_slice(),
+        ["exec", "--allow-unsafe-runtime", "/bin/true"].as_slice(),
+        ["run", "--allow-unsafe-runtime", "noop"].as_slice(),
+    ] {
+        let output = fx.dcc(args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unexpected argument") && !stderr.contains("--allow-unsafe-runtime"),
+            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
+        );
+    }
+}
+
 // Tests below require a live Docker daemon — skipped in CI
 #[test]
 #[ignore]

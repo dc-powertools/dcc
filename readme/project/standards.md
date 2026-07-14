@@ -15,7 +15,7 @@ Record only commands verified by successful execution in this environment.
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-07-14 |
 | Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.0.33`. | 2026-07-14 |
 | Lint | `cargo clippy -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied. | 2026-07-14 |
-| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 355 unit tests, 16 runnable CLI flag integration tests with 2 ignored, and 9 config error integration tests passed. | 2026-07-14 |
+| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 371 unit tests, 17 runnable CLI flag integration tests with 2 ignored, and 9 config error integration tests passed. | 2026-07-14 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-07-14 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 
