@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
-use crate::config::RawConfig;
+use crate::config::{Customizations, RawConfig, RawDccConfig};
 
 pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
     RawConfig {
@@ -24,7 +24,37 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         post_start_command: child.post_start_command.or(parent.post_start_command),
         post_attach_command: child.post_attach_command.or(parent.post_attach_command),
         scripts: merge_option_hash_maps(parent.scripts, child.scripts),
+        customizations: merge_customizations(parent.customizations, child.customizations),
         extra: merge_hash_maps(parent.extra, child.extra),
+    }
+}
+
+fn merge_customizations(
+    parent: Option<Customizations>,
+    child: Option<Customizations>,
+) -> Option<Customizations> {
+    match (parent, child) {
+        (None, None) => None,
+        (p, None) => p,
+        (None, c) => c,
+        (Some(p), Some(c)) => Some(Customizations {
+            dcc: merge_dcc(p.dcc, c.dcc),
+            other: merge_hash_maps(p.other, c.other),
+        }),
+    }
+}
+
+fn merge_dcc(parent: Option<RawDccConfig>, child: Option<RawDccConfig>) -> Option<RawDccConfig> {
+    match (parent, child) {
+        (None, None) => None,
+        (p, None) => p,
+        (None, c) => c,
+        (Some(p), Some(c)) => Some(RawDccConfig {
+            extends: None,
+            commands: merge_option_hash_maps(p.commands, c.commands),
+            state: merge_option_vecs(p.state, c.state),
+            extra: merge_hash_maps(p.extra, c.extra),
+        }),
     }
 }
 
@@ -115,6 +145,7 @@ mod tests {
             post_start_command: None,
             post_attach_command: None,
             scripts: None,
+            customizations: None,
             extra: Default::default(),
         }
     }
@@ -502,6 +533,140 @@ mod tests {
         assert_eq!(scripts["build"], "cargo build");
         assert_eq!(scripts["test"], "make test");
         assert_eq!(scripts["lint"], "cargo clippy");
+    }
+
+    #[test]
+    fn dcc_commands_child_wins_on_conflict() {
+        let mut parent_commands = HashMap::new();
+        parent_commands.insert("build".to_string(), "make parent".to_string());
+        parent_commands.insert("test".to_string(), "make test".to_string());
+        let mut child_commands = HashMap::new();
+        child_commands.insert("build".to_string(), "cargo build".to_string());
+        child_commands.insert("lint".to_string(), "cargo clippy".to_string());
+        let parent = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    commands: Some(parent_commands),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let child = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    commands: Some(child_commands),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        let commands = result
+            .customizations
+            .and_then(|c| c.dcc)
+            .and_then(|dcc| dcc.commands)
+            .unwrap();
+        assert_eq!(commands["build"], "cargo build");
+        assert_eq!(commands["test"], "make test");
+        assert_eq!(commands["lint"], "cargo clippy");
+    }
+
+    #[test]
+    fn dcc_extends_always_none() {
+        let parent = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    extends: Some("parent-base.json".to_string()),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let child = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    extends: Some("child-base.json".to_string()),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        assert!(result
+            .customizations
+            .and_then(|c| c.dcc)
+            .and_then(|dcc| dcc.extends)
+            .is_none());
+    }
+
+    #[test]
+    fn dcc_state_union_no_duplicates() {
+        let parent = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    state: Some(vec![
+                        crate::config::StateEntry {
+                            path: "/cache/a".to_string(),
+                            kind: crate::config::StateKind::Directory,
+                        },
+                        crate::config::StateEntry {
+                            path: "/cache/b".to_string(),
+                            kind: crate::config::StateKind::File,
+                        },
+                    ]),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let child = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    state: Some(vec![
+                        crate::config::StateEntry {
+                            path: "/cache/a".to_string(),
+                            kind: crate::config::StateKind::Directory,
+                        },
+                        crate::config::StateEntry {
+                            path: "/cache/c".to_string(),
+                            kind: crate::config::StateKind::Directory,
+                        },
+                    ]),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        let state = result
+            .customizations
+            .and_then(|c| c.dcc)
+            .and_then(|dcc| dcc.state)
+            .unwrap();
+        assert_eq!(
+            state,
+            vec![
+                crate::config::StateEntry {
+                    path: "/cache/a".to_string(),
+                    kind: crate::config::StateKind::Directory,
+                },
+                crate::config::StateEntry {
+                    path: "/cache/b".to_string(),
+                    kind: crate::config::StateKind::File,
+                },
+                crate::config::StateEntry {
+                    path: "/cache/c".to_string(),
+                    kind: crate::config::StateKind::Directory,
+                },
+            ]
+        );
     }
 
     proptest! {

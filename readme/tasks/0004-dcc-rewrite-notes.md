@@ -77,3 +77,25 @@ Worker and usage plan:
   Required authoritative usage telemetry is unavailable, so child concurrency is kept
   conservative and should pause if telemetry becomes available and reports either
   applicable window at or above 95%.
+
+## 2026-07-14 T-0005 Completion Checkpoint
+
+T-0005 implemented the config/schema compatibility slice in the root session, with
+sub-agents used for architecture audit, QA planning, and read-only review. The user
+flagged that implementation-heavy work should be delegated more aggressively to protect
+root orchestration context. Starting with T-0006, implementation-heavy slices should go
+to worker agents with explicit disjoint ownership while the root session handles
+planning, integration, state updates, and final review.
+
+T-0005 observed checks:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy -- -D warnings`: passed.
+- `cargo test`: passed; 337 unit tests, 16 runnable CLI flag tests with 2 ignored, and
+  9 config error integration tests.
+- `cargo build`: passed.
+
+Reviewer result: read-only specialist review found no blocking findings. Follow-up
+risks were moved to the quality record: T-0006 must handle same-path conflicting state
+types, runtime command integration remains later, and raw merged `dcc.extends` should be
+kept irrelevant or cleaned before any later code inspects merged raw config directly.

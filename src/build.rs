@@ -137,6 +137,7 @@ mod tests {
             initialize_command: None,
             lifecycle: LifecycleHooks::default(),
             scripts: HashMap::new(),
+            state: Vec::new(),
         }
     }
 
