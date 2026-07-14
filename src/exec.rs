@@ -112,6 +112,15 @@ pub(crate) async fn exec(
         }
     }
 
+    let state = config::resolve::resolve_state_entries_container_env(&config.state, &container_env)
+        .context("invalid customizations.dcc.state after resolving containerEnv")?;
+    let state_mounts = cache_dir.plan_state_mounts(&state);
+    cache_dir.prepare_state_mounts(&state_mounts)?;
+    let state_mount_args: Vec<String> = state_mounts
+        .iter()
+        .map(|mount| mount.to_mount_arg())
+        .collect();
+
     // The container command (a `dcc run` script or `dcc exec` args) supports the
     // same substitution (`${localEnv:VAR}`, `${containerEnv:VAR}`, …) as
     // mounts/remoteEnv.
@@ -221,6 +230,12 @@ pub(crate) async fn exec(
         cache_dir.host_path.display()
     ));
 
+    // profile-local state bind mounts
+    for mount in &state_mount_args {
+        args.push("--mount".into());
+        args.push(mount.clone());
+    }
+
     // mask .dcc directory inside container
     args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
@@ -284,6 +299,9 @@ pub(crate) async fn exec(
             "  bind   {local_workspace} -> {CONTAINER_WORKSPACE}"
         ));
         dbg.push(format!("  bind   {local_cache} -> {CONTAINER_CACHE}"));
+        for m in &state_mount_args {
+            dbg.push(format!("  {}", describe_mount(m)));
+        }
         dbg.push(format!("  tmpfs  -> {CONTAINER_WORKSPACE}/.dcc"));
         for m in &all_mounts {
             dbg.push(format!("  {}", describe_mount(m)));
@@ -536,6 +554,9 @@ fn references_container_env(
         return true;
     }
     if config.mounts.iter().any(|s| has(s)) || feature_runtime.mounts.iter().any(|s| has(s)) {
+        return true;
+    }
+    if config.state.iter().any(|entry| has(&entry.path)) {
         return true;
     }
     if config.remote_env.values().any(|s| has(s))
@@ -1055,6 +1076,20 @@ mod tests {
         config
             .mounts
             .push("type=bind,src=${containerEnv:HOME}/.cache,dst=/c".to_string());
+        assert!(references_container_env(
+            &[],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+    }
+
+    #[test]
+    fn references_container_env_true_in_state() {
+        let mut config = empty_config();
+        config.state.push(config::StateEntry {
+            path: "${containerEnv:HOME}/.cache".to_string(),
+            kind: config::StateKind::Directory,
+        });
         assert!(references_container_env(
             &[],
             &config,

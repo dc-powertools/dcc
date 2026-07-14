@@ -7,7 +7,8 @@ use anyhow::Context as _;
 
 use crate::{
     config::{
-        merge::merge, parse_config_file, DevcontainerConfig, RawConfig, DEFAULT_CONTAINER_USER,
+        merge::merge, parse_config_file, vars, DevcontainerConfig, RawConfig, StateEntry,
+        StateKind, DEFAULT_CONTAINER_USER,
     },
     lifecycle::LifecycleHooks,
 };
@@ -100,8 +101,187 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
     })
 }
 
+pub(crate) fn validate_state_entries(state: Vec<StateEntry>) -> anyhow::Result<Vec<StateEntry>> {
+    validate_state_entries_inner(state, DeferredContainerEnv::Reject)
+}
+
+pub(crate) fn validate_state_entries_allowing_deferred_container_env(
+    state: Vec<StateEntry>,
+) -> anyhow::Result<Vec<StateEntry>> {
+    validate_state_entries_inner(state, DeferredContainerEnv::Allow)
+}
+
+pub(crate) fn resolve_state_entries_container_env(
+    state: &[StateEntry],
+    env: &std::collections::HashMap<String, String>,
+) -> anyhow::Result<Vec<StateEntry>> {
+    let resolved = state
+        .iter()
+        .map(|entry| {
+            let path = vars::resolve_container_env(&entry.path, env)
+                .with_context(|| format!("in state path `{}`", entry.path))?;
+            anyhow::Ok(StateEntry {
+                path,
+                kind: entry.kind,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    validate_state_entries(resolved)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DeferredContainerEnv {
+    Allow,
+    Reject,
+}
+
+fn validate_state_entries_inner(
+    state: Vec<StateEntry>,
+    deferred: DeferredContainerEnv,
+) -> anyhow::Result<Vec<StateEntry>> {
+    let mut validated = Vec::new();
+    for entry in state {
+        if has_deferred_container_env(&entry.path) {
+            validate_deferred_state_entry(&entry, deferred)?;
+            insert_state_entry(&mut validated, entry)?;
+            continue;
+        }
+
+        let path = normalize_state_path(&entry.path)?;
+        insert_state_entry(
+            &mut validated,
+            StateEntry {
+                path,
+                kind: entry.kind,
+            },
+        )?;
+    }
+    Ok(validated)
+}
+
+fn has_deferred_container_env(path: &str) -> bool {
+    vars::unresolved_variables(path)
+        .iter()
+        .any(|token| token.starts_with("${containerEnv:"))
+}
+
+fn validate_deferred_state_entry(
+    entry: &StateEntry,
+    deferred: DeferredContainerEnv,
+) -> anyhow::Result<()> {
+    let unresolved = vars::unresolved_variables(&entry.path);
+    let unsupported: Vec<&str> = unresolved
+        .iter()
+        .map(String::as_str)
+        .filter(|token| !token.starts_with("${containerEnv:"))
+        .collect();
+    if !unsupported.is_empty() {
+        anyhow::bail!(
+            "customizations.dcc.state path `{}` contains unresolved variable(s) {}",
+            entry.path,
+            unsupported.join(", ")
+        );
+    }
+    if deferred == DeferredContainerEnv::Reject {
+        anyhow::bail!(
+            "customizations.dcc.state path `{}` contains unresolved variable(s) {}",
+            entry.path,
+            unresolved.join(", ")
+        );
+    }
+    if entry.path.is_empty() {
+        anyhow::bail!("customizations.dcc.state path is empty");
+    }
+    Ok(())
+}
+
+fn normalize_state_path(path: &str) -> anyhow::Result<String> {
+    let unresolved = vars::unresolved_variables(path);
+    if !unresolved.is_empty() {
+        anyhow::bail!(
+            "customizations.dcc.state path `{path}` contains unresolved variable(s) {}",
+            unresolved.join(", ")
+        );
+    }
+    if !path.starts_with('/') {
+        anyhow::bail!("customizations.dcc.state path `{path}` must be absolute");
+    }
+    if path.contains('\0') {
+        anyhow::bail!("customizations.dcc.state path `{path}` contains a NUL byte");
+    }
+
+    let mut segments = Vec::new();
+    for segment in path.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment.contains("..") {
+            anyhow::bail!(
+                "customizations.dcc.state path `{path}` contains invalid segment `{segment}`"
+            );
+        }
+        segments.push(segment);
+    }
+
+    if segments.is_empty() {
+        anyhow::bail!("customizations.dcc.state path `/` is not allowed");
+    }
+
+    let normalized = format!("/{}", segments.join("/"));
+    for reserved in ["/tmp", "/run", "/proc", "/sys", "/dev", "/workspace/.dcc"] {
+        if is_path_or_child(&normalized, reserved) {
+            anyhow::bail!(
+                "customizations.dcc.state path `{normalized}` targets reserved runtime path `{reserved}`"
+            );
+        }
+    }
+    Ok(normalized)
+}
+
+fn insert_state_entry(validated: &mut Vec<StateEntry>, entry: StateEntry) -> anyhow::Result<()> {
+    for existing in validated.iter() {
+        if existing.path == entry.path {
+            if existing.kind == entry.kind {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "customizations.dcc.state path `{}` is declared as both {} and {}",
+                entry.path,
+                state_kind_name(existing.kind),
+                state_kind_name(entry.kind)
+            );
+        }
+        if is_path_or_child(&entry.path, &existing.path)
+            || is_path_or_child(&existing.path, &entry.path)
+        {
+            anyhow::bail!(
+                "customizations.dcc.state paths `{}` and `{}` overlap; parent/child state paths are not allowed",
+                existing.path,
+                entry.path
+            );
+        }
+    }
+    validated.push(entry);
+    Ok(())
+}
+
+fn is_path_or_child(path: &str, parent: &str) -> bool {
+    path == parent
+        || path
+            .strip_prefix(parent)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn state_kind_name(kind: StateKind) -> &'static str {
+    match kind {
+        StateKind::Directory => "directory",
+        StateKind::File => "file",
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{resolve_state_entries_container_env, validate_state_entries};
     use crate::{
         cache::CacheDir, config::load_config, lifecycle::LifecycleCommand, workspace::Workspace,
     };
@@ -246,6 +426,211 @@ mod tests {
         );
         assert_eq!(config.state.len(), 1);
         assert_eq!(config.state[0].path, "/home/dev/.cache");
+    }
+
+    #[test]
+    fn state_paths_are_substituted_normalized_and_deduplicated() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": {
+                    "dcc": {
+                        "state": [
+                            "${containerWorkspaceFolder}/target/",
+                            "/workspace//target"
+                        ]
+                    }
+                }
+            }"#,
+        );
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(
+            config.state,
+            vec![crate::config::StateEntry {
+                path: "/workspace/target".to_string(),
+                kind: crate::config::StateKind::Directory,
+            }]
+        );
+    }
+
+    #[test]
+    fn state_rejects_relative_path() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": { "dcc": { "state": ["relative/cache"] } }
+            }"#,
+        );
+        let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(full.contains("absolute"), "got: {full}");
+    }
+
+    #[test]
+    fn state_rejects_root_path() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": { "dcc": { "state": ["/"] } }
+            }"#,
+        );
+        let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(full.contains("not allowed"), "got: {full}");
+    }
+
+    #[test]
+    fn state_rejects_dotdot_segments() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": { "dcc": { "state": ["/home/dev/../cache"] } }
+            }"#,
+        );
+        let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(full.contains("invalid segment"), "got: {full}");
+    }
+
+    #[test]
+    fn state_rejects_unresolved_unsupported_variables() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": { "dcc": { "state": ["${unknown}/cache"] } }
+            }"#,
+        );
+        let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(full.contains("${unknown}"), "got: {full}");
+    }
+
+    #[test]
+    fn state_rejects_local_host_variables() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": {
+                    "dcc": { "state": ["${localCacheFolder}/cargo"] }
+                }
+            }"#,
+        );
+        let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(full.contains("${localCacheFolder}"), "got: {full}");
+    }
+
+    #[test]
+    fn state_rejects_reserved_runtime_paths() {
+        for reserved in [
+            "/tmp/cache",
+            "/run/app",
+            "/proc/self",
+            "/sys/fs",
+            "/dev/shm",
+        ] {
+            let err = validate_state_entries(vec![crate::config::StateEntry {
+                path: reserved.to_string(),
+                kind: crate::config::StateKind::Directory,
+            }])
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("reserved"),
+                "expected reserved-path error for {reserved}, got: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_rejects_reserved_workspace_dcc_path() {
+        let err = validate_state_entries(vec![crate::config::StateEntry {
+            path: "/workspace/.dcc/state".to_string(),
+            kind: crate::config::StateKind::Directory,
+        }])
+        .unwrap_err();
+        assert!(err.to_string().contains("/workspace/.dcc"));
+    }
+
+    #[test]
+    fn state_rejects_conflicting_duplicate_kinds() {
+        let err = validate_state_entries(vec![
+            crate::config::StateEntry {
+                path: "/home/dev/.tool".to_string(),
+                kind: crate::config::StateKind::Directory,
+            },
+            crate::config::StateEntry {
+                path: "/home/dev//.tool/".to_string(),
+                kind: crate::config::StateKind::File,
+            },
+        ])
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("both directory and file"),
+            "got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn state_rejects_parent_child_overlap() {
+        let err = validate_state_entries(vec![
+            crate::config::StateEntry {
+                path: "/home/dev/.cache".to_string(),
+                kind: crate::config::StateKind::Directory,
+            },
+            crate::config::StateEntry {
+                path: "/home/dev/.cache/tool".to_string(),
+                kind: crate::config::StateKind::Directory,
+            },
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("overlap"), "got: {err:#}");
+    }
+
+    #[test]
+    fn state_defers_container_env_until_runtime_validation() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "rust:latest",
+                "customizations": {
+                    "dcc": {
+                        "state": [{ "path": "${containerEnv:HOME}/.npmrc", "type": "file" }]
+                    }
+                }
+            }"#,
+        );
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(config.state[0].path, "${containerEnv:HOME}/.npmrc");
+
+        let env = std::collections::HashMap::from([("HOME".to_string(), "/home/dev".to_string())]);
+        let state = resolve_state_entries_container_env(&config.state, &env).unwrap();
+        assert_eq!(
+            state,
+            vec![crate::config::StateEntry {
+                path: "/home/dev/.npmrc".to_string(),
+                kind: crate::config::StateKind::File,
+            }]
+        );
     }
 
     #[test]

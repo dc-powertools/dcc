@@ -219,7 +219,10 @@ pub(crate) fn load_config(
     let mut visited = std::collections::HashSet::new();
     let raw = resolve::load_raw(path, &mut visited, strict)?;
     let config = resolve::raw_to_config(raw, path)?;
-    Ok(vars::apply_substitutions(config, workspace, cache_dir))
+    let mut config = vars::apply_substitutions(config, workspace, cache_dir);
+    config.state = resolve::validate_state_entries_allowing_deferred_container_env(config.state)
+        .with_context(|| format!("invalid customizations.dcc.state in `{}`", path.display()))?;
+    Ok(config)
 }
 
 #[cfg(test)]
