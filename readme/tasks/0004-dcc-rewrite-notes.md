@@ -48,3 +48,32 @@ Checkpoint rule:
 - Commit completed slices independently after required checks pass.
 - Add follow-on tasks for independent discoveries that are not required for the current
   slice.
+
+## 2026-07-14 Decomposition Checkpoint
+
+User direction added full-framework execution, sub-agents, strict review, a work queue,
+regular self-contained commits, and usage monitoring. T-0004 is now the parent
+initiative; child tasks T-0005 through T-0010 own implementation slices and commit
+boundaries.
+
+Current queue:
+
+- T-0005: config/schema compatibility under `customizations.dcc`.
+- T-0006: validated state path model and cache mount planning.
+- T-0007: Feature metadata, commands/state/hooks, unsupported and unsafe settings.
+- T-0008: build preparation, official `build`, generated controller assets, and
+  `--refresh-only`.
+- T-0009: durable runtime `start`/`stop`/`run`/`exec`/`attach`, one-shot bookkeeping,
+  and `--keep` promotion.
+- T-0010: port attributes, safe `runArgs`, docs, fixtures, validation, final review,
+  and parent closure.
+
+Worker and usage plan:
+
+- Root Orchestrator owns implementation integration and all shared documentation.
+- Sub-agents may do bounded read-only architecture, QA, security, and review work, or
+  code edits only with disjoint write ownership.
+- No repo `codex-quota-monitor` skill is installed or discoverable in this session.
+  Required authoritative usage telemetry is unavailable, so child concurrency is kept
+  conservative and should pause if telemetry becomes available and reports either
+  applicable window at or above 95%.
