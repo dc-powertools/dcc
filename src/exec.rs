@@ -962,7 +962,8 @@ mod tests {
     fn empty_config() -> config::DevcontainerConfig {
         config::DevcontainerConfig {
             name: None,
-            image: "img".into(),
+            image: Some("img".into()),
+            build: None,
             features: IndexMap::new(),
             container_env: HashMap::new(),
             remote_env: HashMap::new(),

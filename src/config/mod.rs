@@ -25,6 +25,7 @@ pub(crate) struct RawConfig {
     pub(crate) extends: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) image: Option<String>,
+    pub(crate) build: Option<BuildConfig>,
     pub(crate) features: Option<IndexMap<String, serde_json::Value>>,
     pub(crate) container_env: Option<HashMap<String, String>>,
     pub(crate) remote_env: Option<HashMap<String, String>>,
@@ -41,6 +42,44 @@ pub(crate) struct RawConfig {
     pub(crate) customizations: Option<Customizations>,
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BuildConfig {
+    #[serde(default = "default_build_context")]
+    pub(crate) context: String,
+    #[serde(default = "default_dockerfile")]
+    pub(crate) dockerfile: String,
+    #[serde(default)]
+    pub(crate) args: HashMap<String, BuildArgValue>,
+    pub(crate) target: Option<String>,
+}
+
+fn default_build_context() -> String {
+    ".".to_string()
+}
+
+fn default_dockerfile() -> String {
+    "Dockerfile".to_string()
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum BuildArgValue {
+    String(String),
+    Bool(bool),
+    Number(serde_json::Number),
+}
+
+impl BuildArgValue {
+    pub(crate) fn as_build_arg(&self) -> String {
+        match self {
+            Self::String(value) => value.clone(),
+            Self::Bool(value) => value.to_string(),
+            Self::Number(value) => value.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -103,7 +142,8 @@ impl<'de> Deserialize<'de> for StateEntry {
 #[derive(Debug)]
 pub(crate) struct DevcontainerConfig {
     pub(crate) name: Option<String>,
-    pub(crate) image: String,
+    pub(crate) image: Option<String>,
+    pub(crate) build: Option<BuildConfig>,
     pub(crate) features: IndexMap<String, serde_json::Value>,
     pub(crate) container_env: HashMap<String, String>,
     pub(crate) remote_env: HashMap<String, String>,
@@ -244,6 +284,7 @@ mod tests {
                 "extends": "base.json",
                 "name": "example",
                 "image": "rust:latest",
+                "build": { "context": "..", "dockerfile": "Dockerfile", "args": { "VERSION": "1", "DEBUG": false }, "target": "dev" },
                 "features": { "ghcr.io/devcontainers/features/node:1": { "version": "20" } },
                 "containerEnv": { "FOO": "bar" },
                 "remoteEnv": { "FOO": "bar" },
@@ -279,6 +320,18 @@ mod tests {
         assert_eq!(dcc.extends.as_deref(), Some("base.json"));
         assert_eq!(raw.name.as_deref(), Some("example"));
         assert_eq!(raw.image.as_deref(), Some("rust:latest"));
+        let build = raw.build.as_ref().expect("build should be parsed");
+        assert_eq!(build.context, "..");
+        assert_eq!(build.dockerfile, "Dockerfile");
+        assert_eq!(build.target.as_deref(), Some("dev"));
+        assert_eq!(
+            build.args.get("VERSION").map(BuildArgValue::as_build_arg),
+            Some("1".to_string())
+        );
+        assert_eq!(
+            build.args.get("DEBUG").map(BuildArgValue::as_build_arg),
+            Some("false".to_string())
+        );
         assert!(raw.features.is_some());
         assert!(raw.container_env.is_some());
         assert!(raw

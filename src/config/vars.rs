@@ -25,6 +25,7 @@ pub(crate) fn apply_substitutions(
     DevcontainerConfig {
         name: config.name,
         image: config.image,
+        build: config.build,
         features: config.features,
         container_env: config
             .container_env

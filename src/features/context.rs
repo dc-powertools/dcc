@@ -17,19 +17,23 @@ pub(crate) struct FeatureContext {
     pub(crate) extra_files: Vec<(String, Vec<u8>, u32)>,
 }
 
+pub(crate) type ContextFile = (String, Vec<u8>, u32);
+
 pub(crate) fn build_context(
     image: &str,
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
     install_nc: bool,
+    generated_assets: &[ContextFile],
 ) -> anyhow::Result<Vec<u8>> {
-    let dockerfile = generate_dockerfile(
+    let dockerfile = generate_dockerfile_inner(
         image,
         devcontainer_env,
         features,
         container_user,
         install_nc,
+        !generated_assets.is_empty(),
     );
     let mut builder = tar::Builder::new(Vec::new());
 
@@ -58,6 +62,10 @@ pub(crate) fn build_context(
         }
     }
 
+    for (path, content, mode) in generated_assets {
+        add_to_tar(&mut builder, path, content, *mode)?;
+    }
+
     builder
         .finish()
         .context("failed to finish tar build context")?;
@@ -66,12 +74,31 @@ pub(crate) fn build_context(
         .context("failed to retrieve tar buffer")
 }
 
+#[cfg(test)]
 fn generate_dockerfile(
     image: &str,
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
     install_nc: bool,
+) -> String {
+    generate_dockerfile_inner(
+        image,
+        devcontainer_env,
+        features,
+        container_user,
+        install_nc,
+        false,
+    )
+}
+
+fn generate_dockerfile_inner(
+    image: &str,
+    devcontainer_env: &[(String, String)],
+    features: &[FeatureContext],
+    container_user: &str,
+    install_nc: bool,
+    install_generated_assets: bool,
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("FROM {image}"));
@@ -165,6 +192,14 @@ fn generate_dockerfile(
              && yum install -y nmap-ncat) \
              \\\n || (command -v dnf >/dev/null 2>&1 \
              && dnf install -y nmap-ncat)"
+                .to_string(),
+        );
+    }
+    if install_generated_assets {
+        lines.push("COPY .dcc-generated/ /usr/local/share/dcc/".to_string());
+        lines.push(
+            "RUN find /usr/local/share/dcc -type f -name '*.sh' -exec chmod +x {} \\; \
+             && find /usr/local/share/dcc/bin -type f -exec chmod +x {} \\;"
                 .to_string(),
         );
     }
@@ -298,6 +333,36 @@ mod tests {
     #[test]
     fn shell_quote_simple() {
         assert_eq!(shell_quote("20"), "'20'");
+    }
+
+    #[test]
+    fn generated_assets_are_copied_into_dockerfile_and_context() {
+        let context = build_context(
+            "alpine:3",
+            &[],
+            &[],
+            "root",
+            false,
+            &[(
+                ".dcc-generated/bin/dcc-controller".to_string(),
+                b"#!/bin/sh\n".to_vec(),
+                0o755,
+            )],
+        )
+        .unwrap();
+        let mut archive = tar::Archive::new(std::io::Cursor::new(&context));
+        let mut paths = Vec::new();
+        let mut dockerfile = String::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().to_string_lossy().into_owned();
+            if path == "Dockerfile" {
+                std::io::Read::read_to_string(&mut entry, &mut dockerfile).unwrap();
+            }
+            paths.push(path);
+        }
+        assert!(paths.contains(&".dcc-generated/bin/dcc-controller".to_string()));
+        assert!(dockerfile.contains("COPY .dcc-generated/ /usr/local/share/dcc/"));
     }
 
     #[test]
@@ -615,7 +680,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[]).unwrap();
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut install_content = String::new();
         for entry in archive.entries().unwrap() {
@@ -647,7 +712,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[]).unwrap();
         assert!(!tar_bytes.is_empty());
 
         // Extract and verify
@@ -684,7 +749,7 @@ mod tests {
                 0o755,
             )],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[]).unwrap();
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut found_helper = false;

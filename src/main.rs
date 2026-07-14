@@ -41,16 +41,20 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Build {
             no_cache,
             update,
+            refresh_only,
             allow_unsafe_runtime,
         } => {
             build::build(
                 &workspace,
                 &profile,
                 &config_path,
-                no_cache,
-                update,
-                cli.strict,
-                allow_unsafe_runtime,
+                build::BuildOptions {
+                    no_cache,
+                    update,
+                    refresh_only,
+                    strict: cli.strict,
+                    allow_unsafe_runtime,
+                },
             )
             .await
         }

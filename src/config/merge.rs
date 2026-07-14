@@ -9,6 +9,7 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         extends: None,
         name: child.name.or(parent.name),
         image: child.image.or(parent.image),
+        build: child.build.or(parent.build),
         features: merge_option_index_maps(parent.features, child.features),
         container_env: merge_option_hash_maps(parent.container_env, child.container_env),
         remote_env: merge_option_hash_maps(parent.remote_env, child.remote_env),
@@ -132,6 +133,7 @@ mod tests {
             extends: None,
             name: None,
             image: None,
+            build: None,
             features: None,
             container_env: None,
             remote_env: None,
@@ -229,6 +231,33 @@ mod tests {
         let child = empty();
         let result = merge(parent, child);
         assert_eq!(result.image.as_deref(), Some("p:1"));
+    }
+
+    #[test]
+    fn build_child_wins() {
+        let parent = RawConfig {
+            build: Some(crate::config::BuildConfig {
+                context: "parent".to_string(),
+                dockerfile: "Dockerfile.parent".to_string(),
+                args: HashMap::new(),
+                target: None,
+            }),
+            ..empty()
+        };
+        let child = RawConfig {
+            build: Some(crate::config::BuildConfig {
+                context: "child".to_string(),
+                dockerfile: "Dockerfile.child".to_string(),
+                args: HashMap::new(),
+                target: Some("dev".to_string()),
+            }),
+            ..empty()
+        };
+        let result = merge(parent, child);
+        let build = result.build.expect("build should be present");
+        assert_eq!(build.context, "child");
+        assert_eq!(build.dockerfile, "Dockerfile.child");
+        assert_eq!(build.target.as_deref(), Some("dev"));
     }
 
     #[test]
