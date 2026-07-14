@@ -1,27 +1,17 @@
-## Instructions for agentic coding tools
+# Agentic Development Entrypoint
 
-Several files contain crucial context for this project.
-- `README.md`: project overview
-- `readme/DEVELOPMENT.md`: development guidelines and workflows
-- `readme/STYLE.md`: coding style
-- `readme/ARCHITECTURE.md`: high-level architecture for the entire project
+This repository uses the portable AI development framework in `readme/meta/`.
 
-Read all of these files before working on this project.
+Every primary harness session and every delegated agent must read this file and then
+[readme/meta/README.md](readme/meta/README.md) before doing task work. If
+`readme/README.md` exists, every agent also reads that bounded project cursor before
+following only the process and project documents relevant to its assignment.
 
-The development guide defines mandatory verification and commit policies that you
-must always follow. It is imported here so it is always loaded into context:
+If `readme/README.md` is absent or is not a `# Project State` cursor, or
+`readme/tasks/README.md` is absent or is not a `# Task Catalog`, the framework has not
+been fully onboarded for this project. The primary session follows the bootstrap or
+collision path in the meta README and
+[onboarding procedure](readme/meta/onboarding.md). A delegated agent reports the issue
+to its orchestrator and does not initialize shared project documentation unless that
+ownership was assigned explicitly.
 
-@readme/DEVELOPMENT.md
-@readme/STYLE.md
-@readme/ARCHITECTURE.md
-
-Ignore all directories in `.gitignore`.
-
-
-# Specific Agent Instructions
-
-## Codex
-
-When asking the user a question, always wait for the answer. NEVER use
-auto-resolving questions or default-assumption timeouts. If using
-`request_user_input`, omit `autoResolutionMs`.
