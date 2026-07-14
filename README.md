@@ -223,57 +223,79 @@ each phase and state mounts attached.
 
 ### `dcc run`
 
-Starts the profile's container and runs its configured `command`. Attaches
-an interactive terminal and pipes stdin/stdout until the container exits.
-Containers are always ephemeral. `dcc run` terminates with an error if the
-profile's container is already running. `dcc build` must be run before `dcc run`;
-`dcc run` never builds the image automatically.
+Runs a named command from `customizations.dcc.commands` or Feature command
+metadata. With no command argument, `dcc run` lists available commands. Project
+commands are shown as `:<name>`; Feature commands are shown as
+`<feature-id>:<name>`. Unqualified command names are accepted only when unique.
 
-If additional arguments are present, such as `dcc run npm serve`, they override
-the configured command. Starting from the first non-flag argument,
-all subsequent arguments are passed through as the launch command.
+If the profile container is already running, `dcc run` executes the command in
+that container. If none is running, it starts a one-shot container by default.
+One-shot containers stop after all active `dcc`-launched commands finish, so
+concurrent `dcc run` and `dcc exec` invocations can share the same temporary
+container. Pass `--keep` or `-k` to keep a newly started container durable, or to
+promote an existing one-shot container.
+
+`dcc build` must be run before runtime commands; `dcc run` never builds the image
+automatically.
+
+### `dcc exec`
+
+Runs an explicit command in the profile container. Like `dcc run`, it reuses an
+existing container when present, otherwise starts a one-shot container unless
+`--keep` / `-k` is supplied.
 
 The argument `--` can be supplied to explicitly indicate the boundary between
-`dcc` flags and the container launch command. All arguments following `--` will
-be passed through to the container.
+`dcc` flags and the command. All arguments following `--` are passed through to
+the container command.
+
+### `dcc start`
+
+Starts the profile container in durable mode without running a foreground user
+command. If the container is already running, `dcc start` is idempotent and
+promotes it to durable mode.
+
+### `dcc attach`
+
+Attaches to the profile container. If no explicit command is supplied, `dcc`
+chooses an interactive shell in this order: executable absolute `$SHELL`,
+`/bin/bash`, then `/bin/sh`. `dcc attach` runs collected `postAttachCommand`
+hooks before the shell or explicit attach command. `dcc run` and `dcc exec` do
+not run attach hooks by default.
 
 #### Debugging a launch
 
-Pass `--debug` to `dcc run` or `dcc exec` to print the fully-resolved launch
-details to stderr just before the container starts: the container name and image,
-the runtime environment (`remoteEnv`) and image-baked `containerEnv`, every mount
-with its resolved `src -> dst` and options, forwarded ports, the lifecycle scripts
-in execution order, and the exact `docker run` command. It does not change
-behavior — the container still starts and attaches.
+Pass `--debug` to `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` to print
+the fully-resolved launch details to stderr just before the container starts:
+the container name and image, the runtime environment (`remoteEnv`) and
+image-baked `containerEnv`, every mount with its resolved `src -> dst` and
+options, forwarded ports, the lifecycle scripts in execution order, and the
+exact `docker run` command. It does not change behavior.
 
 #### Lifecycle hooks
 
-Because containers are always created fresh, `dcc run` runs **every**
-lifecycle hook on **every** run — there is no "once per container lifetime"
-tracking as in other devcontainer tools. The order is:
+Runtime commands do not run build-preparation hooks. `onCreateCommand`,
+`updateContentCommand`, and `postCreateCommand` run during `dcc build` instead.
+Runtime lifecycle hooks are scoped to the operation:
 
-1. `initializeCommand` — on the host, before the container is created/started.
-2. `onCreateCommand`
-3. `updateContentCommand`
-4. `postCreateCommand`
-5. `postStartCommand`
-6. `postAttachCommand` — immediately before attaching.
+1. `initializeCommand` runs on the host before a new container is created.
+2. `postStartCommand` runs when a new container starts.
+3. `postAttachCommand` runs only for `dcc attach`, immediately before the shell
+   or explicit attach command.
 
-For steps 2–6, feature-contributed hooks of that type run first, in feature
+For in-container hooks, feature-contributed hooks of that type run first, in feature
 installation order, followed by the `devcontainer.json` hook of that type. A
-non-zero exit from any hook aborts `dcc run` immediately and skips all
-subsequent hooks.
+non-zero exit from any hook aborts the current operation and skips subsequent
+hooks.
 
 To bypass the lifecycle scripts for a single invocation — for example when one
 is misbehaving and you want a shell to debug it — run
-`dcc exec --skip-lifecycle <command>`. Every lifecycle script is skipped:
-`initializeCommand` (step 1) and all in-container hooks (steps 2–6). `dcc`
-prints a warning naming each skipped script, so nothing is silently omitted.
+`dcc exec --skip-lifecycle <command>`. `dcc` prints a warning naming each
+skipped script, so nothing is silently omitted.
 
 ### `dcc stop`
 
-Stops the profile's container if it is running. This should not normally be
-required.
+Stops the profile's container if it is running and clears local runtime
+bookkeeping. It is safe to run when no container is active.
 
 
 ## Configuration

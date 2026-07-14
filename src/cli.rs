@@ -42,7 +42,34 @@ pub(crate) enum Command {
         debug: bool,
         #[arg(long)]
         allow_unsafe_runtime: bool,
+        #[arg(short = 'k', long)]
+        keep: bool,
         #[arg(trailing_var_arg = true, required = true)]
+        args: Vec<String>,
+    },
+    Start {
+        #[arg(long, default_value = "4g")]
+        memory: String,
+        #[arg(long, default_value = "2")]
+        cpus: String,
+        #[arg(long)]
+        debug: bool,
+        #[arg(long)]
+        allow_unsafe_runtime: bool,
+    },
+    #[command(trailing_var_arg = true)]
+    Attach {
+        #[arg(long, default_value = "4g")]
+        memory: String,
+        #[arg(long, default_value = "2")]
+        cpus: String,
+        #[arg(long)]
+        debug: bool,
+        #[arg(long)]
+        allow_unsafe_runtime: bool,
+        #[arg(short = 'k', long)]
+        keep: bool,
+        #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
     Stop {},
@@ -58,6 +85,8 @@ pub(crate) enum Command {
         debug: bool,
         #[arg(long)]
         allow_unsafe_runtime: bool,
+        #[arg(short = 'k', long)]
+        keep: bool,
         script: Option<String>,
     },
 }

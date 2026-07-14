@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-14 | Implemented durable runtime lifecycle commands and one-shot bookkeeping. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Implemented official build-source support, generated controller/hook assets, and build preparation. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Implemented Feature metadata compatibility for commands, state, unsupported properties, and unsafe runtime gating. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Implemented validated `customizations.dcc.state` path handling and profile-local state mount planning. | `readme/tasks/README.md#tasks` |
@@ -52,6 +53,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 6
+- Completed repository-changing tasks since that pass: 7
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first
