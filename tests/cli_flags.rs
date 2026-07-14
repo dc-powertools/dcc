@@ -307,6 +307,40 @@ fn allow_unsafe_runtime_flag_accepted_by_build_exec_and_run() {
     }
 }
 
+#[test]
+fn refresh_only_flag_accepted_by_build() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    let output = fx.dcc(&["build", "--refresh-only"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unexpected argument") && !stderr.contains("--refresh-only"),
+        "`build --refresh-only` should be accepted by clap\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn strict_accepts_official_build_source_field() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "build": {
+                "context": "..",
+                "dockerfile": "Dockerfile",
+                "args": { "VERSION": "1" },
+                "target": "dev"
+            }
+        }"#,
+    );
+    let output = fx.dcc(&["--strict", "build"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unrecognized field 'build'"),
+        "`--strict build` should accept official `build`\nstderr: {stderr}"
+    );
+}
+
 // Tests below require a live Docker daemon — skipped in CI
 #[test]
 #[ignore]

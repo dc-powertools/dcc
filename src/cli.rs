@@ -21,6 +21,8 @@ pub(crate) enum Command {
         #[arg(long)]
         update: bool,
         #[arg(long)]
+        refresh_only: bool,
+        #[arg(long)]
         allow_unsafe_runtime: bool,
     },
     #[command(trailing_var_arg = true)]

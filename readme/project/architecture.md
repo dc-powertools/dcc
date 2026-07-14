@@ -383,7 +383,8 @@ features, a `containerUser`, `containerEnv`, or `forwardPorts` to the config,
 which causes the Dockerfile path to be used instead. This limitation should be
 surfaced in user-facing documentation.
 
-**With features OR containerUser OR containerEnv OR forwardPorts**: pipe the in-memory build context to `docker build`:
+**With features OR containerUser OR containerEnv OR forwardPorts OR state OR
+build-preparation hooks**: pipe the in-memory build context to `docker build`:
 
 ```
 docker build [--no-cache] [--label devcontainer.metadata=<json>] --tag <image-tag> -
@@ -392,12 +393,26 @@ docker build [--no-cache] [--label devcontainer.metadata=<json>] --tag <image-ta
 The `-` argument instructs Docker to read the entire build context (including
 the Dockerfile) from stdin as a tar archive. No Dockerfile is written to disk.
 
-When features contribute runtime properties (mounts, command, remoteEnv),
-`dcc build` passes `--label devcontainer.metadata=<json>` to `docker build`.
-The label value is a JSON array with one entry per contributing feature and is
-stored inside the image. `dcc run` reads it back via `docker image inspect`
+Official `build` sources are built first as a generated base image using their
+Dockerfile, context, build args, and optional target. `dcc` then builds its own
+generated stage from that base image so user creation, Features, controller
+assets, hook assets, and metadata labels remain consistent.
+
+When features contribute runtime properties (mounts, commands, state, hooks, or
+unsafe runtime settings), `dcc build` passes
+`--label devcontainer.metadata=<json>` to `docker build`. The label value is a
+JSON array with one entry per contributing feature and is stored inside the
+image. `dcc run` and build preparation read it back via `docker image inspect`
 rather than relying on any local file, making the image self-describing and
 portable across machines.
+
+After the image exists, `dcc build` starts a temporary build-preparation
+container with workspace, cache, and declared state mounts attached. It runs
+`onCreateCommand`, `updateContentCommand`, and `postCreateCommand` in order;
+Feature hooks run before the project hook for each phase. `dcc build
+--refresh-only` skips the image rebuild and `onCreateCommand`, requires the
+profile image to exist, and runs only `updateContentCommand` and
+`postCreateCommand`.
 
 ### dcc run
 

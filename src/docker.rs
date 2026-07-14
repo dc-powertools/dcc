@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 
 use anyhow::Context as _;
@@ -39,22 +40,90 @@ pub(crate) async fn build(
     context: Vec<u8>,
     metadata_label: Option<&str>,
 ) -> anyhow::Result<()> {
+    let opts = DockerBuildOptions {
+        tag: tag.to_string(),
+        no_cache,
+        metadata_label: metadata_label.map(str::to_string),
+        file: None,
+        context_dir: None,
+        build_args: Vec::new(),
+        target: None,
+    };
+    build_stdin(opts, context).await
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct DockerBuildOptions {
+    pub(crate) tag: String,
+    pub(crate) no_cache: bool,
+    pub(crate) metadata_label: Option<String>,
+    pub(crate) file: Option<PathBuf>,
+    pub(crate) context_dir: Option<PathBuf>,
+    pub(crate) build_args: Vec<(String, String)>,
+    pub(crate) target: Option<String>,
+}
+
+pub(crate) fn build_args(opts: &DockerBuildOptions) -> Vec<String> {
+    let mut args = vec!["build".to_string()];
+    if opts.no_cache {
+        args.push("--no-cache".to_string());
+    }
+    if let Some(label) = &opts.metadata_label {
+        args.extend([
+            "--label".to_string(),
+            format!("devcontainer.metadata={label}"),
+        ]);
+    }
+    let mut build_args = opts.build_args.clone();
+    build_args.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, value) in build_args {
+        args.extend(["--build-arg".to_string(), format!("{key}={value}")]);
+    }
+    if let Some(target) = &opts.target {
+        args.extend(["--target".to_string(), target.clone()]);
+    }
+    args.extend(["--tag".to_string(), opts.tag.clone()]);
+    if let Some(file) = &opts.file {
+        args.extend(["--file".to_string(), file.display().to_string()]);
+    }
+    args.push(
+        opts.context_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "-".to_string()),
+    );
+    args
+}
+
+pub(crate) async fn build_path(opts: DockerBuildOptions) -> anyhow::Result<()> {
     let mut cmd = Command::new("docker");
-    cmd.arg("build");
-    if no_cache {
-        cmd.arg("--no-cache");
-    }
-    if let Some(label) = metadata_label {
-        cmd.args(["--label", &format!("devcontainer.metadata={label}")]);
-    }
-    cmd.args(["--tag", tag, "-"]);
+    let args = build_args(&opts);
+    cmd.args(&args);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
+    let display = format!("docker {}", args.join(" "));
+    let status = cmd
+        .spawn()
+        .with_context(|| format!("failed to spawn `{display}`"))?
+        .wait()
+        .await
+        .with_context(|| format!("failed to wait for `{display}`"))?;
+    check_status(status, &display)
+}
+
+async fn build_stdin(opts: DockerBuildOptions, context: Vec<u8>) -> anyhow::Result<()> {
+    let mut cmd = Command::new("docker");
+    let args = build_args(&opts);
+    cmd.args(&args);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::inherit());
     cmd.stderr(Stdio::inherit());
+    let display = format!("docker {}", args.join(" "));
 
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("failed to spawn `docker build --tag {tag} -`"))?;
+        .with_context(|| format!("failed to spawn `{display}`"))?;
 
     // Write build context to stdin then close the pipe
     let mut stdin = child
@@ -71,8 +140,32 @@ pub(crate) async fn build(
     let status = child
         .wait()
         .await
-        .with_context(|| format!("failed to wait for `docker build --tag {tag} -`"))?;
-    check_status(status, &format!("docker build --tag {tag} -"))
+        .with_context(|| format!("failed to wait for `{display}`"))?;
+    check_status(status, &display)
+}
+
+pub(crate) async fn image_exists(image: &str) -> anyhow::Result<bool> {
+    let output = Command::new("docker")
+        .args(["image", "inspect", image])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to spawn `docker image inspect {image}`"))?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("No such image") || stderr.contains("No such object") {
+        return Ok(false);
+    }
+    let code = output.status.code().unwrap_or(-1);
+    Err(command_failure(
+        &format!("docker image inspect {image}"),
+        code,
+        &output.stderr,
+    ))
 }
 
 /// Starts a container detached (`docker run -d …`) and returns once Docker
@@ -520,6 +613,64 @@ mod tests {
     #[test]
     fn parse_env_list_empty() {
         assert!(parse_env_list(vec![]).is_empty());
+    }
+
+    #[test]
+    fn build_args_for_stdin_context_are_deterministic() {
+        let args = build_args(&DockerBuildOptions {
+            tag: "dcc-img".to_string(),
+            no_cache: true,
+            metadata_label: Some("[{}]".to_string()),
+            file: None,
+            context_dir: None,
+            build_args: vec![
+                ("ZED".to_string(), "last".to_string()),
+                ("ALPHA".to_string(), "first".to_string()),
+            ],
+            target: Some("dev".to_string()),
+        });
+        assert_eq!(
+            args,
+            vec![
+                "build",
+                "--no-cache",
+                "--label",
+                "devcontainer.metadata=[{}]",
+                "--build-arg",
+                "ALPHA=first",
+                "--build-arg",
+                "ZED=last",
+                "--target",
+                "dev",
+                "--tag",
+                "dcc-img",
+                "-"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_args_for_path_context_include_file_and_context() {
+        let args = build_args(&DockerBuildOptions {
+            tag: "dcc-img".to_string(),
+            no_cache: false,
+            metadata_label: None,
+            file: Some(std::path::Path::new("/workspace/.devcontainer/Dockerfile").to_path_buf()),
+            context_dir: Some(std::path::Path::new("/workspace").to_path_buf()),
+            build_args: Vec::new(),
+            target: None,
+        });
+        assert_eq!(
+            args,
+            vec![
+                "build",
+                "--tag",
+                "dcc-img",
+                "--file",
+                "/workspace/.devcontainer/Dockerfile",
+                "/workspace"
+            ]
+        );
     }
 
     #[test]

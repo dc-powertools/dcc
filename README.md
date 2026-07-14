@@ -186,9 +186,14 @@ configuration fields as errors instead of warnings.
 
 Reads `.devcontainer/<profile>.json` and builds the local Docker image.
 
-`containerUser` defaults to `dev` when not set. When neither `features` are set
-nor `containerUser` is `root`, `dcc` takes a fast path: it pulls the base image
-and retags it locally without a Dockerfile build.
+Profiles can specify either `image` or official `build` configuration. `build`
+supports Dockerfile/context builds with `context`, `dockerfile`, `args`, and
+`target`. Setting both `image` and `build` is an error.
+
+`containerUser` defaults to `dev` when not set. When the profile uses only
+`image`, has `containerUser` set to `root`, and has no Features, containerEnv,
+forwarded ports, state, or build-preparation hooks, `dcc` takes a fast path: it
+pulls the base image and retags it locally without a Dockerfile build.
 
 Otherwise, `dcc` generates a Dockerfile. When `containerUser` is not `root`,
 `dcc` adds a `RUN` step to the Dockerfile that creates the user if it does not
@@ -204,12 +209,17 @@ steps that need to run as `containerUser` (e.g. dotfiles, per-user tool
 installs).
 
 Subsequent builds are incremental via Docker's layer cache; pass `--no-cache`
-to force a full rebuild.
+to force a full rebuild. Pass `--refresh-only` to skip image rebuild and rerun
+only `updateContentCommand` and `postCreateCommand`; it fails if the profile
+image does not already exist.
 
 The generated Dockerfile stamps the installed `dcc` version as a `LABEL`
-immediately after `FROM`, so upgrading `dcc` automatically invalidates the
-cache for every dcc-controlled step (user creation, feature installs, etc.)
-on the next `dcc build`, even if the image already exists.
+immediately after `FROM`, so upgrading `dcc` automatically invalidates the cache
+for every dcc-controlled step. `dcc` also installs generated controller,
+command-wrapper, and build-preparation hook assets into the image. During
+`dcc build`, build preparation runs `onCreateCommand`, `updateContentCommand`,
+and `postCreateCommand` in order, with Feature hooks before project hooks for
+each phase and state mounts attached.
 
 ### `dcc run`
 
@@ -312,6 +322,7 @@ devcontainer-compatible tools via
 |---|---|
 | `name` | Human-readable Docker container name. Invalid Docker name characters are converted to `-`; `dcc id`, image tags, and caches still use dcc's stable derived id. |
 | `image` | Base Docker image |
+| `build` | Official Dockerfile/context build source. Supports `context`, `dockerfile`, `args`, and `target`; mutually exclusive with `image`. |
 | `features` | devcontainer Features to install |
 | `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |

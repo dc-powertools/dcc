@@ -60,17 +60,24 @@ pub(crate) fn load_raw(
 }
 
 /// Convert a fully-merged RawConfig to DevcontainerConfig.
-/// Errors if `image` is absent.
+/// Errors if neither `image` nor official `build` is present, or if both are present.
 pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<DevcontainerConfig> {
-    let image = raw.image.ok_or_else(|| {
-        anyhow::anyhow!(
-            "no `image` specified in `{}` or any file it extends",
+    if raw.image.is_some() && raw.build.is_some() {
+        anyhow::bail!(
+            "`{}` sets both `image` and `build`; devcontainer profiles must choose exactly one image source",
             source.display()
-        )
-    })?;
+        );
+    }
+    if raw.image.is_none() && raw.build.is_none() {
+        anyhow::bail!(
+            "no `image` or `build` specified in `{}` or any file it extends",
+            source.display()
+        );
+    }
     Ok(DevcontainerConfig {
         name: raw.name,
-        image,
+        image: raw.image,
+        build: raw.build,
         features: raw.features.unwrap_or_default(),
         container_env: raw.container_env.unwrap_or_default(),
         remote_env: raw.remote_env.unwrap_or_default(),
@@ -312,7 +319,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = write(dir.path(), "dev.json", r#"{ "image": "rust:latest" }"#);
         let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "rust:latest");
+        assert_eq!(config.image.as_deref(), Some("rust:latest"));
     }
 
     #[test]
@@ -367,9 +374,37 @@ mod tests {
         let path = write(dir.path(), "dev.json", r#"{ "containerUser": "dev" }"#);
         let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
         assert!(
-            err.to_string().contains("image"),
-            "expected error to mention 'image', got: {err}"
+            err.to_string().contains("image") && err.to_string().contains("build"),
+            "expected error to mention image/build, got: {err}"
         );
+    }
+
+    #[test]
+    fn test_build_source_without_image() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{ "build": { "context": "..", "dockerfile": "Dockerfile" } }"#,
+        );
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(config.image.is_none());
+        let build = config.build.expect("build source should be present");
+        assert_eq!(build.context, "..");
+        assert_eq!(build.dockerfile, "Dockerfile");
+    }
+
+    #[test]
+    fn test_image_and_build_conflict() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{ "image": "rust:1", "build": { "dockerfile": "Dockerfile" } }"#,
+        );
+        let err = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("both `image` and `build`"), "got: {msg}");
     }
 
     #[test]
@@ -382,7 +417,7 @@ mod tests {
             r#"{ "extends": "base.json", "containerUser": "myuser" }"#,
         );
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "ubuntu:22.04");
+        assert_eq!(config.image.as_deref(), Some("ubuntu:22.04"));
         assert_eq!(config.container_user, "myuser");
     }
 
@@ -414,7 +449,7 @@ mod tests {
             }"#,
         );
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "ubuntu:22.04");
+        assert_eq!(config.image.as_deref(), Some("ubuntu:22.04"));
         assert_eq!(config.container_user, "myuser");
         assert_eq!(
             config.scripts.get("test").map(String::as_str),
@@ -649,7 +684,7 @@ mod tests {
             r#"{ "extends": "b.json", "features": { "ghcr.io/foo/bar:1": {} } }"#,
         );
         let config = load_config(&a, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "alpine:3");
+        assert_eq!(config.image.as_deref(), Some("alpine:3"));
         assert_eq!(
             config.container_env.get("MY_VAR").map(|s| s.as_str()),
             Some("hello")
@@ -667,7 +702,7 @@ mod tests {
             r#"{ "extends": "base.json", "image": "child-image:2" }"#,
         );
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "child-image:2");
+        assert_eq!(config.image.as_deref(), Some("child-image:2"));
     }
 
     #[test]
@@ -762,7 +797,7 @@ mod tests {
         let child = write(&dc, "child.json", r#"{ "extends": "../other/base.json" }"#);
 
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "base-image:1");
+        assert_eq!(config.image.as_deref(), Some("base-image:1"));
     }
 
     #[test]
@@ -781,7 +816,7 @@ mod tests {
         );
 
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert_eq!(config.image, "base-image:1");
+        assert_eq!(config.image.as_deref(), Some("base-image:1"));
     }
 
     #[test]

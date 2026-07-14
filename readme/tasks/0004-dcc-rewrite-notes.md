@@ -166,3 +166,35 @@ T-0007 observed checks:
 
 Residual risk: top-level devcontainer `runArgs` and sensitive mount allowlisting remain
 owned by T-0010; no live Docker smoke test was run in this slice.
+
+## 2026-07-14 T-0008 Completion Checkpoint
+
+T-0008 implemented official build-source support and build preparation. A worker handled
+the Rust patch; the root session reviewed the implementation, ran the full checks, and
+updated documentation and framework records.
+
+Implemented behavior:
+
+- Official top-level `build` is parsed as an alternative to `image`; setting both errors
+  clearly.
+- Dockerfile/context build sources are built as a generated base image, then `dcc` builds
+  its managed stage from that base.
+- Generated controller, command-wrapper, and build-preparation hook assets are included
+  in the build context.
+- `dcc build` runs `onCreateCommand`, `updateContentCommand`, and `postCreateCommand`
+  after the image is available, with Feature hooks before project hooks for each phase
+  and state mounts attached.
+- `dcc build --refresh-only` skips image rebuild and `onCreateCommand`, requires the
+  profile image to exist, and runs only update/post-create hooks.
+- `--no-cache` and `--update` do not reset local state.
+
+T-0008 observed checks:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy -- -D warnings`: passed.
+- `cargo test`: passed; 385 unit tests, 19 runnable CLI flag tests with 2 ignored, and
+  9 config error integration tests.
+- `cargo build`: passed.
+
+Residual risk: no live Docker smoke test was run in this slice. Durable runtime command
+behavior remains owned by T-0009.
