@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `readme/tasks/README.md`
-- Primary task: None
-- Primary details: None
+- Primary task: T-0004
+- Primary details: `readme/tasks/0004-dcc-rewrite-brief.md`; `readme/tasks/0004-dcc-rewrite-notes.md`
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
