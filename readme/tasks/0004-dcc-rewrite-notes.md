@@ -99,3 +99,8 @@ Reviewer result: read-only specialist review found no blocking findings. Follow-
 risks were moved to the quality record: T-0006 must handle same-path conflicting state
 types, runtime command integration remains later, and raw merged `dcc.extends` should be
 kept irrelevant or cleaned before any later code inspects merged raw config directly.
+
+Pause checkpoint: the user requested a pause after T-0005 so they can clear context and
+prepare a resume. Scheduling is paused with T-0006 Ready. On resume, first set
+Scheduling back to Running, create a T-0006 brief, and delegate the implementation-heavy
+state/cache work to a worker agent with explicit file ownership.
