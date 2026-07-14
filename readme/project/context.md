@@ -19,8 +19,8 @@ while this file captures technical conventions that prevent inconsistent impleme
 | --- | --- | --- | --- |
 | Runtime | Rust binary | Edition 2021; observed Rust/Cargo 1.96.0 locally | `Cargo.toml`; command verification |
 | CLI | `clap` derive | Dependency version `4` | `Cargo.toml`; `src/cli.rs` |
-| Async/process/network | Tokio | Selected features only | `Cargo.toml`; `readme/ARCHITECTURE.md` |
-| Config parsing | `serde`, `serde_json`, `json5`, `indexmap` | JSONC-compatible parsing; ordered `features` map | `Cargo.toml`; `readme/ARCHITECTURE.md` |
+| Async/process/network | Tokio | Selected features only | `Cargo.toml`; `readme/project/architecture.md` |
+| Config parsing | `serde`, `serde_json`, `json5`, `indexmap` | JSONC-compatible parsing; ordered `features` map | `Cargo.toml`; `readme/project/architecture.md` |
 | Docker integration | Docker CLI subprocesses | Docker required for real build/run/exec/stop workflows | `README.md`; `src/docker.rs` |
 | Testing | Rust unit and integration tests | `cargo test`; `proptest` and `tempfile` dev dependencies | `Cargo.toml`; `tests/` |
 | CI | GitHub Actions | fmt, clippy, test, build on `main` pushes and PRs | `.github/workflows/ci.yml` |
@@ -42,11 +42,11 @@ while this file captures technical conventions that prevent inconsistent impleme
 
 | Topic | Decision | Where To Look | Review Trigger |
 | --- | --- | --- | --- |
-| Crate shape | Single binary crate, no library layer. | `readme/ARCHITECTURE.md` | Introducing public library APIs or cross-crate reuse. |
-| Error handling | Use `anyhow` in the binary and context-rich propagation. | `readme/STYLE.md` | Adding broad error handling, panics, or swallowed failures. |
-| Config format | Parse devcontainer configs with `json5`; support JSONC-style comments and trailing commas. | `readme/ARCHITECTURE.md`; `src/config/` | Replacing parsing or adding config fields. |
-| Feature ordering | Preserve `features` declaration order with `IndexMap`. | `readme/ARCHITECTURE.md`; `src/features/` | Changing merge, install, or feature metadata behavior. |
-| Verification boundary | Full completion requires fmt, clippy, and tests; CI also runs build. | `readme/DEVELOPMENT.md`; `readme/project/standards.md` | Finishing any code-changing task. |
+| Crate shape | Single binary crate, no library layer. | `readme/project/architecture.md` | Introducing public library APIs or cross-crate reuse. |
+| Error handling | Use `anyhow` in the binary and context-rich propagation. | `readme/project/rust-style.md` | Adding broad error handling, panics, or swallowed failures. |
+| Config format | Parse devcontainer configs with `json5`; support JSONC-style comments and trailing commas. | `readme/project/architecture.md`; `src/config/` | Replacing parsing or adding config fields. |
+| Feature ordering | Preserve `features` declaration order with `IndexMap`. | `readme/project/architecture.md`; `src/features/` | Changing merge, install, or feature metadata behavior. |
+| Verification boundary | Full completion requires fmt, clippy, and tests; CI also runs build. | `readme/project/development.md`; `readme/project/standards.md` | Finishing any code-changing task. |
 
 ## Codebase Map
 
@@ -62,9 +62,9 @@ while this file captures technical conventions that prevent inconsistent impleme
 ## Load Rules
 
 - Read this file before implementation work, then inspect the relevant source and tests.
-- Before project coding work, load the product README and established project guidance:
-  `README.md`, `readme/DEVELOPMENT.md`, `readme/STYLE.md`, and
-  `readme/ARCHITECTURE.md`.
+- Before project coding work, load the product README and framework-owned project
+  guidance: `README.md`, `readme/project/development.md`,
+  `readme/project/rust-style.md`, and `readme/project/architecture.md`.
 - Use `readme/project/standards.md` for exact verified commands.
 - Update this file after architecture changes, major dependency changes, or repeated
   implementation drift.
