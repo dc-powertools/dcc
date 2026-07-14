@@ -38,8 +38,66 @@ pub(crate) struct RawConfig {
     pub(crate) post_start_command: Option<LifecycleCommand>,
     pub(crate) post_attach_command: Option<LifecycleCommand>,
     pub(crate) scripts: Option<HashMap<String, String>>,
+    pub(crate) customizations: Option<Customizations>,
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct Customizations {
+    pub(crate) dcc: Option<RawDccConfig>,
+    #[serde(flatten)]
+    pub(crate) other: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RawDccConfig {
+    pub(crate) extends: Option<String>,
+    pub(crate) commands: Option<HashMap<String, String>>,
+    pub(crate) state: Option<Vec<StateEntry>>,
+    #[serde(flatten)]
+    pub(crate) extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub(crate) struct StateEntry {
+    pub(crate) path: String,
+    pub(crate) kind: StateKind,
+}
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum StateKind {
+    #[default]
+    Directory,
+    File,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawStateEntry {
+    Path(String),
+    Object {
+        path: String,
+        #[serde(default, rename = "type")]
+        kind: StateKind,
+    },
+}
+
+impl<'de> Deserialize<'de> for StateEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match RawStateEntry::deserialize(deserializer)? {
+            RawStateEntry::Path(path) => Ok(Self {
+                path,
+                kind: StateKind::Directory,
+            }),
+            RawStateEntry::Object { path, kind } => Ok(Self { path, kind }),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,14 +113,17 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) initialize_command: Option<LifecycleCommand>,
     pub(crate) lifecycle: LifecycleHooks,
     pub(crate) scripts: HashMap<String, String>,
+    pub(crate) state: Vec<StateEntry>,
 }
 
 pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<RawConfig> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    let raw: RawConfig = json5::from_str(&contents)
+    let mut raw: RawConfig = json5::from_str(&contents)
         .with_context(|| format!("failed to parse {}", path.display()))?;
     check_extra_fields(&raw.extra, path, strict)?;
+    check_dcc_extra_fields(&raw, path, strict)?;
+    normalize_legacy_dcc_fields(&mut raw, path)?;
     Ok(raw)
 }
 
@@ -80,6 +141,72 @@ fn check_extra_fields(
             tracing::warn!(file = %path.display(), field = %key, "unrecognized devcontainer field");
         }
     }
+    Ok(())
+}
+
+fn check_dcc_extra_fields(raw: &RawConfig, path: &Path, strict: bool) -> anyhow::Result<()> {
+    let Some(dcc) = raw.customizations.as_ref().and_then(|c| c.dcc.as_ref()) else {
+        return Ok(());
+    };
+    let mut keys: Vec<&str> = dcc.extra.keys().map(|s| s.as_str()).collect();
+    keys.sort_unstable();
+    for key in keys {
+        if strict {
+            anyhow::bail!(
+                "{}: unrecognized field 'customizations.dcc.{}'",
+                path.display(),
+                key
+            );
+        } else {
+            tracing::warn!(
+                file = %path.display(),
+                field = %format!("customizations.dcc.{key}"),
+                "unrecognized devcontainer field"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn normalize_legacy_dcc_fields(raw: &mut RawConfig, path: &Path) -> anyhow::Result<()> {
+    if raw.extends.is_none() && raw.scripts.is_none() {
+        return Ok(());
+    }
+
+    let dcc = raw
+        .customizations
+        .get_or_insert_with(Customizations::default)
+        .dcc
+        .get_or_insert_with(RawDccConfig::default);
+
+    if let Some(legacy_extends) = raw.extends.take() {
+        tracing::warn!(
+            file = %path.display(),
+            "top-level `extends` is deprecated; use `customizations.dcc.extends`"
+        );
+        match &dcc.extends {
+            Some(current) if current != &legacy_extends => {
+                anyhow::bail!(
+                    "{}: top-level `extends` conflicts with `customizations.dcc.extends`",
+                    path.display()
+                );
+            }
+            Some(_) => {}
+            None => dcc.extends = Some(legacy_extends),
+        }
+    }
+
+    if let Some(legacy_scripts) = raw.scripts.take() {
+        tracing::warn!(
+            file = %path.display(),
+            "top-level `scripts` is deprecated; use `customizations.dcc.commands`"
+        );
+        let commands = dcc.commands.get_or_insert_with(HashMap::new);
+        for (key, value) in legacy_scripts {
+            commands.entry(key).or_insert(value);
+        }
+    }
+
     Ok(())
 }
 
@@ -126,11 +253,27 @@ mod tests {
                 "postCreateCommand": "echo post-create",
                 "postStartCommand": "echo post-start",
                 "postAttachCommand": { "a": "echo a", "b": ["echo", "b"] },
-                "scripts": { "build": "cargo build" }
+                "scripts": { "legacy": "cargo check" },
+                "customizations": {
+                    "dcc": {
+                        "commands": { "build": "cargo build" },
+                        "state": [
+                            "/home/dev/.cache",
+                            { "path": "/home/dev/.npmrc", "type": "file" }
+                        ]
+                    },
+                    "vscode": { "extensions": ["rust-lang.rust-analyzer"] }
+                }
             }"#,
         );
         let raw = parse_config_file(file.path(), false).unwrap();
-        assert_eq!(raw.extends.as_deref(), Some("base.json"));
+        let dcc = raw
+            .customizations
+            .as_ref()
+            .and_then(|c| c.dcc.as_ref())
+            .expect("dcc customizations should be parsed");
+        assert_eq!(raw.extends.as_deref(), None);
+        assert_eq!(dcc.extends.as_deref(), Some("base.json"));
         assert_eq!(raw.name.as_deref(), Some("example"));
         assert_eq!(raw.image.as_deref(), Some("rust:latest"));
         assert!(raw.features.is_some());
@@ -172,7 +315,34 @@ mod tests {
             raw.post_attach_command,
             Some(LifecycleCommand::Parallel(_))
         ));
-        assert!(raw.scripts.is_some());
+        assert!(raw.scripts.is_none());
+        let commands = dcc.commands.as_ref().expect("commands should be parsed");
+        assert_eq!(
+            commands.get("legacy").map(String::as_str),
+            Some("cargo check")
+        );
+        assert_eq!(
+            commands.get("build").map(String::as_str),
+            Some("cargo build")
+        );
+        let state = dcc.state.as_ref().expect("state should be parsed");
+        assert_eq!(
+            state,
+            &vec![
+                StateEntry {
+                    path: "/home/dev/.cache".to_string(),
+                    kind: StateKind::Directory,
+                },
+                StateEntry {
+                    path: "/home/dev/.npmrc".to_string(),
+                    kind: StateKind::File,
+                },
+            ]
+        );
+        assert!(raw
+            .customizations
+            .as_ref()
+            .is_some_and(|c| c.other.contains_key("vscode")));
         assert!(raw.extra.is_empty());
     }
 
@@ -244,6 +414,7 @@ mod tests {
         assert!(raw.post_start_command.is_none());
         assert!(raw.post_attach_command.is_none());
         assert!(raw.scripts.is_none());
+        assert!(raw.customizations.is_none());
         assert!(raw.extra.is_empty());
     }
 
@@ -270,6 +441,126 @@ mod tests {
         let features = raw.features.expect("features should be Some");
         let keys: Vec<&str> = features.keys().map(|s| s.as_str()).collect();
         assert_eq!(keys, vec!["b", "a"]);
+    }
+
+    #[test]
+    fn strict_accepts_customizations_dcc_and_other_namespaces() {
+        let file = write_temp(
+            r#"{
+                "image": "rust:1",
+                "customizations": {
+                    "dcc": {
+                        "commands": { "test": "cargo test" },
+                        "state": [{ "path": "/cache/file", "type": "file" }]
+                    },
+                    "vscode": { "settings": {} }
+                }
+            }"#,
+        );
+        let raw = parse_config_file(file.path(), true).unwrap();
+        let dcc = raw.customizations.and_then(|c| c.dcc).unwrap();
+        assert_eq!(
+            dcc.commands
+                .as_ref()
+                .and_then(|c| c.get("test"))
+                .map(String::as_str),
+            Some("cargo test")
+        );
+        assert_eq!(
+            dcc.state.as_ref().and_then(|s| s.first()),
+            Some(&StateEntry {
+                path: "/cache/file".to_string(),
+                kind: StateKind::File,
+            })
+        );
+    }
+
+    #[test]
+    fn strict_rejects_unknown_customizations_dcc_field() {
+        let file = write_temp(
+            r#"{
+                "image": "rust:1",
+                "customizations": { "dcc": { "unknownDccKey": true } }
+            }"#,
+        );
+        let result = parse_config_file(file.path(), true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("customizations.dcc.unknownDccKey"));
+    }
+
+    #[test]
+    fn legacy_extends_and_scripts_normalized_to_dcc() {
+        let file = write_temp(
+            r#"{
+                "extends": "base.json",
+                "scripts": { "build": "cargo build" }
+            }"#,
+        );
+        let raw = parse_config_file(file.path(), true).unwrap();
+        let dcc = raw.customizations.and_then(|c| c.dcc).unwrap();
+        assert!(raw.extends.is_none());
+        assert!(raw.scripts.is_none());
+        assert_eq!(dcc.extends.as_deref(), Some("base.json"));
+        assert_eq!(
+            dcc.commands
+                .as_ref()
+                .and_then(|c| c.get("build"))
+                .map(String::as_str),
+            Some("cargo build")
+        );
+    }
+
+    #[test]
+    fn nested_commands_win_over_legacy_scripts_in_same_file() {
+        let file = write_temp(
+            r#"{
+                "scripts": { "build": "legacy", "test": "legacy-test" },
+                "customizations": {
+                    "dcc": { "commands": { "build": "nested" } }
+                }
+            }"#,
+        );
+        let raw = parse_config_file(file.path(), false).unwrap();
+        let commands = raw
+            .customizations
+            .as_ref()
+            .and_then(|c| c.dcc.as_ref())
+            .and_then(|dcc| dcc.commands.as_ref())
+            .unwrap();
+        assert_eq!(commands.get("build").map(String::as_str), Some("nested"));
+        assert_eq!(
+            commands.get("test").map(String::as_str),
+            Some("legacy-test")
+        );
+    }
+
+    #[test]
+    fn conflicting_legacy_and_nested_extends_errors() {
+        let file = write_temp(
+            r#"{
+                "extends": "base.json",
+                "customizations": { "dcc": { "extends": "other.json" } }
+            }"#,
+        );
+        let result = parse_config_file(file.path(), false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("top-level `extends`"));
+        assert!(err.to_string().contains("customizations.dcc.extends"));
+    }
+
+    #[test]
+    fn same_legacy_and_nested_extends_is_allowed() {
+        let file = write_temp(
+            r#"{
+                "extends": "base.json",
+                "customizations": { "dcc": { "extends": "base.json" } }
+            }"#,
+        );
+        let raw = parse_config_file(file.path(), false).unwrap();
+        let dcc = raw.customizations.and_then(|c| c.dcc).unwrap();
+        assert_eq!(dcc.extends.as_deref(), Some("base.json"));
     }
 
     proptest! {

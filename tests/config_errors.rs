@@ -107,3 +107,20 @@ fn error_on_circular_extends_three_files() {
     assert_failure(&output);
     assert_stderr_contains(&output, "circular");
 }
+
+#[test]
+fn error_on_conflicting_legacy_and_nested_extends() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "extends": "./base.json",
+            "customizations": { "dcc": { "extends": "./other.json" } }
+        }"#,
+    );
+    let output = fx.dcc(&["build"]).output().unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "top-level `extends`");
+    assert_stderr_contains(&output, "customizations.dcc.extends");
+}

@@ -29,7 +29,12 @@ pub(crate) fn load_raw(
 
     let raw = parse_config_file(path, strict)?;
 
-    let extends_path = match &raw.extends {
+    let extends_path = match raw
+        .customizations
+        .as_ref()
+        .and_then(|c| c.dcc.as_ref())
+        .and_then(|dcc| dcc.extends.as_ref())
+    {
         None => return Ok(raw),
         Some(e) => {
             let parent_dir = path.parent().with_context(|| {
@@ -74,7 +79,17 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         mounts: raw.mounts.unwrap_or_default(),
         forward_ports: raw.forward_ports.unwrap_or_default(),
         initialize_command: raw.initialize_command,
-        scripts: raw.scripts.unwrap_or_default(),
+        scripts: raw
+            .customizations
+            .as_ref()
+            .and_then(|c| c.dcc.as_ref())
+            .and_then(|dcc| dcc.commands.clone())
+            .unwrap_or_default(),
+        state: raw
+            .customizations
+            .and_then(|c| c.dcc)
+            .and_then(|dcc| dcc.state)
+            .unwrap_or_default(),
         lifecycle: LifecycleHooks {
             on_create_command: raw.on_create_command,
             update_content_command: raw.update_content_command,
@@ -192,6 +207,48 @@ mod tests {
     }
 
     #[test]
+    fn test_two_file_customizations_dcc_extends() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "base.json",
+            r#"{
+                "image": "ubuntu:22.04",
+                "customizations": {
+                    "dcc": { "commands": { "test": "cargo test" } }
+                }
+            }"#,
+        );
+        let child = write(
+            dir.path(),
+            "child.json",
+            r#"{
+                "customizations": {
+                    "dcc": {
+                        "extends": "base.json",
+                        "commands": { "build": "cargo build" },
+                        "state": ["/home/dev/.cache"]
+                    }
+                },
+                "containerUser": "myuser"
+            }"#,
+        );
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(config.image, "ubuntu:22.04");
+        assert_eq!(config.container_user, "myuser");
+        assert_eq!(
+            config.scripts.get("test").map(String::as_str),
+            Some("cargo test")
+        );
+        assert_eq!(
+            config.scripts.get("build").map(String::as_str),
+            Some("cargo build")
+        );
+        assert_eq!(config.state.len(), 1);
+        assert_eq!(config.state[0].path, "/home/dev/.cache");
+    }
+
+    #[test]
     fn test_three_file_chain() {
         let dir = TempDir::new().unwrap();
         // C has image, B has env, A has feature
@@ -270,6 +327,28 @@ mod tests {
     }
 
     #[test]
+    fn test_customizations_dcc_circular_extends() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "a.json",
+            r#"{ "customizations": { "dcc": { "extends": "b.json" } }, "image": "x:1" }"#,
+        );
+        write(
+            dir.path(),
+            "b.json",
+            r#"{ "customizations": { "dcc": { "extends": "a.json" } }, "image": "y:1" }"#,
+        );
+        let a = dir.path().join("a.json");
+        let err = load_config(&a, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("circular"),
+            "expected error chain to mention 'circular', got: {full}"
+        );
+    }
+
+    #[test]
     fn test_missing_extends_target() {
         let dir = TempDir::new().unwrap();
         let path = write(
@@ -302,6 +381,25 @@ mod tests {
     }
 
     #[test]
+    fn test_customizations_dcc_extends_resolved_relative_to_file() {
+        let dir = TempDir::new().unwrap();
+        let dc = dir.path().join(".devcontainer");
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(&dc).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+
+        std::fs::write(other.join("base.json"), r#"{ "image": "base-image:1" }"#).unwrap();
+        let child = write(
+            &dc,
+            "child.json",
+            r#"{ "customizations": { "dcc": { "extends": "../other/base.json" } } }"#,
+        );
+
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(config.image, "base-image:1");
+    }
+
+    #[test]
     fn test_features_merged() {
         let dir = TempDir::new().unwrap();
         write(
@@ -322,6 +420,50 @@ mod tests {
         assert!(
             config.features.contains_key("feat-b"),
             "feat-b should be present"
+        );
+    }
+
+    #[test]
+    fn test_nested_parent_commands_legacy_child_scripts_child_wins() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "base.json",
+            r#"{
+                "image": "rust:1",
+                "customizations": {
+                    "dcc": {
+                        "commands": {
+                            "build": "make build",
+                            "test": "make test"
+                        }
+                    }
+                }
+            }"#,
+        );
+        let child = write(
+            dir.path(),
+            "child.json",
+            r#"{
+                "extends": "base.json",
+                "scripts": {
+                    "build": "cargo build",
+                    "lint": "cargo clippy"
+                }
+            }"#,
+        );
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(
+            config.scripts.get("build").map(String::as_str),
+            Some("cargo build")
+        );
+        assert_eq!(
+            config.scripts.get("test").map(String::as_str),
+            Some("make test")
+        );
+        assert_eq!(
+            config.scripts.get("lint").map(String::as_str),
+            Some("cargo clippy")
         );
     }
 

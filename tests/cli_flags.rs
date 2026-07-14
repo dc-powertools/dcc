@@ -44,6 +44,34 @@ fn strict_exec_accepts_devcontainer_name_field() {
 }
 
 #[test]
+fn strict_accepts_customizations_dcc_config() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": {
+                "dcc": {
+                    "commands": { "build": "cargo build" },
+                    "state": ["/home/dev/.cache"]
+                }
+            }
+        }"#,
+    );
+    let output = fx.dcc(&["--strict", "build"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unrecognized field 'customizations'"),
+        "`--strict build` should accept official `customizations`\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("customizations.dcc.commands")
+            && !stderr.contains("customizations.dcc.state"),
+        "`--strict build` should accept recognized `customizations.dcc` fields\nstderr: {stderr}"
+    );
+}
+
+#[test]
 fn default_mode_warns_on_unknown_fields_but_does_not_fail_early() {
     let fx = Fixture::new();
     fx.write_config(
@@ -66,6 +94,64 @@ fn default_mode_warns_on_unknown_fields_but_does_not_fail_early() {
     assert!(
         !stderr.to_lowercase().contains("unrecognized field"),
         "non-strict mode should not produce a fatal 'unrecognized field' error"
+    );
+}
+
+#[test]
+fn default_mode_warns_on_legacy_dcc_fields() {
+    let fx = Fixture::new();
+    fx.write_config("base.json", r#"{ "image": "rust:1" }"#);
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "extends": "base.json",
+            "scripts": { "build": "cargo build" }
+        }"#,
+    );
+    let output = fx.dcc(&["build"]).env("RUST_LOG", "warn").output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("top-level `extends` is deprecated"),
+        "expected deprecation warning for legacy extends, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("top-level `scripts` is deprecated"),
+        "expected deprecation warning for legacy scripts, got: {stderr}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("unrecognized field"),
+        "legacy fields should warn, not fail as unknown fields: {stderr}"
+    );
+}
+
+#[test]
+fn strict_mode_warns_on_legacy_dcc_fields() {
+    let fx = Fixture::new();
+    fx.write_config("base.json", r#"{ "image": "rust:1" }"#);
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "extends": "base.json",
+            "scripts": { "build": "cargo build" }
+        }"#,
+    );
+    let output = fx
+        .dcc(&["--strict", "build"])
+        .env("RUST_LOG", "warn")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("top-level `extends` is deprecated"),
+        "expected strict-mode deprecation warning for legacy extends, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("top-level `scripts` is deprecated"),
+        "expected strict-mode deprecation warning for legacy scripts, got: {stderr}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("unrecognized field"),
+        "legacy fields should warn in strict mode, not fail as unknown fields: {stderr}"
     );
 }
 

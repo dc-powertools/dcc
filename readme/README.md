@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `readme/tasks/README.md`
-- Primary task: T-0005
-- Primary details: `readme/tasks/0005-config-schema-brief.md`
+- Primary task: T-0006
+- Primary details: None
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-14 | Implemented schema-compatible `customizations.dcc` config parsing and merge behavior. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Migrated development, style, and architecture docs into framework-owned project files. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Merged backup agent guidance into framework state and removed `AGENTS.bak.md`. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Initialized the framework project cursor, task catalog, and project memory. | `readme/tasks/README.md#tasks` |
@@ -48,6 +49,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 2
+- Completed repository-changing tasks since that pass: 3
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first

@@ -46,6 +46,7 @@ pub(crate) fn apply_substitutions(
             .lifecycle
             .substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache)),
         scripts: config.scripts,
+        state: config.state,
     }
 }
 
