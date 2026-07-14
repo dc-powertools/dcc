@@ -13,7 +13,8 @@ the existing devcontainer spec.
 
 `dcc` is a single binary crate. There is no library layer. The tool is consumed
 only as a binary and there is no anticipated reuse as a library. `anyhow::Result<T>`
-is used throughout, consistent with the binary-crate convention in STYLE.md.
+is used throughout, consistent with the binary-crate convention in
+`readme/project/rust-style.md`.
 
 ---
 
@@ -42,7 +43,7 @@ src/
     context.rs        In-memory tar build context and Dockerfile generation
 ```
 
-Modules are organized by feature area (STYLE.md). Build, run, and stop
+Modules are organized by feature area (`readme/project/rust-style.md`). Build, run, and stop
 live at the top level rather than in a `commands/` subdirectory to avoid a
 third level of nesting.
 

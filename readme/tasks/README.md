@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0003
+- Next task ID: T-0004
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -15,6 +15,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | T-0001 | Load agent files and initialize the development framework state. | User request 2026-07-14 / r1 | Done | None | Discover / Low | None | Stop; outcome complete. | None | Created the project cursor, task catalog, project brief, implementation context, source map, glossary, and standards. Verified `cargo fmt --check`, `cargo check`, `cargo clippy -- -D warnings`, `cargo test`, `cargo build`, and `cargo run -- --help`. |
 | T-0002 | Evaluate `AGENTS.bak.md` and unexpected `readme/` files, merge durable guidance into framework state, and remove leftovers. | User request 2026-07-14 / r1 | Done | None | Quick change / Low | None | Stop; outcome complete. | None | Migrated the backup's project-doc load rules, `.gitignore` boundary, and Codex question-handling guidance into project context, standards, and source map. Removed `AGENTS.bak.md`. Confirmed there are no untracked files. |
+| T-0003 | Migrate `readme/DEVELOPMENT.md`, `readme/STYLE.md`, and `readme/ARCHITECTURE.md` to strict framework ownership. | User request 2026-07-14 / r1 | Done | None | Quick change / Low | None | Stop; outcome complete. | None | Moved the legacy docs to `readme/project/development.md`, `readme/project/rust-style.md`, and `readme/project/architecture.md`; updated cursor, context, standards, source map, glossary, and internal references so no unmanaged legacy doc paths remain. |
 
 ## Operating Contract
 

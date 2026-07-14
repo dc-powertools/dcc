@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-14 | Migrated development, style, and architecture docs into framework-owned project files. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Merged backup agent guidance into framework state and removed `AGENTS.bak.md`. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Initialized the framework project cursor, task catalog, and project memory. | `readme/tasks/README.md#tasks` |
 
@@ -36,15 +37,15 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - Product brief: `readme/project/brief.md`
 - Implementation context: `readme/project/context.md`
 - Project standards and command catalog: `readme/project/standards.md`
+- Detailed architecture: `readme/project/architecture.md`
+- Detailed development guide: `readme/project/development.md`
+- Detailed Rust style guide: `readme/project/rust-style.md`
 - Source map: `readme/project/source-map.md`
 - Glossary: `readme/project/glossary.md`
-- Existing development guide: `readme/DEVELOPMENT.md`
-- Existing architecture notes: `readme/ARCHITECTURE.md`
-- Existing Rust style guide: `readme/STYLE.md`
 
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 1
+- Completed repository-changing tasks since that pass: 2
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first

@@ -29,7 +29,7 @@ Record only commands verified by successful execution in this environment.
 
 ## Code Style
 
-- Follow `readme/STYLE.md` for Rust style.
+- Follow `readme/project/rust-style.md` for Rust style.
 - Use `anyhow::Result<T>` for binary error handling and add context at fallible
   boundaries.
 - Keep implementation private by default; use `pub(crate)` before `pub` when widening
@@ -60,10 +60,12 @@ Record only commands verified by successful execution in this environment.
 ## Documentation
 
 - Product-facing behavior belongs in `README.md`.
-- Stable architecture notes belong in `readme/ARCHITECTURE.md`.
-- Project-specific development rules belong in `readme/DEVELOPMENT.md`, `readme/STYLE.md`,
-  and this standards catalog.
+- Stable architecture notes belong in `readme/project/architecture.md`.
+- Detailed development workflow belongs in `readme/project/development.md`.
+- Detailed Rust style rules belong in `readme/project/rust-style.md`.
 - Framework-owned project memory belongs under `readme/project/` and `readme/tasks/`.
+- Project state must not live in unmanaged sidecar docs. Move durable project guidance
+  into a framework-owned path and update the source map.
 - Backup or collision files, such as `*.bak.md`, are temporary evidence only. Evaluate
   them, migrate durable guidance into the canonical owner, and remove the leftover file.
 
