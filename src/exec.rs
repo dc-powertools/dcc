@@ -11,7 +11,7 @@ use crate::{
         vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE},
     },
     docker,
-    features::{self, FeatureRuntimeConfig},
+    features::{self, FeatureRuntimeConfig, FeatureUnsafeRuntime},
     forward, lifecycle,
     profile::{ContainerId, ContainerName, ProfileName},
     version,
@@ -33,6 +33,7 @@ pub(crate) struct ExecOptions<'a> {
     pub(crate) debug: bool,
     pub(crate) strict: bool,
     pub(crate) profile_arg: &'a str,
+    pub(crate) allow_unsafe_runtime: bool,
 }
 
 pub(crate) async fn exec(
@@ -86,6 +87,7 @@ pub(crate) async fn exec(
             format!("failed to parse devcontainer.metadata label from image `{image_tag}`")
         })?,
     };
+    ensure_unsafe_runtime_allowed(&feature_runtime, opts.allow_unsafe_runtime)?;
 
     let local_workspace = workspace.root.to_string_lossy().into_owned();
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
@@ -112,7 +114,7 @@ pub(crate) async fn exec(
         }
     }
 
-    let state = config::resolve::resolve_state_entries_container_env(&config.state, &container_env)
+    let state = resolve_runtime_state(&config, &feature_runtime, &container_env)
         .context("invalid customizations.dcc.state after resolving containerEnv")?;
     let state_mounts = cache_dir.plan_state_mounts(&state);
     cache_dir.prepare_state_mounts(&state_mounts)?;
@@ -200,6 +202,12 @@ pub(crate) async fn exec(
     args.extend(["--workdir".into(), CONTAINER_WORKSPACE.into()]);
     args.extend(["--memory".into(), opts.limits.memory.to_owned()]);
     args.extend(["--cpus".into(), opts.limits.cpus.to_owned()]);
+
+    append_unsafe_runtime_args(
+        &mut args,
+        &feature_runtime.unsafe_runtime,
+        opts.allow_unsafe_runtime,
+    );
 
     // containerUser (defaults to "dev" when not set in the devcontainer config)
     args.extend(["-u".into(), config.container_user.clone()]);
@@ -540,6 +548,68 @@ fn skipped_hook_warnings(
     warnings
 }
 
+fn resolve_runtime_state(
+    config: &config::DevcontainerConfig,
+    feature_runtime: &FeatureRuntimeConfig,
+    container_env: &std::collections::HashMap<String, String>,
+) -> anyhow::Result<Vec<config::StateEntry>> {
+    let state: Vec<config::StateEntry> = feature_runtime
+        .state
+        .iter()
+        .cloned()
+        .chain(config.state.iter().cloned())
+        .collect();
+    config::resolve::resolve_state_entries_container_env(&state, container_env)
+}
+
+fn ensure_unsafe_runtime_allowed(
+    feature_runtime: &FeatureRuntimeConfig,
+    allow_unsafe_runtime: bool,
+) -> anyhow::Result<()> {
+    if allow_unsafe_runtime || feature_runtime.unsafe_runtime.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "image metadata contains unsafe Feature runtime setting(s) {}; rerun with `--allow-unsafe-runtime` to allow them",
+        unsafe_runtime_property_names(&feature_runtime.unsafe_runtime).join(", ")
+    );
+}
+
+fn append_unsafe_runtime_args(
+    args: &mut Vec<String>,
+    unsafe_runtime: &FeatureUnsafeRuntime,
+    allow_unsafe_runtime: bool,
+) {
+    if !allow_unsafe_runtime {
+        return;
+    }
+    if unsafe_runtime.privileged {
+        args.push("--privileged".to_string());
+    }
+    for cap in &unsafe_runtime.cap_add {
+        args.push("--cap-add".to_string());
+        args.push(cap.clone());
+    }
+    for opt in &unsafe_runtime.security_opt {
+        args.push("--security-opt".to_string());
+        args.push(opt.clone());
+    }
+}
+
+fn unsafe_runtime_property_names(unsafe_runtime: &FeatureUnsafeRuntime) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if unsafe_runtime.privileged {
+        names.push("privileged");
+    }
+    if !unsafe_runtime.cap_add.is_empty() {
+        names.push("capAdd");
+    }
+    if !unsafe_runtime.security_opt.is_empty() {
+        names.push("securityOpt");
+    }
+    names
+}
+
 /// Returns true when any runtime-applied field references `${containerEnv:…}`. Used to
 /// gate the HOME/USER probe so configs that don't use containerEnv pay no extra cost.
 fn references_container_env(
@@ -557,6 +627,9 @@ fn references_container_env(
         return true;
     }
     if config.state.iter().any(|entry| has(&entry.path)) {
+        return true;
+    }
+    if feature_runtime.state.iter().any(|entry| has(&entry.path)) {
         return true;
     }
     if config.remote_env.values().any(|s| has(s))
@@ -1098,6 +1171,17 @@ mod tests {
     }
 
     #[test]
+    fn references_container_env_true_in_feature_state() {
+        let config = empty_config();
+        let mut runtime = FeatureRuntimeConfig::default();
+        runtime.state.push(config::StateEntry {
+            path: "${containerEnv:HOME}/.cache".to_string(),
+            kind: config::StateKind::Directory,
+        });
+        assert!(references_container_env(&[], &config, &runtime));
+    }
+
+    #[test]
     fn references_container_env_true_in_override_args() {
         let config = empty_config();
         assert!(references_container_env(
@@ -1116,5 +1200,88 @@ mod tests {
             &config,
             &FeatureRuntimeConfig::default()
         ));
+    }
+
+    // --- runtime state and unsafe Feature settings ---
+
+    #[test]
+    fn resolve_runtime_state_merges_feature_state_before_project_state() {
+        let mut config = empty_config();
+        config.state.push(config::StateEntry {
+            path: "/workspace/target".to_string(),
+            kind: config::StateKind::Directory,
+        });
+        let mut runtime = FeatureRuntimeConfig::default();
+        runtime.state.push(config::StateEntry {
+            path: "/home/dev/.cargo".to_string(),
+            kind: config::StateKind::Directory,
+        });
+        let env = HashMap::new();
+        let state = resolve_runtime_state(&config, &runtime, &env).unwrap();
+        assert_eq!(
+            state,
+            vec![
+                config::StateEntry {
+                    path: "/home/dev/.cargo".to_string(),
+                    kind: config::StateKind::Directory,
+                },
+                config::StateEntry {
+                    path: "/workspace/target".to_string(),
+                    kind: config::StateKind::Directory,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_runtime_state_rejects_feature_project_overlap() {
+        let mut config = empty_config();
+        config.state.push(config::StateEntry {
+            path: "/home/dev/.cache/tool".to_string(),
+            kind: config::StateKind::Directory,
+        });
+        let mut runtime = FeatureRuntimeConfig::default();
+        runtime.state.push(config::StateEntry {
+            path: "/home/dev/.cache".to_string(),
+            kind: config::StateKind::Directory,
+        });
+        let env = HashMap::new();
+        let err = resolve_runtime_state(&config, &runtime, &env).unwrap_err();
+        assert!(err.to_string().contains("overlap"), "got: {err:#}");
+    }
+
+    #[test]
+    fn unsafe_runtime_rejected_without_flag() {
+        let mut runtime = FeatureRuntimeConfig::default();
+        runtime.unsafe_runtime.privileged = true;
+        let err = ensure_unsafe_runtime_allowed(&runtime, false).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("--allow-unsafe-runtime"), "got: {msg}");
+        assert!(msg.contains("privileged"), "got: {msg}");
+    }
+
+    #[test]
+    fn unsafe_runtime_appended_only_with_flag() {
+        let unsafe_runtime = FeatureUnsafeRuntime {
+            privileged: true,
+            cap_add: vec!["SYS_PTRACE".to_string()],
+            security_opt: vec!["seccomp=unconfined".to_string()],
+        };
+
+        let mut args = Vec::new();
+        append_unsafe_runtime_args(&mut args, &unsafe_runtime, false);
+        assert!(args.is_empty());
+
+        append_unsafe_runtime_args(&mut args, &unsafe_runtime, true);
+        assert_eq!(
+            args,
+            vec![
+                "--privileged",
+                "--cap-add",
+                "SYS_PTRACE",
+                "--security-opt",
+                "seccomp=unconfined",
+            ]
+        );
     }
 }

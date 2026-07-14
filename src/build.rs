@@ -18,6 +18,7 @@ pub(crate) async fn build(
     no_cache: bool,
     update: bool,
     strict: bool,
+    allow_unsafe_runtime: bool,
 ) -> anyhow::Result<()> {
     let cache_dir = CacheDir::new(workspace, profile);
 
@@ -56,9 +57,14 @@ pub(crate) async fn build(
         } else {
             load_locked_digests(config_path)
         };
-        let output = crate::features::build_context(&config, config_dir, &locked_digests)
-            .await
-            .context("failed to build feature context")?;
+        let output = crate::features::build_context(
+            &config,
+            config_dir,
+            &locked_digests,
+            allow_unsafe_runtime,
+        )
+        .await
+        .context("failed to build feature context")?;
         docker::build(
             image_tag.as_str(),
             no_cache,

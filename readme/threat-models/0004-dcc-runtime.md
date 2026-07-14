@@ -25,8 +25,8 @@
 
 | Mitigation | Owner | Verification | Status |
 | --- | --- | --- | --- |
-| Reject or gate privileged Feature/devcontainer settings with `--allow-unsafe-runtime`. | T-0007/T-0010 | Unit and integration tests for allowed/rejected args. | Planned |
-| Validate state paths before mount planning. | T-0006 | Unit tests for relative, unresolved, duplicate, overlap, root, system, and reserved paths. | Planned |
+| Reject or gate privileged Feature/devcontainer settings with `--allow-unsafe-runtime`. | T-0007/T-0010 | Unit and integration tests for allowed/rejected args. | Feature settings complete; devcontainer `runArgs` pending T-0010 |
+| Validate state paths before mount planning. | T-0006/T-0007 | Unit tests for relative, unresolved, duplicate, overlap, root, system, reserved paths, and Feature state metadata. | Complete for project and Feature state |
 | Use structured shell escaping helpers for generated scripts and add regression tests. | T-0008/T-0009 | Unit tests inspect generated scripts and command arrays. | Planned |
 | Keep `initializeCommand` unsupported by default. | T-0005/T-0010 | Parser/docs tests and warnings. | Planned |
 | Run specialist security review before final closure. | T-0010 | Recorded review findings in quality record. | Planned |

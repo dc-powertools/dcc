@@ -135,3 +135,34 @@ T-0006 observed checks:
 
 Residual risk: no live Docker smoke test was run in this slice; durable lifecycle and
 build-preparation behavior remain owned by T-0008 and T-0009.
+
+## 2026-07-14 T-0007 Completion Checkpoint
+
+T-0007 implemented Feature metadata compatibility and unsafe Feature runtime gating. A
+worker handled the Rust patch; the root session reviewed it, added build-time
+cross-Feature state overlap validation, ran the full checks, and updated documentation.
+
+Implemented behavior:
+
+- Feature `customizations.dcc.commands` is serialized through `devcontainer.metadata`
+  and contributes to `dcc run` command listing/resolution.
+- Legacy Feature top-level `scripts` remains supported with a deprecation warning;
+  nested commands win on conflicts.
+- Feature `customizations.dcc.state` is validated, serialized, parsed from metadata,
+  merged before project state, and planned as profile-local state mounts.
+- Feature lifecycle hook order remains Feature installation order before project hooks.
+- Feature `init` and `entrypoint` warn and are ignored.
+- Feature `containerUser` and `remoteUser` error.
+- Feature `privileged`, `capAdd`, and `securityOpt` require `--allow-unsafe-runtime` at
+  build and runtime; allowed settings become Docker runtime args.
+
+T-0007 observed checks:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy -- -D warnings`: passed.
+- `cargo test`: passed; 371 unit tests, 17 runnable CLI flag tests with 2 ignored, and
+  9 config error integration tests.
+- `cargo build`: passed.
+
+Residual risk: top-level devcontainer `runArgs` and sensitive mount allowlisting remain
+owned by T-0010; no live Docker smoke test was run in this slice.

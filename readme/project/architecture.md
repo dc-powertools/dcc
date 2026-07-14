@@ -625,24 +625,31 @@ a fatal error.
 - `containerEnv` → substituted with container-only variables, written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
 - `remoteEnv` → stored as raw templates in the feature's label entry; substitution is applied at `dcc run` time
 - `mounts` → stored as JSON objects in the feature's label entry; converted to `--mount` template strings and substituted at `dcc run` time
-- `command` → stored in the feature's label entry; last feature wins, warning emitted on clobber
+- `customizations.dcc.commands` → stored in the feature's label entry for `dcc run` command resolution; legacy top-level `scripts` is normalized with a warning
+- `customizations.dcc.state` → validated and stored in the feature's label entry; mounted before project state at runtime
+- unsafe runtime properties → rejected unless `--allow-unsafe-runtime` is present, then stored in the feature's label entry
 
-Features that contribute at least one runtime property (mounts, command, or
-remoteEnv) get an entry in the `devcontainer.metadata` label JSON array. Features
-that contribute only build-time properties (`containerEnv`, `options`) are omitted
-from the label. The label is embedded in the image via `docker build --label`.
+Features that contribute at least one runtime property get an entry in the
+`devcontainer.metadata` label JSON array. Features that contribute only build-time
+properties (`containerEnv`, `options`) are omitted from the label. The label is
+embedded in the image via `docker build --label`.
 
 ### Supported feature properties
 
 | Property | Description |
 |---|---|
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. |
-| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. Last feature wins; warning emitted on clobber. |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives. Only container-side variables are substituted. |
 | `remoteEnv` | Environment variables passed as `-e` runtime flags to `docker run`. Stored as raw templates; substituted at `dcc run` time. |
 | `mounts` | Additional mounts attached at `dcc run` time. |
+| `customizations.dcc.commands` | Named feature commands; legacy top-level `scripts` is accepted with a warning. |
+| `customizations.dcc.state` | Feature-contributed persistent state paths. |
 | `installsAfter` | Soft ordering hint. Feature IDs that this feature should be installed after (if present). |
 | `dependsOn` | Hard dependencies. Missing dependencies are added to the installation set automatically. |
+| `init`, `entrypoint` | Parsed and warned as ignored because `dcc` owns PID 1 startup. |
+| `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings gated by `--allow-unsafe-runtime`. |
+
+Feature `containerUser` and `remoteUser` are rejected.
 
 ### OCI Artifact Download (`features/oci.rs`)
 
