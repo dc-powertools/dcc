@@ -62,6 +62,9 @@ while this file captures technical conventions that prevent inconsistent impleme
 ## Load Rules
 
 - Read this file before implementation work, then inspect the relevant source and tests.
+- Before project coding work, load the product README and established project guidance:
+  `README.md`, `readme/DEVELOPMENT.md`, `readme/STYLE.md`, and
+  `readme/ARCHITECTURE.md`.
 - Use `readme/project/standards.md` for exact verified commands.
 - Update this file after architecture changes, major dependency changes, or repeated
   implementation drift.
