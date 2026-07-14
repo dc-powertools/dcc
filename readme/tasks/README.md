@@ -5,9 +5,9 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
 - Next task ID: T-0011
-- Primary task: T-0006
-- Scheduling: Running
-- Global pause source or reason: None
+- Primary task: None
+- Scheduling: Paused
+- Global pause source or reason: User requested pause after T-0005 completion to clear context and prepare resume.
 
 ## Tasks
 
@@ -18,7 +18,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0003 | Migrate `readme/DEVELOPMENT.md`, `readme/STYLE.md`, and `readme/ARCHITECTURE.md` to strict framework ownership. | User request 2026-07-14 / r1 | Done | None | Quick change / Low | None | Stop; outcome complete. | None | Moved the legacy docs to `readme/project/development.md`, `readme/project/rust-style.md`, and `readme/project/architecture.md`; updated cursor, context, standards, source map, glossary, and internal references so no unmanaged legacy doc paths remain. |
 | T-0004 | Coordinate the full `dcc` rewrite for devcontainer schema-compatible config, state persistence, durable container lifecycle commands, and shell-oriented attach behavior. | User request 2026-07-14 + attach amendment + full-framework execution request / r3 | Parked | Child tasks T-0005 through T-0010 | Initiative / High | None | Resume for final consistency, release-readiness review, and parent closure after child tasks complete. | `readme/tasks/0004-dcc-rewrite-brief.md`; `readme/tasks/0004-dcc-rewrite-notes.md`; `readme/quality/0004-dcc-rewrite-quality.md`; `readme/threat-models/0004-dcc-runtime.md` | Decomposed into child tasks T-0005 through T-0010 for self-contained implementation and commits. |
 | T-0005 | Implement devcontainer schema-compatible config parsing and merge behavior under `customizations.dcc`, including legacy `extends`/`scripts` warnings. | Parent T-0004 / r1 | Done | None | Initiative / High | None | Stop; outcome complete. | `readme/tasks/0005-config-schema-brief.md` | Added `customizations.dcc.extends`, `commands`, and parser-level `state` support; normalized legacy top-level `extends`/`scripts` with deprecation warnings; preserved existing command resolution semantics; verified fmt, clippy, tests, and build; completed read-only specialist review with no blocking findings. |
-| T-0006 | Implement validated `customizations.dcc.state` path model and profile-local state cache mount planning. | Parent T-0004 / r1 | Active | T-0005 | Initiative / High | None | Create a T-0006 brief and delegate the implementation-heavy state/cache slice to a worker with disjoint ownership. | None | None |
+| T-0006 | Implement validated `customizations.dcc.state` path model and profile-local state cache mount planning. | Parent T-0004 / r1 | Ready | T-0005 | Initiative / High | None | When scheduling resumes, create a T-0006 brief and delegate the implementation-heavy state/cache slice to a worker with disjoint ownership. | None | None |
 | T-0007 | Update Feature metadata handling for state, commands, unsupported properties, unsafe runtime settings, and lifecycle hook collection order. | Parent T-0004 / r1 | Pending | T-0005, T-0006 | Initiative / High | None | Start after config and state models are available. | None | None |
 | T-0008 | Implement build preparation: official `build` source support, generated controller/hook assets, default prep hooks, and `build --refresh-only`. | Parent T-0004 / r1 | Pending | T-0005, T-0006, T-0007 | Initiative / High | None | Start after Feature/runtime metadata is available. | None | None |
 | T-0009 | Implement durable runtime lifecycle commands: `start`, `stop`, `run`, `exec`, `attach`, one-shot bookkeeping, and `--keep` promotion. | Parent T-0004 / r1 | Pending | T-0008 | Initiative / High | None | Start after build/controller assets exist. | None | None |

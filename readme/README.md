@@ -6,7 +6,7 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `readme/tasks/README.md`
-- Primary task: T-0006
+- Primary task: None
 - Primary details: None
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
