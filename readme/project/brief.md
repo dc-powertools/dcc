@@ -3,9 +3,9 @@
 ## Project
 
 - Name: dcc
-- One-sentence purpose: A Rust CLI that wraps Docker to manage ephemeral devcontainer
-  environments with profiles, durable per-profile caches, config inheritance, and
-  devcontainer Feature installation.
+- One-sentence purpose: A Rust CLI that wraps Docker to manage profile-specific
+  devcontainer environments with one-shot or durable lifecycle modes, durable
+  per-profile caches, config inheritance, and devcontainer Feature installation.
 - Current stage: Established CLI project.
 - Primary repository or service: This repository.
 - Last updated: 2026-07-14
@@ -33,7 +33,7 @@
 | --- | --- | --- | --- | --- |
 | Install CLI | User | Runs the installation script from the public README. | `dcc` is installed under `~/.local/bin`. | Requires Docker for real devcontainer use. |
 | Build profile image | User or agent | Runs `dcc build` for a profile. | The profile config resolves and a local Docker image is prepared. | `--strict` turns unknown config fields into errors. |
-| Run profile container | User or agent | Runs `dcc run` for a profile. | An ephemeral container starts with cache, mounts, env, lifecycle hooks, and command handling applied. | `dcc build` must be run first. |
+| Run profile container | User or agent | Runs `dcc run`, `dcc exec`, `dcc start`, or `dcc attach` for a profile. | A one-shot or durable container starts with cache, mounts, env, lifecycle hooks, and command handling applied. | `dcc build` must be run first. |
 | Maintain the CLI | Maintainer or agent | Changes Rust code or docs. | Required local checks pass before completion. | Canonical commands live in `readme/project/standards.md`. |
 
 ## Constraints

@@ -43,7 +43,22 @@ pub(crate) fn apply_substitutions(
             .into_iter()
             .map(|m| apply_substitution(&m, &local_workspace, &local_cache))
             .collect(),
+        run_args: config
+            .run_args
+            .into_iter()
+            .map(|arg| apply_substitution(&arg, &local_workspace, &local_cache))
+            .collect(),
+        unsafe_runtime: config.unsafe_runtime,
         forward_ports: config.forward_ports,
+        ports_attributes: config.ports_attributes,
+        other_ports_attributes: config.other_ports_attributes,
+        override_command: config.override_command,
+        workspace_folder: apply_substitution(
+            &config.workspace_folder,
+            &local_workspace,
+            &local_cache,
+        ),
+        workspace_mount: config.workspace_mount,
         initialize_command: config.initialize_command.as_ref().map(|c| {
             c.substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache))
         }),

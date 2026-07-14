@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use crate::{
     config::{
         merge::merge, parse_config_file, vars, DevcontainerConfig, RawConfig, StateEntry,
-        StateKind, DEFAULT_CONTAINER_USER,
+        StateKind, UnsafeRuntimeConfig, DEFAULT_CONTAINER_USER,
     },
     lifecycle::LifecycleHooks,
 };
@@ -85,7 +85,20 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
             .container_user
             .unwrap_or_else(|| DEFAULT_CONTAINER_USER.to_string()),
         mounts: raw.mounts.unwrap_or_default(),
+        run_args: raw.run_args.unwrap_or_default(),
+        unsafe_runtime: UnsafeRuntimeConfig {
+            privileged: raw.privileged.unwrap_or(false),
+            cap_add: raw.cap_add.unwrap_or_default(),
+            security_opt: raw.security_opt.unwrap_or_default(),
+        },
         forward_ports: raw.forward_ports.unwrap_or_default(),
+        ports_attributes: raw.ports_attributes.unwrap_or_default(),
+        other_ports_attributes: raw.other_ports_attributes,
+        override_command: raw.override_command,
+        workspace_folder: raw
+            .workspace_folder
+            .unwrap_or_else(|| vars::CONTAINER_WORKSPACE.to_string()),
+        workspace_mount: raw.workspace_mount,
         initialize_command: raw.initialize_command,
         scripts: raw
             .customizations

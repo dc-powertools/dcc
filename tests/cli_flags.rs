@@ -382,6 +382,59 @@ fn strict_accepts_official_build_source_field() {
     );
 }
 
+#[test]
+fn strict_accepts_final_compatibility_fields() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "portsAttributes": {
+                "3000": { "label": "web", "protocol": "http", "onAutoForward": "openBrowser" },
+                "3001": { "onAutoForward": "openBrowserOnce" },
+                "3002": { "onAutoForward": "openPreview" },
+                "3003": { "onAutoForward": "silent" },
+                "3004": { "onAutoForward": "ignore" }
+            },
+            "otherPortsAttributes": { "label": "other", "protocol": "https", "onAutoForward": "silent" },
+            "runArgs": ["--add-host", "host.docker.internal:host-gateway"],
+            "overrideCommand": false,
+            "workspaceFolder": "${containerWorkspaceFolder}/service",
+            "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind"
+        }"#,
+    );
+    let output = fx.dcc(&["--strict", "build"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.to_lowercase().contains("unrecognized field"),
+        "`--strict build` should accept final compatibility fields\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn build_rejects_devcontainer_unsafe_runtime_without_flag_before_docker() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "privileged": true,
+            "capAdd": ["SYS_PTRACE"],
+            "securityOpt": ["seccomp=unconfined"]
+        }"#,
+    );
+    let output = fx.dcc(&["build"]).output().unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(
+        &output,
+        "devcontainer config contains unsafe runtime setting",
+    );
+    assert_stderr_contains(&output, "--allow-unsafe-runtime");
+    assert_stderr_contains(&output, "privileged");
+    assert_stderr_contains(&output, "capAdd");
+    assert_stderr_contains(&output, "securityOpt");
+}
+
 // Tests below require a live Docker daemon — skipped in CI
 #[test]
 #[ignore]

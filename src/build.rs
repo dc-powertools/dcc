@@ -27,6 +27,7 @@ pub(crate) async fn build(
 
     let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
+    ensure_devcontainer_unsafe_runtime_allowed(&config, opts.allow_unsafe_runtime)?;
 
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
@@ -244,6 +245,8 @@ async fn run_build_preparation(
             ),
         }
     }
+    let workdir = config::vars::resolve_container_env(&config.workspace_folder, &container_env)
+        .with_context(|| format!("in workspaceFolder `{}`", config.workspace_folder))?;
 
     let state = resolve_runtime_state(config, &feature_runtime, &container_env)
         .context("invalid customizations.dcc.state after resolving containerEnv")?;
@@ -263,6 +266,7 @@ async fn run_build_preparation(
         config_path,
         state_mounts: &state_mount_args,
         user: &config.container_user,
+        workdir: &workdir,
     });
 
     docker::start_detached(&args).await.with_context(|| {
@@ -277,6 +281,7 @@ async fn run_build_preparation(
             &local_workspace,
             &local_cache,
             &container_env,
+            &workdir,
         )
         .await
     }
@@ -326,6 +331,7 @@ struct BuildPrepContainerArgs<'a> {
     config_path: &'a Path,
     state_mounts: &'a [String],
     user: &'a str,
+    workdir: &'a str,
 }
 
 fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
@@ -345,7 +351,7 @@ fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
     ]);
     args.push("--rm".to_string());
     args.push("-dit".to_string());
-    args.extend(["--workdir".to_string(), CONTAINER_WORKSPACE.to_string()]);
+    args.extend(["--workdir".to_string(), input.workdir.to_string()]);
     args.extend(["-u".to_string(), input.user.to_string()]);
     args.push("-v".to_string());
     args.push(format!("{}:{CONTAINER_WORKSPACE}", input.workspace));
@@ -392,6 +398,7 @@ impl BuildPrepPlan {
         self.hooks
             .iter()
             .any(|hook| describe_lifecycle_command(&hook.command).contains(NEEDLE))
+            || config.workspace_folder.contains(NEEDLE)
             || config.state.iter().any(|entry| entry.path.contains(NEEDLE))
             || feature_runtime
                 .state
@@ -449,6 +456,7 @@ async fn run_planned_hooks(
     local_workspace: &str,
     local_cache: &str,
     container_env: &HashMap<String, String>,
+    workdir: &str,
 ) -> anyhow::Result<()> {
     let substitute = |s: &str| -> anyhow::Result<String> {
         let s = config::vars::apply_substitution(s, local_workspace, local_cache);
@@ -461,7 +469,7 @@ async fn run_planned_hooks(
                 hook.phase, hook.source
             )
         })?;
-        lifecycle::run_in_container(&cmd, container, &config.container_user, CONTAINER_WORKSPACE)
+        lifecycle::run_in_container(&cmd, container, &config.container_user, workdir)
             .await
             .with_context(|| format!("{} from {} failed", hook.phase, hook.source))?;
     }
@@ -492,6 +500,19 @@ fn ensure_unsafe_runtime_allowed(
     }
     anyhow::bail!(
         "image metadata contains unsafe Feature runtime setting(s); rerun with `--allow-unsafe-runtime` to allow them"
+    )
+}
+
+fn ensure_devcontainer_unsafe_runtime_allowed(
+    config: &config::DevcontainerConfig,
+    allow_unsafe_runtime: bool,
+) -> anyhow::Result<()> {
+    if allow_unsafe_runtime || config.unsafe_runtime.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "devcontainer config contains unsafe runtime setting(s) {}; rerun with `--allow-unsafe-runtime` to allow them",
+        config.unsafe_runtime.property_names().join(", ")
     )
 }
 
@@ -565,7 +586,14 @@ mod tests {
             remote_env: HashMap::new(),
             container_user: "root".to_string(),
             mounts: Vec::new(),
+            run_args: Vec::new(),
+            unsafe_runtime: config::UnsafeRuntimeConfig::default(),
             forward_ports: Vec::new(),
+            ports_attributes: HashMap::new(),
+            other_ports_attributes: None,
+            override_command: None,
+            workspace_folder: CONTAINER_WORKSPACE.to_string(),
+            workspace_mount: None,
             initialize_command: None,
             lifecycle: LifecycleHooks::default(),
             scripts: HashMap::new(),
@@ -717,7 +745,13 @@ mod tests {
                     .to_string(),
             ],
             user: "dev",
+            workdir: "/workspace/service",
         });
+        let workdir = args
+            .windows(2)
+            .find(|pair| pair[0] == "--workdir")
+            .map(|pair| pair[1].as_str());
+        assert_eq!(workdir, Some("/workspace/service"));
         assert!(args.contains(&"--mount".to_string()));
         assert!(args.contains(
             &"type=bind,src=/workspace/.dcc/dev/state/home/dev/.cargo,dst=/home/dev/.cargo"

@@ -15,7 +15,18 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
         remote_env: merge_option_hash_maps(parent.remote_env, child.remote_env),
         container_user: child.container_user.or(parent.container_user),
         mounts: merge_option_vecs(parent.mounts, child.mounts),
+        run_args: merge_option_vecs(parent.run_args, child.run_args),
+        privileged: child.privileged.or(parent.privileged),
+        cap_add: merge_option_vecs(parent.cap_add, child.cap_add),
+        security_opt: merge_option_vecs(parent.security_opt, child.security_opt),
         forward_ports: merge_option_vecs(parent.forward_ports, child.forward_ports),
+        ports_attributes: merge_option_hash_maps(parent.ports_attributes, child.ports_attributes),
+        other_ports_attributes: child
+            .other_ports_attributes
+            .or(parent.other_ports_attributes),
+        override_command: child.override_command.or(parent.override_command),
+        workspace_folder: child.workspace_folder.or(parent.workspace_folder),
+        workspace_mount: child.workspace_mount.or(parent.workspace_mount),
         initialize_command: child.initialize_command.or(parent.initialize_command),
         on_create_command: child.on_create_command.or(parent.on_create_command),
         update_content_command: child
@@ -139,7 +150,16 @@ mod tests {
             remote_env: None,
             container_user: None,
             mounts: None,
+            run_args: None,
+            privileged: None,
+            cap_add: None,
+            security_opt: None,
             forward_ports: None,
+            ports_attributes: None,
+            other_ports_attributes: None,
+            override_command: None,
+            workspace_folder: None,
+            workspace_mount: None,
             initialize_command: None,
             on_create_command: None,
             update_content_command: None,
@@ -424,6 +444,96 @@ mod tests {
         assert_eq!(mounts[0], "first");
         assert_eq!(mounts[1], "second");
         assert_eq!(mounts[2], "third");
+    }
+
+    #[test]
+    fn final_compatibility_fields_merge_by_policy() {
+        let mut parent_ports = HashMap::new();
+        parent_ports.insert(
+            "3000".to_string(),
+            crate::config::PortAttributes {
+                label: Some("parent".to_string()),
+                protocol: None,
+                on_auto_forward: None,
+            },
+        );
+        let mut child_ports = HashMap::new();
+        child_ports.insert(
+            "3000".to_string(),
+            crate::config::PortAttributes {
+                label: Some("child".to_string()),
+                protocol: Some("http".to_string()),
+                on_auto_forward: Some(crate::config::OnAutoForward::Silent),
+            },
+        );
+        child_ports.insert("3001".to_string(), crate::config::PortAttributes::default());
+
+        let parent = RawConfig {
+            run_args: Some(vec!["--dns=1.1.1.1".to_string()]),
+            privileged: Some(false),
+            cap_add: Some(vec!["NET_ADMIN".to_string()]),
+            security_opt: Some(vec!["label=disable".to_string()]),
+            ports_attributes: Some(parent_ports),
+            other_ports_attributes: Some(crate::config::PortAttributes {
+                label: Some("parent-other".to_string()),
+                protocol: None,
+                on_auto_forward: None,
+            }),
+            override_command: Some(true),
+            workspace_folder: Some("/workspace/parent".to_string()),
+            workspace_mount: Some(serde_json::json!("parent-mount")),
+            ..empty()
+        };
+        let child = RawConfig {
+            run_args: Some(vec![
+                "--dns=1.1.1.1".to_string(),
+                "--hostname=dev".to_string(),
+            ]),
+            privileged: Some(true),
+            cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+            security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+            ports_attributes: Some(child_ports),
+            other_ports_attributes: Some(crate::config::PortAttributes {
+                label: Some("child-other".to_string()),
+                protocol: Some("https".to_string()),
+                on_auto_forward: Some(crate::config::OnAutoForward::Ignore),
+            }),
+            override_command: Some(false),
+            workspace_folder: Some("/workspace/child".to_string()),
+            workspace_mount: Some(serde_json::json!("child-mount")),
+            ..empty()
+        };
+
+        let result = merge(parent, child);
+        assert_eq!(
+            result.run_args.unwrap(),
+            vec!["--dns=1.1.1.1".to_string(), "--hostname=dev".to_string()]
+        );
+        assert_eq!(result.privileged, Some(true));
+        assert_eq!(
+            result.cap_add.unwrap(),
+            vec!["NET_ADMIN".to_string(), "SYS_PTRACE".to_string()]
+        );
+        assert_eq!(
+            result.security_opt.unwrap(),
+            vec![
+                "label=disable".to_string(),
+                "seccomp=unconfined".to_string()
+            ]
+        );
+        let ports = result.ports_attributes.unwrap();
+        assert_eq!(ports["3000"].label.as_deref(), Some("child"));
+        assert_eq!(ports["3001"], crate::config::PortAttributes::default());
+        assert_eq!(
+            result.other_ports_attributes.unwrap().label.as_deref(),
+            Some("child-other")
+        );
+        assert_eq!(result.override_command, Some(false));
+        assert_eq!(result.workspace_folder.as_deref(), Some("/workspace/child"));
+        assert_eq!(
+            result.workspace_mount,
+            Some(serde_json::json!("child-mount"))
+        );
     }
 
     #[test]

@@ -2,9 +2,9 @@
 
 `dcc` is a CLI for macOS and Linux that streamlines the use of devcontainers.
 
-`dcc` facilitates the use of multiple ephemeral devcontainers with different
-profiles across the development cycle. It introduces two extensions to the
-devcontainer spec that make this possible:
+`dcc` facilitates the use of multiple profile-specific devcontainers with either
+one-shot or durable runtime lifecycles across the development cycle. It introduces
+two extensions to the devcontainer spec that make this possible:
 
 1. a durable cache directory, which persists artifacts across executions
 2. the "extends" property, which enables inheritance of common configuration
@@ -31,7 +31,7 @@ Requires Docker to be installed and running.
 
 ## Working with profiles
 
-`dcc` enables the use of many ephemeral environments called profiles.
+`dcc` enables the use of many profile-specific environments called profiles.
 The default profile is represented by the standard `devcontainer.json`
 configuration. Every command also accepts a `-p/--profile <name>` flag, which
 causes `dcc` to load the configuration at `.devcontainer/<name>.json`.
@@ -349,10 +349,15 @@ devcontainer-compatible tools via
 | `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `containerUser` | User to run as inside the container. Defaults to `dev`. Unless set to `root`, `dcc build` creates the user in the image if it does not already exist. Feature install scripts run as `root`; `_REMOTE_USER`/`_CONTAINER_USER`/`_REMOTE_USER_HOME`/`_CONTAINER_USER_HOME` are exported for scripts that need to `su` into `containerUser`. |
-| `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
+| `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. Sensitive host sources such as `/`, `/etc`, `/var/run`, Docker sockets, and SSH paths require `--allow-unsafe-runtime`. |
+| `runArgs` | Conservative allowlist of extra Docker runtime flags. Safe flags such as `--add-host`, `--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`, `--cap-drop`, and explicit `--env KEY=VALUE` are passed through. Privileged or host-integrating flags such as `--privileged`, `--cap-add`, `--security-opt`, `--pid=host`, `--ipc=host`, `--network=host`, `--device`, and sensitive mounts require `--allow-unsafe-runtime`; unknown flags are rejected. |
+| `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` invocation includes `--allow-unsafe-runtime`. |
 | `customizations.dcc.state` | Container paths whose contents are persisted under the profile cache and mounted back into the container. String entries are directories; object entries support `{ "path": "...", "type": "file" }`. |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
-| `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
+| `portsAttributes`, `otherPortsAttributes` | Parsed for schema compatibility. `label`, `protocol`, and `onAutoForward` values `openBrowser`, `openBrowserOnce`, `openPreview`, `silent`, and `ignore` are accepted; browser/preview auto-open behavior is not implemented. |
+| `overrideCommand` | Parsed for schema compatibility. Ignored because `dcc` always uses its managed keepalive startup. |
+| `workspaceFolder` | Container workdir for build-preparation hooks, startup/attach hooks, and foreground commands. Defaults to `/workspace`; `dcc` warns when it is outside `/workspace` while still mounting the project at `/workspace`. |
+| `workspaceMount` | Parsed for schema compatibility, but ignored because `dcc` owns workspace mounting. |
 | `initializeCommand` | Runs on the **host**, before the container is created or started. |
 | `onCreateCommand` | Runs **in the container**, first among the lifecycle hooks below. |
 | `updateContentCommand` | Runs **in the container**, after `onCreateCommand`. |
@@ -366,11 +371,10 @@ form — the named commands run in parallel, and the next hook waits for all of
 them to finish. `initializeCommand` runs on the host and supports
 `${localWorkspaceFolder}`/`${localCacheFolder}`/`${localEnv:VAR}`/`${containerEnv:VAR}`
 (and the container-side variables); the other five hooks run in the container as
-`containerUser` from `/workspace` and support the same variable substitution as
+`containerUser` from `workspaceFolder` and support the same variable substitution as
 `remoteEnv`/`mounts`.
-A non-zero exit from any hook aborts `dcc run` immediately, skipping
-subsequent hooks. See [`dcc run`](#dcc-run) for execution order and how this
-interacts with `dcc`'s ephemeral containers.
+A non-zero exit from any hook aborts the current operation, skipping subsequent
+hooks. See [`dcc run`](#dcc-run) for execution order and durable/one-shot behavior.
 
 Unrecognised fields produce a warning by default; pass `--strict` to treat them as errors.
 
