@@ -104,3 +104,34 @@ Pause checkpoint: the user requested a pause after T-0005 so they can clear cont
 prepare a resume. Scheduling is paused with T-0006 Ready. On resume, first set
 Scheduling back to Running, create a T-0006 brief, and delegate the implementation-heavy
 state/cache work to a worker agent with explicit file ownership.
+
+## 2026-07-14 T-0006 Completion Checkpoint
+
+T-0006 implemented validated project state paths and profile-local state mount
+planning. A worker handled the Rust patch; the root session reviewed and tightened
+state substitution so host-local variables remain invalid in container state paths.
+
+Implemented behavior:
+
+- `customizations.dcc.state` is validated after config merge and container-side
+  substitution.
+- String entries remain directory state; object entries can declare file state.
+- Compatible duplicate normalized paths deduplicate; conflicting kinds and parent/child
+  overlaps error.
+- Invalid unresolved, relative, root, `..`, runtime/system, and `/workspace/.dcc` paths
+  error.
+- `${containerEnv:VAR}` state paths are deferred until runtime environment probing, then
+  revalidated.
+- Runtime execution plans state bind mounts under `.dcc/<profile>/state/...`, prepares
+  directory/file host sources, and includes state mounts in debug output.
+
+T-0006 observed checks:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy -- -D warnings`: passed.
+- `cargo test`: passed; 355 unit tests, 16 runnable CLI flag tests with 2 ignored, and
+  9 config error integration tests.
+- `cargo build`: passed.
+
+Residual risk: no live Docker smoke test was run in this slice; durable lifecycle and
+build-preparation behavior remain owned by T-0008 and T-0009.

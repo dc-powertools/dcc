@@ -106,24 +106,45 @@ about long-running container lifecycles or cross-contamination of environments.
 The cache is mounted in the container at `/cache`. The host cache directory is
 located within the host workspace directory, under `.dcc/<profile>`.
 
-The cache directory is exposed in devcontainer configuration files through
-the following variables:
+The cache directory is exposed in devcontainer configuration files through the
+following variables:
 
 | Variable | Properties | Description |
 | --- | --- | --- |
 | `${localCacheFolder}` | Any | Path of the local cache folder. |
 | `${containerCacheFolder}` | Any | Path of the cache folder in the container. (`/cache`) |
 
-There are two primary ways to preserve state within the cache. The first is to
-inject an environment variable that specifies where to store state. For example:
+The preferred way to preserve tool state is to declare the container paths under
+`customizations.dcc.state`. String entries are directories; object entries can
+declare file state:
+
+```json
+"customizations": {
+  "dcc": {
+    "state": [
+      "/home/dev/.cargo",
+      { "path": "${containerEnv:HOME}/.npmrc", "type": "file" }
+    ]
+  }
+}
+```
+
+Each state path is mounted from `.dcc/<profile>/state/...` on the host. State
+paths must be absolute container paths. `${containerWorkspaceFolder}`,
+`${containerCacheFolder}`, and `${containerEnv:VAR}` are supported; host-local
+variables such as `${localCacheFolder}` and `${localEnv:VAR}` are rejected.
+`dcc` also rejects root, relative, overlapping, unresolved, and runtime/system
+paths such as `/tmp`, `/run`, `/proc`, `/sys`, `/dev`, and `/workspace/.dcc`.
+
+You can also preserve state within `/cache` by injecting an environment variable
+that specifies where to store state. For example:
 ```
 "containerEnv": {
   "CARGO_HOME": "${containerCacheFolder}/.cargo"
 }
 ```
 
-The second is to mount a cache subdirectory at the location where state is
-stored. For example:
+Explicit mounts remain supported when you need the full Docker mount syntax:
 ```
 "mounts": [
   "type=bind,src=${localCacheFolder}/target,dst=/workspace/target"
@@ -296,6 +317,7 @@ devcontainer-compatible tools via
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `containerUser` | User to run as inside the container. Defaults to `dev`. Unless set to `root`, `dcc build` creates the user in the image if it does not already exist. Feature install scripts run as `root`; `_REMOTE_USER`/`_CONTAINER_USER`/`_REMOTE_USER_HOME`/`_CONTAINER_USER_HOME` are exported for scripts that need to `su` into `containerUser`. |
 | `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
+| `customizations.dcc.state` | Container paths whose contents are persisted under the profile cache and mounted back into the container. String entries are directories; object entries support `{ "path": "...", "type": "file" }`. |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
 | `command` | Array of strings passed to Docker as `--entrypoint` when the container starts. The child value always takes precedence over the parent when using `extends`. Always wins over any feature-contributed command. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `initializeCommand` | Runs on the **host**, before the container is created or started. |

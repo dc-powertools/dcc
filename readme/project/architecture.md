@@ -128,6 +128,7 @@ pub struct DevcontainerConfig {
     pub mounts: Vec<String>,
     pub forward_ports: Vec<u16>,
     pub command: Option<Vec<String>>,
+    pub state: Vec<StateEntry>,
 }
 ```
 
@@ -311,6 +312,8 @@ pub struct CacheDir {
 impl CacheDir {
     pub fn new(workspace: &Workspace, profile: &ProfileName) -> Self
     pub fn ensure_exists(&self) -> anyhow::Result<()>
+    pub fn plan_state_mounts(&self, state: &[StateEntry]) -> Vec<StateMount>
+    pub fn prepare_state_mounts(&self, mounts: &[StateMount]) -> anyhow::Result<()>
 }
 ```
 
@@ -319,7 +322,19 @@ already exist. It is never deleted automatically. `dcc build` does not create
 or write to the cache directory; all persistent build output is stored in the
 Docker image itself (see `devcontainer.metadata` label below).
 
-The container-side mount path (`/cache`) is defined as the constant
+Declared `customizations.dcc.state` entries are validated as absolute container
+paths after config merge and container-side substitution. They reject unresolved
+host-local variables, parent/child overlaps, `/`, `..`, reserved runtime paths
+(`/tmp`, `/run`, `/proc`, `/sys`, `/dev`), and `/workspace/.dcc`. Runtime
+`${containerEnv:VAR}` references are resolved after image/user environment
+probing and then validated again.
+
+Each accepted state path is planned as a bind mount rooted below
+`<workspace>/.dcc/<profile>/state/` using the normalized container path. Directory
+state creates the host directory; file state creates the host parent directory and
+an empty file when absent.
+
+The container-side cache mount path (`/cache`) is defined as the constant
 `CONTAINER_CACHE` in `config/vars.rs`, which also defines `CONTAINER_WORKSPACE`
 (`/workspace`). Both constants are shared between variable substitution and the
 `docker run` argument construction in `run.rs`.

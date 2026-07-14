@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use crate::{cache::CacheDir, config::DevcontainerConfig, workspace::Workspace};
+use crate::{
+    cache::CacheDir,
+    config::{DevcontainerConfig, StateEntry},
+    workspace::Workspace,
+};
 
 pub(crate) const CONTAINER_WORKSPACE: &str = "/workspace";
 pub(crate) const CONTAINER_CACHE: &str = "/cache";
@@ -46,7 +50,14 @@ pub(crate) fn apply_substitutions(
             .lifecycle
             .substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache)),
         scripts: config.scripts,
-        state: config.state,
+        state: config
+            .state
+            .into_iter()
+            .map(|StateEntry { path, kind }| StateEntry {
+                path: apply_state_path_substitution(&path),
+                kind,
+            })
+            .collect(),
     }
 }
 
@@ -67,6 +78,13 @@ pub(crate) fn apply_substitution(s: &str, local_workspace: &str, local_cache: &s
 /// `localEnv`). Used for `containerEnv` values in both devcontainer.json and
 /// feature metadata, which are baked into the image at build time.
 pub(crate) fn apply_container_env_substitution(s: &str) -> String {
+    apply_to_string(s, None, None, None)
+}
+
+/// Applies substitution for container-side state paths. State declarations must
+/// describe paths inside the container, so host-local variables are deliberately
+/// left unresolved for validation to reject.
+pub(crate) fn apply_state_path_substitution(s: &str) -> String {
     apply_to_string(s, None, None, None)
 }
 
@@ -370,6 +388,30 @@ mod tests {
     fn container_var_in_container_env_context_is_substituted() {
         let result = apply_container_env_substitution("${containerCacheFolder}/x");
         assert_eq!(result, "/cache/x");
+    }
+
+    #[test]
+    fn state_path_substitutes_container_folder_vars_only() {
+        assert_eq!(
+            apply_state_path_substitution("${containerWorkspaceFolder}/target"),
+            "/workspace/target"
+        );
+        assert_eq!(
+            apply_state_path_substitution("${containerCacheFolder}/cargo"),
+            "/cache/cargo"
+        );
+    }
+
+    #[test]
+    fn state_path_leaves_local_vars_unresolved() {
+        assert_eq!(
+            apply_state_path_substitution("${localCacheFolder}/cargo"),
+            "${localCacheFolder}/cargo"
+        );
+        assert_eq!(
+            apply_state_path_substitution("${localEnv:HOME}/.cache"),
+            "${localEnv:HOME}/.cache"
+        );
     }
 
     // --- localEnv ---
