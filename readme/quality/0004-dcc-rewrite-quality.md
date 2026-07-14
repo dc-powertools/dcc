@@ -20,7 +20,7 @@
 | State paths are validated and planned as profile-cache mounts. | T-0006 tests and review. | Unit tests cover substitution, validation failures, duplicate/conflict handling, containerEnv deferral, cache mount planning, and host preparation. Required checks passed. | Pass |
 | Feature metadata contributes state, commands, hooks, and unsafe settings consistently. | T-0007 tests and review. | Unit tests cover nested Feature commands/state, legacy scripts compatibility, state metadata round-trip, hook order preservation, unsupported/invalid Feature properties, unsafe setting rejection/allowance, runtime state merge, and CLI flag parsing. Required checks passed. | Pass |
 | Build preparation runs expected hooks with generated controller assets. | T-0008 tests and review. | Unit tests cover official `build` parsing/conflict handling, Docker build args, generated controller/wrapper/hook assets, build-prep hook order, `--refresh-only` planning, and CLI flags. Required checks passed. | Pass |
-| Durable `start`, `stop`, `run`, `exec`, and `attach` workflows behave coherently. | T-0009 tests and, where Docker is available, runtime smoke checks. | Pending. | Not run |
+| Durable `start`, `stop`, `run`, `exec`, and `attach` workflows behave coherently. | T-0009 tests and review. | Unit tests cover runtime mode bookkeeping, active-command records, lifecycle hook phase selection, debug output, and state/runtime merge behavior. CLI tests cover `start`, `attach`, and `--keep` parsing. Required checks passed. No live Docker smoke test was run. | Pass |
 | Docs and fixtures describe current behavior and official validation target. | T-0010 docs review and validation command when available. | Pending. | Not run |
 
 ## Readiness
@@ -39,12 +39,12 @@ Readiness verdict: Ready with concerns
 
 | Required? | Check Or Method | Observed Result | Status | Unblocking Condition If Not Run |
 | --- | --- | --- | --- | --- |
-| Yes | `cargo fmt --check` | Passed for T-0005 through T-0008. | Pass | |
-| Yes | `cargo clippy -- -D warnings` | Passed for T-0005 through T-0008. | Pass | |
-| Yes | `cargo test` | Passed for T-0008: 385 unit tests, 19 runnable CLI flag tests with 2 ignored, and 9 config error integration tests. | Pass | |
-| Yes | `cargo build` | Passed for T-0005 through T-0008. | Pass | |
+| Yes | `cargo fmt --check` | Passed for T-0005 through T-0009. | Pass | |
+| Yes | `cargo clippy -- -D warnings` | Passed for T-0005 through T-0009. | Pass | |
+| Yes | `cargo test` | Passed for T-0009: 392 unit tests, 21 runnable CLI flag tests with 2 ignored, and 9 config error integration tests. | Pass | |
+| Yes | `cargo build` | Passed for T-0005 through T-0009. | Pass | |
 | Yes | Specialist review for non-trivial code slices. | T-0005 read-only review found no blocking findings. | Pass | |
-| Yes | Security review for runtime/mount/script slices. | Pending. | Not run | Run before accepting T-0007 through T-0010. |
+| Yes | Security review for runtime/mount/script slices. | Pending final review. | Not run | Run during T-0010 before parent closure. |
 
 - Criteria or methods amended after implementation began, with reason and impact: None yet.
 - Counterfactual evidence for new regression or behavior tests: Pending per child task.
@@ -65,8 +65,8 @@ Readiness verdict: Ready with concerns
 | User request | Full framework, sub-agents, strict review, task queue, regular commits. | Queue initialized; sub-agent usage planned. | Keep notes current. |
 | Project brief or task brief | T-0004 scope and child tasks aligned. | Pending implementation. | Update when behavior changes. |
 | Decisions and standards | Significant choices recorded. | Existing T-0004 brief owns current decisions. | Add decision records if implementation changes hard-to-reverse choices. |
-| Tests and docs | Tests and docs match final behavior. | T-0006 through T-0008 tests and docs updated for implemented behavior; later child behavior pending. | Complete in child tasks. |
-| State and assumptions | Active task pointer and queue current. | T-0008 complete; T-0009 is the next ready child. | Keep current at each child close. |
+| Tests and docs | Tests and docs match final behavior. | T-0006 through T-0009 tests and docs updated for implemented behavior; final docs/validation pending. | Complete in T-0010. |
+| State and assumptions | Active task pointer and queue current. | T-0009 complete; T-0010 is the next ready child. | Keep current at each child close. |
 
 ## Batch And Residual Risk
 
@@ -74,10 +74,15 @@ Readiness verdict: Ready with concerns
 - If kept together, why: Not kept together; split into child tasks and commits.
 - Risk not resolved by passing checks: Real Docker environment behavior may still vary
   across host Docker versions and base images.
+- T-0009 accepted a pragmatic first pass where mutable runtime mode and
+  active-command state live under the host profile cache. The generated in-container
+  controller remains minimal; PID-1-owned command accounting is deferred unless future
+  Docker smoke testing shows host-side bookkeeping is insufficient.
 
 ## Completion
 
 - Required checks all passed: No
 - Status: Pending
-- Exact incomplete condition, if not Done: Child tasks T-0009 and T-0010 remain open.
-- Next action: Create T-0009 brief and delegate the implementation-heavy durable runtime lifecycle slice.
+- Exact incomplete condition, if not Done: Child task T-0010 remains open.
+- Next action: Start T-0010 for port attributes, safe `runArgs`, final docs/fixtures,
+  official config validation, strict review, and parent closure.

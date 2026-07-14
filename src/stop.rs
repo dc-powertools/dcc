@@ -6,6 +6,7 @@ use crate::{
     cache::CacheDir,
     config, docker,
     profile::{ContainerId, ProfileName},
+    runtime::RuntimeState,
     version,
     workspace::Workspace,
 };
@@ -31,7 +32,8 @@ pub(crate) async fn stop(
         .unwrap_or_else(|| container_id.as_str().to_string());
     docker::stop_container(&container)
         .await
-        .with_context(|| format!("failed to stop container `{container}`"))
+        .with_context(|| format!("failed to stop container `{container}`"))?;
+    RuntimeState::new(&CacheDir::new(workspace, profile)).clear()
 }
 
 fn current_uses_fast_path(

@@ -308,6 +308,47 @@ fn allow_unsafe_runtime_flag_accepted_by_build_exec_and_run() {
 }
 
 #[test]
+fn start_and_attach_commands_are_accepted() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    for args in [
+        ["start"].as_slice(),
+        ["attach"].as_slice(),
+        ["attach", "/bin/sh"].as_slice(),
+    ] {
+        let output = fx.dcc(args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unrecognized subcommand") && !stderr.contains("unexpected argument"),
+            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn keep_flag_accepted_by_run_exec_and_attach() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    for args in [
+        ["run", "--keep", "noop"].as_slice(),
+        ["run", "-k", "noop"].as_slice(),
+        ["exec", "--keep", "/bin/true"].as_slice(),
+        ["exec", "-k", "/bin/true"].as_slice(),
+        ["attach", "--keep"].as_slice(),
+        ["attach", "-k", "/bin/sh"].as_slice(),
+    ] {
+        let output = fx.dcc(args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unexpected argument")
+                && !stderr.contains("--keep")
+                && !stderr.contains("-k"),
+            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn refresh_only_flag_accepted_by_build() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);

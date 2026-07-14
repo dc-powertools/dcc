@@ -9,6 +9,7 @@ mod forward;
 mod lifecycle;
 mod profile;
 mod run;
+mod runtime;
 mod stop;
 mod version;
 mod workspace;
@@ -64,6 +65,7 @@ async fn run() -> anyhow::Result<()> {
             skip_lifecycle,
             debug,
             allow_unsafe_runtime,
+            keep,
             args,
         } => {
             let status = exec::exec(
@@ -81,6 +83,61 @@ async fn run() -> anyhow::Result<()> {
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
+                    keep,
+                },
+            )
+            .await?;
+            std::process::exit(status.code().unwrap_or(1));
+        }
+        cli::Command::Start {
+            memory,
+            cpus,
+            debug,
+            allow_unsafe_runtime,
+        } => {
+            exec::start(
+                &workspace,
+                &profile,
+                &config_path,
+                exec::ExecOptions {
+                    limits: exec::ResourceLimits {
+                        memory: &memory,
+                        cpus: &cpus,
+                    },
+                    skip_lifecycle: false,
+                    debug,
+                    strict: cli.strict,
+                    profile_arg: &cli.profile,
+                    allow_unsafe_runtime,
+                    keep: true,
+                },
+            )
+            .await
+        }
+        cli::Command::Attach {
+            memory,
+            cpus,
+            debug,
+            allow_unsafe_runtime,
+            keep,
+            args,
+        } => {
+            let status = exec::attach(
+                &workspace,
+                &profile,
+                &config_path,
+                &args,
+                exec::ExecOptions {
+                    limits: exec::ResourceLimits {
+                        memory: &memory,
+                        cpus: &cpus,
+                    },
+                    skip_lifecycle: false,
+                    debug,
+                    strict: cli.strict,
+                    profile_arg: &cli.profile,
+                    allow_unsafe_runtime,
+                    keep,
                 },
             )
             .await?;
@@ -98,6 +155,7 @@ async fn run() -> anyhow::Result<()> {
             cpus,
             debug,
             allow_unsafe_runtime,
+            keep,
             script,
         } => {
             run::run(
@@ -115,6 +173,7 @@ async fn run() -> anyhow::Result<()> {
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
+                    keep,
                 },
             )
             .await

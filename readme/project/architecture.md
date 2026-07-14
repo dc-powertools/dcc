@@ -2,10 +2,10 @@
 
 ## Overview
 
-`dcc` is a single Rust binary that wraps the Docker CLI to manage ephemeral
+`dcc` is a single Rust binary that wraps the Docker CLI to manage profile-specific
 devcontainer environments. It adds profile support, durable per-profile caching,
-config inheritance via `extends`, and devcontainer Feature installation on top of
-the existing devcontainer spec.
+durable and one-shot runtime lifecycle commands, config inheritance via `extends`, and
+devcontainer Feature installation on top of the existing devcontainer spec.
 
 ---
 
@@ -30,6 +30,7 @@ src/
   docker.rs           Thin wrappers around docker CLI subcommands
   build.rs            dcc build command
   run.rs              dcc run command
+  runtime.rs          Host-side runtime mode and active-command bookkeeping
   stop.rs             dcc stop command
   forward.rs          Host-side TCP relay for forwardPorts
   config/
@@ -414,14 +415,32 @@ Feature hooks run before the project hook for each phase. `dcc build
 profile image to exist, and runs only `updateContentCommand` and
 `postCreateCommand`.
 
-### dcc run
+### Runtime Commands
 
-`dcc run` uses a three-phase sequence: start detached, set up port forwarders,
-then attach interactively.
+Runtime entrypoints share the launch planner in `exec.rs`:
+
+- `dcc start` starts or promotes a durable profile container and returns.
+- `dcc run <name>` resolves a project or Feature command and executes it in the profile
+  container.
+- `dcc exec <cmd...>` executes an explicit command in the profile container.
+- `dcc attach [cmd...]` runs attach hooks, then an explicit command or a shell-oriented
+  default.
+
+`dcc run`, `dcc exec`, and `dcc attach` reuse an existing profile container when one is
+running. If no container is running, they start a one-shot container unless `--keep` /
+`-k` is supplied. One-shot containers are stopped only after all active
+`dcc`-launched commands finish; the active-command records and durable/one-shot mode
+live under `<workspace>/.dcc/<profile>/runtime`. `dcc start`, `dcc run -k`,
+`dcc exec -k`, and `dcc attach -k` write durable mode, which prevents automatic teardown
+until `dcc stop`.
+
+This is host-side runtime bookkeeping. Docker labels are still used for stable lookup
+(`dcc.container_id=<container-id>`), but mutable mode and active-command state are not
+stored solely in labels because labels cannot be changed after container creation.
 
 **Phase 1 — pre-flight checks and argument construction**
 
-Before starting Docker, `dcc run`:
+Before starting or reusing Docker containers, the runtime planner:
 
 1. Calls `docker image inspect` on the image tag to read its
    `devcontainer.metadata` label, if present. The label JSON is parsed into a
@@ -430,13 +449,15 @@ Before starting Docker, `dcc run`:
    error. It also reads the image's `Config.Env` (`{{json .Config.Env}}`, via
    `docker::inspect_image_env`) to resolve `${containerEnv:VAR}` references in the
    runtime properties.
-2. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
+2. Resolves runtime state paths and prepares their profile-local host sources.
+3. Calls `fs::create_dir_all` for any bind mount whose `src=` path falls under
    the host cache directory. Docker requires bind mount source paths to exist on
    the host before the container starts.
 
 **Phase 2 — detached container start**
 
-The container is started with `-dit` (detached, interactive, TTY pre-allocated):
+When no matching profile container is already running, `dcc` starts the container with
+`-dit` (detached, interactive, TTY pre-allocated):
 
 ```
 docker run
@@ -461,21 +482,17 @@ docker run
 ```
 
 The container's PID 1 is a keep-alive process (`tail -f /dev/null`) so it stays
-running independent of the user command. This is deliberate: making the user
-command PID 1 and attaching to it fails for commands that exit quickly (e.g.
-`ls`) — the container is gone before the readiness poll observes it as running,
-and `docker attach` would not show output produced before the attach. The user
-command instead runs in the foreground via `docker exec` (phase 4). `dcc run`
-polls `docker inspect` at 100 ms intervals (up to 10 s) until the keep-alive
-container reports as running.
+running independent of foreground commands. This is deliberate: making a user command
+PID 1 and attaching to it fails for commands that exit quickly (e.g. `ls`) because the
+container can disappear before readiness polling or attach observes it. User commands
+run via `docker exec` (phase 4). `dcc` polls `docker inspect` at 100 ms intervals (up
+to 10 s) until the keep-alive container reports as running.
 
-Once the container is running, the container-side lifecycle hooks
-(`onCreateCommand` through `postAttachCommand`) run in spec order before port
-forwarding. The `--skip-lifecycle` flag on `dcc exec` skips every lifecycle script —
-the host `initializeCommand` and all in-container hooks — and prints a warning
-naming each skipped script (`exec::skipped_hook_warnings` builds the list in
-execution order), so a misbehaving script can be bypassed when debugging without
-silently dropping anything.
+When a new container starts, `initializeCommand` runs on the host before `docker run`
+unless lifecycle skipping is enabled, then `postStartCommand` runs inside the container.
+Feature-contributed startup hooks run before the project hook for that phase.
+Build-preparation hooks (`onCreateCommand`, `updateContentCommand`,
+`postCreateCommand`) are not part of ordinary runtime commands; `dcc build` owns them.
 
 Note that `forwardPorts` no longer translates to `-p` flags. Publishing ports
 with Docker's `-p` mechanism routes traffic through the Docker bridge network,
@@ -484,10 +501,11 @@ IP rather than `127.0.0.1`. Port forwarding is handled separately in phase 3.
 
 **Phase 3 — port forwarding**
 
-For each port in `forwardPorts`, `dcc run` binds a `TcpListener` on
+For each port in `forwardPorts`, `dcc run`, `dcc exec`, and `dcc attach` bind a `TcpListener` on
 `127.0.0.1:<port>` on the host and spawns a Tokio task (see Port Forwarding
-below). The listeners are bound before the command runs so that ports are ready
-as soon as the session begins.
+below). The listeners are bound before the foreground command runs so that ports are
+ready as soon as the session begins. `dcc start` currently starts only the durable
+container; it does not leave a background host-side port-forwarding process behind.
 
 **Phase 4 — foreground command**
 
@@ -495,30 +513,30 @@ as soon as the session begins.
 docker exec -i [-t] -u <containerUser> -w /workspace <container-name> <command...>
 ```
 
-The user command runs in the foreground via `docker exec`, with stdio inherited,
-so output streams live and the command's real exit code is returned. This works
-uniformly for one-off commands (`ls`) and interactive shells (`bash`). `-t` is
-requested only when dcc's own stdin is a terminal, so non-interactive use (pipes,
-CI) still works. The exit status is propagated via `std::process::exit`.
+The foreground command runs via `docker exec`, with stdio inherited, so output streams
+live and the command's real exit code is returned. This works uniformly for one-off
+commands (`ls`) and interactive shells (`bash`). `-t` is requested only when dcc's own
+stdin is a terminal, so non-interactive use (pipes, CI) still works. The exit status is
+propagated via `std::process::exit`.
+
+`dcc attach` first runs `postAttachCommand` hooks, with Feature hooks before the project
+hook. With no explicit attach command, it executes:
+
+```
+/bin/sh -lc 'if [ -n "${SHELL:-}" ] && [ "${SHELL#/}" != "$SHELL" ] && [ -x "$SHELL" ]; then exec "$SHELL"; elif [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'
+```
 
 **Phase 5 — teardown**
 
-After the foreground command returns, all relay task handles are aborted and the
-keep-alive container is stopped (`docker stop`; `--rm` then removes it). In-flight
-`docker exec nc` processes terminate as the container goes away; the abort
-releases the host-side port bindings.
+After the foreground command returns, all relay task handles for that invocation are
+aborted. The active-command record is removed under the runtime lock. If the container
+mode is one-shot and no active commands remain, `dcc` stops the keep-alive container
+(`docker stop`; `--rm` then removes it) and clears the runtime bookkeeping directory.
+Durable containers remain running until `dcc stop`.
 
-**Command resolution** (descending priority):
-
-1. If the user supplies override args (everything after `--` or the first
-   non-flag argument), they are run in the foreground via `docker exec` against
-   the keep-alive container. All configured commands are ignored.
-2. If `command` is set in `devcontainer.json`, it is used. A warning is
-   emitted if any feature also declared a command.
-3. If no devcontainer.json command but a feature contributed one (from the
-   image label), that command is used.
-4. If none of the above apply, `--entrypoint` is omitted and Docker uses the
-   image's default.
+`dcc run` command resolution is owned by `run.rs`: project commands are addressed as
+`:<name>`, Feature commands as `<feature-id>:<name>`, and unqualified names are accepted
+only when exactly one source defines them.
 
 The `--tmpfs /workspace/.dcc` mount places an empty tmpfs at that path inside
 the container, hiding the host `.dcc/` directory from the container.

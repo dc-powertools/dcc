@@ -198,3 +198,38 @@ T-0008 observed checks:
 
 Residual risk: no live Docker smoke test was run in this slice. Durable runtime command
 behavior remains owned by T-0009.
+
+## 2026-07-14 T-0009 Completion Checkpoint
+
+T-0009 implemented durable runtime lifecycle commands. A worker handled the main Rust
+patch; the root session reviewed it, fixed macOS-compatible active-command liveness
+checking, ran the full checks, and updated documentation and framework records.
+
+Implemented behavior:
+
+- `dcc start` starts a durable profile container and is idempotent for an already-running
+  profile container.
+- `dcc run`, `dcc exec`, and `dcc attach` reuse an existing profile container, or start
+  a one-shot container when none exists.
+- `--keep` / `-k` on `run`, `exec`, and `attach` starts durable mode or promotes an
+  existing one-shot container.
+- One-shot active-command bookkeeping lives under `.dcc/<profile>/runtime`; a one-shot
+  container stops only after all active `dcc`-launched commands finish.
+- Runtime hooks are scoped by phase: startup runs `postStartCommand`; attach runs
+  `postAttachCommand`; ordinary runtime commands do not run build-preparation hooks.
+- `dcc attach` defaults to an interactive shell resolution script, with explicit attach
+  command arguments still supported.
+- `dcc stop` clears host-side runtime bookkeeping after stopping the profile container.
+
+T-0009 observed checks:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy -- -D warnings`: passed.
+- `cargo test`: passed; 392 unit tests, 21 runnable CLI flag tests with 2 ignored, and
+  9 config error integration tests.
+- `cargo build`: passed.
+
+Residual risk: no live Docker smoke test was run in this slice. Runtime mode and
+active-command state are host-side cache records rather than PID-1-owned controller
+state. `dcc start` does not leave a background host-side port-forwarding process behind;
+foreground `run`, `exec`, and `attach` invocations still own their relay tasks.
