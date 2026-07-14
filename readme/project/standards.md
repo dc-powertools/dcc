@@ -64,6 +64,8 @@ Record only commands verified by successful execution in this environment.
 - Project-specific development rules belong in `readme/DEVELOPMENT.md`, `readme/STYLE.md`,
   and this standards catalog.
 - Framework-owned project memory belongs under `readme/project/` and `readme/tasks/`.
+- Backup or collision files, such as `*.bak.md`, are temporary evidence only. Evaluate
+  them, migrate durable guidance into the canonical owner, and remove the leftover file.
 
 ## Release
 
@@ -78,3 +80,7 @@ Record only commands verified by successful execution in this environment.
 - Do not add dependencies without concrete justification.
 - Do not replace established docs or command entry points; link them from framework
   records instead.
+- Do not work from paths ignored by `.gitignore` unless the task explicitly requires
+  inspecting generated, cached, or ignored content.
+- Do not use auto-resolving prompts for required Codex user input; when a question blocks
+  safe progress, wait for the answer.

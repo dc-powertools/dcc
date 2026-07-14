@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-14 | Merged backup agent guidance into framework state and removed `AGENTS.bak.md`. | `readme/tasks/README.md#tasks` |
 | 2026-07-14 | Initialized the framework project cursor, task catalog, and project memory. | `readme/tasks/README.md#tasks` |
 
 ## Documentation Map
@@ -44,6 +45,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 0
+- Completed repository-changing tasks since that pass: 1
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first

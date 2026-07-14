@@ -12,3 +12,4 @@
 | S-0008 | `Cargo.toml` | Repository | 2026-07-14 | Primary Evidence | Package metadata, dependencies, dev dependencies, release overflow checks | Manifest source for stack and commands. |
 | S-0009 | `.github/workflows/ci.yml` | Repository | 2026-07-14 | Primary Evidence | CI verification commands | Source for fmt, clippy, test, and build commands. |
 | S-0010 | `src/` and `tests/` | Repository | 2026-07-14 | Primary Evidence | Current implementation and test behavior | Inspect relevant files before changing code. |
+| S-0011 | `AGENTS.bak.md` | Repository backup file | 2026-07-14 | Secondary Evidence | Pre-framework agent guidance | Evaluated and migrated durable guidance into `readme/project/context.md` and `readme/project/standards.md`; backup file removed. |
