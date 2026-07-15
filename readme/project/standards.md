@@ -18,6 +18,7 @@ Record only commands verified by successful execution in this environment.
 | Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 406 unit tests, 23 runnable CLI/config integration tests with 2 ignored, and 9 config error integration tests passed. | 2026-07-14 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-07-14 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
+| Devcontainer config validation | `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace > /tmp/dcc-devcontainer-read-configuration.json` | Node.js v20.19.2, npm 9.2.0, `@devcontainers/cli 0.87.0`, Docker 26.1.5, and a running Docker daemon. In this harness, Docker needed `dockerd --iptables=false --storage-driver=vfs --bridge=none --ip-forward=false --ip-masq=false`. | Passed; produced 14,073 bytes of merged configuration for `.devcontainer/devcontainer.json`, including root image, Features, mounts, hooks, workspace mount, and defaulted compatibility fields. | 2026-07-15 |
 
 ## Architecture
 

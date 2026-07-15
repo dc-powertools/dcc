@@ -21,7 +21,7 @@
 | Feature metadata contributes state, commands, hooks, and unsafe settings consistently. | T-0007 tests and review. | Unit tests cover nested Feature commands/state, legacy scripts compatibility, state metadata round-trip, hook order preservation, unsupported/invalid Feature properties, unsafe setting rejection/allowance, runtime state merge, and CLI flag parsing. Required checks passed. | Pass |
 | Build preparation runs expected hooks with generated controller assets. | T-0008 tests and review. | Unit tests cover official `build` parsing/conflict handling, Docker build args, generated controller/wrapper/hook assets, build-prep hook order, `--refresh-only` planning, and CLI flags. Required checks passed. | Pass |
 | Durable `start`, `stop`, `run`, `exec`, and `attach` workflows behave coherently. | T-0009 tests and review. | Unit tests cover runtime mode bookkeeping, active-command records, lifecycle hook phase selection, debug output, and state/runtime merge behavior. CLI tests cover `start`, `attach`, and `--keep` parsing. Required checks passed. No live Docker smoke test was run. | Pass |
-| Docs and fixtures describe current behavior and official validation target. | T-0010 docs review and validation command availability check. | README, architecture, task notes, standards, and threat model updated for final behavior. Official `devcontainer read-configuration` could not run because `devcontainer`, `node`, `npm`, and `npx` are absent from PATH in this environment. | Pass with blocker recorded |
+| Docs and fixtures describe current behavior and official validation target. | T-0010 docs review plus follow-up official Dev Container CLI validation. | README, architecture, task notes, standards, and threat model updated for final behavior. Follow-up validation on 2026-07-15 installed the required CLI stack and `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace` passed with merged configuration output. | Pass |
 
 ## Readiness
 
@@ -45,7 +45,8 @@ Readiness verdict: Ready with concerns
 | Yes | `cargo build` | Passed for T-0005 through T-0010. | Pass | |
 | Yes | Specialist review for non-trivial code slices. | T-0005 read-only review found no blocking findings. | Pass | |
 | Yes | Security review for runtime/mount/script slices. | T-0010 read-only review found a blocking non-normalized mount bypass plus lower-severity coverage/docs issues. Root fixed path/SSH-agent mount gating, cache auto-create escape, merge tests, and records. | Pass | |
-| Yes | Official devcontainer config validation | Could not run: `devcontainer`, `node`, `npm`, and `npx` are absent from PATH. | Blocked | Install official devcontainer CLI or Node/npm tooling in a future environment and run `devcontainer read-configuration --workspace-folder <fixture> --include-merged-configuration`. |
+| Yes | Official devcontainer config validation | Passed on 2026-07-15 with `@devcontainers/cli 0.87.0`, Node.js v20.19.2, npm 9.2.0, and Docker 26.1.5. Command: `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace`; output file `/tmp/dcc-devcontainer-read-configuration.json` was 14,073 bytes and included merged root image, Feature metadata, mounts, hooks, workspace mount, and defaulted compatibility fields. | Pass | |
+| No | Live Docker smoke test | Attempted on 2026-07-15 with the ignored `strict_accepts_valid_config` test against a constrained local Docker daemon. BuildKit failed to mount its build context with `operation not permitted`; retrying with `DOCKER_BUILDKIT=0` failed with `unshare: operation not permitted`. No containers or images were left behind. | Blocked | Run the ignored Docker smoke tests on a host or harness that grants Docker the mount, namespace, and network capabilities needed for image build and container run. |
 
 - Criteria or methods amended after implementation began, with reason and impact: None yet.
 - Counterfactual evidence for new regression or behavior tests: Pending per child task.
@@ -77,20 +78,23 @@ Readiness verdict: Ready with concerns
 
 - Large-diff split trigger hit: Yes
 - If kept together, why: Not kept together; split into child tasks and commits.
-- Risk not resolved by passing checks: Real Docker environment behavior may still vary
-  across host Docker versions and base images.
+- Risk not resolved by passing checks: Real Docker runtime behavior may still vary across
+  host Docker versions and base images.
 - T-0009 accepted a pragmatic first pass where mutable runtime mode and
   active-command state live under the host profile cache. The generated in-container
   controller remains minimal; PID-1-owned command accounting is deferred unless future
   Docker smoke testing shows host-side bookkeeping is insufficient.
 - T-0010 parses port attributes for schema compatibility, but browser/preview auto-open
   behavior is not implemented.
-- Real Docker smoke tests and official devcontainer CLI validation were not run in this
-  environment.
+- Official Dev Container CLI config validation passed in a follow-up environment with
+  installed tooling; live Docker smoke tests of `dcc` build/runtime behavior remain
+  blocked by this harness container's Docker mount/namespace restrictions.
 
 ## Completion
 
 - Required checks all passed: Yes
 - Status: Done with residual risks
-- Exact incomplete condition, if not Done: None; official devcontainer CLI validation and live Docker smoke testing remain recorded residual risks.
-- Next action: Optional future live Docker smoke and official devcontainer CLI validation in an environment with the required tools.
+- Exact incomplete condition, if not Done: None; live Docker smoke testing remains a
+  recorded residual risk.
+- Next action: Optional future live Docker smoke in an environment that can build and run
+  the managed devcontainer image without mount or namespace restrictions.
