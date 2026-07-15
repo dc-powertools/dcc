@@ -267,12 +267,28 @@ T-0010 observed checks after review fixes:
   9 config error integration tests.
 - `cargo build`: passed.
 
-Official devcontainer CLI validation was not run because `devcontainer`, `node`, `npm`,
-and `npx` are absent from `PATH` in this environment.
+2026-07-15 follow-up validation: after installing Node.js v20.19.2, npm 9.2.0,
+`@devcontainers/cli 0.87.0`, and Docker 26.1.5, the official CLI check passed:
+
+- `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace`
+- A constrained local Docker daemon was started with the `vfs` storage driver and no
+  bridge/iptables because the harness container does not expose the default Docker
+  daemon capabilities.
+- The command produced `/tmp/dcc-devcontainer-read-configuration.json`, a 14,073-byte
+  merged configuration including the root `debian` image, configured Features, Feature
+  metadata, mounts, hooks, workspace mount, and defaulted compatibility fields.
+- Live Docker smoke was attempted with
+  `cargo test --test cli_flags strict_accepts_valid_config -- --ignored --exact --nocapture`.
+  The constrained daemon allowed `docker ps` and official CLI inspection but could not
+  build images in this harness: BuildKit failed to mount the build context with
+  `operation not permitted`, and `DOCKER_BUILDKIT=0` failed with `unshare: operation not
+  permitted`. No containers or images were left behind.
 
 Residual risks accepted for parent closure:
 
-- No live Docker smoke test was run for the final durable lifecycle/build-prep behavior.
+- Live `dcc` Docker smoke testing remains blocked for final durable
+  lifecycle/build-prep behavior until validation runs on a Docker host with mount and
+  namespace capabilities.
 - Port attributes are parsed for compatibility, but browser/preview auto-open behavior is
   not implemented.
 - Mutable runtime mode and active-command state remain host-cache records rather than
