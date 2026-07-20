@@ -365,33 +365,48 @@ image-baked `containerEnv`, every mount with its resolved `src -> dst` and
 options, forwarded ports, the lifecycle scripts in execution order, and the
 exact `docker run` command. It does not change behavior.
 
-#### Lifecycle hooks
-
-Runtime commands do not run build-preparation hooks. `onCreateCommand`,
-`updateContentCommand`, and `postCreateCommand` run during `dcc build` instead.
-`initializeCommand` is parsed for devcontainer compatibility, but `dcc` does not
-execute host lifecycle hooks.
-
-Runtime lifecycle hooks are scoped to the operation:
-
-1. `postStartCommand` runs when a new container starts.
-2. `postAttachCommand` runs only for `dcc attach`, immediately before the shell
-   or explicit attach command.
-
-For in-container hooks, feature-contributed hooks of that type run first, in feature
-installation order, followed by the `devcontainer.json` hook of that type. A
-non-zero exit from any hook aborts the current operation and skips subsequent
-hooks.
-
-To bypass the supported lifecycle scripts for a single invocation — for example when one
-is misbehaving and you want a shell to debug it — run
-`dcc exec --skip-lifecycle <command>`. `dcc` prints a warning naming each
-skipped script, so nothing is silently omitted.
-
 ### `dcc stop`
 
 Stops the profile's container if it is running and clears local runtime
 bookkeeping. It is safe to run when no container is active.
+
+
+## Lifecycle hooks
+
+`dcc` separates build preparation from runtime startup. This is different from
+tools that treat container creation and editor attach as one flow.
+
+`initializeCommand` is parsed for devcontainer compatibility and produces a
+warning, but it is not executed. `dcc` does not run devcontainer-defined commands
+on the host.
+
+| Hook | Triggered by | Skipped by | Notes |
+|---|---|---|---|
+| `initializeCommand` | None | Always | Parsed and warned as unsupported; never executed. |
+| `onCreateCommand` | `dcc build` | `dcc build --refresh-only`, all runtime commands, `--dry-run` | Runs in the build-preparation container after the image exists. |
+| `updateContentCommand` | `dcc build`, `dcc build --refresh-only` | Runtime commands, `--dry-run` | Runs in the build-preparation container. |
+| `postCreateCommand` | `dcc build`, `dcc build --refresh-only` | Runtime commands, `--dry-run` | Runs in the build-preparation container after `updateContentCommand`. |
+| `postStartCommand` | `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` only when that invocation starts a new profile container | Reusing an already-running container, `dcc exec --skip-lifecycle`, `--dry-run` | Runs in the runtime container before the foreground command or attach shell. |
+| `postAttachCommand` | `dcc attach` | `dcc run`, `dcc exec`, `dcc start`, `dcc build`, `--dry-run` | Runs immediately before the attach shell or explicit attach command. If `dcc attach` starts a new container, `postStartCommand` runs first. |
+
+`dcc id` and `dcc stop` do not trigger lifecycle hooks.
+
+For in-container hooks, Feature-contributed hooks of that type run first, in
+Feature installation order, followed by the `devcontainer.json` hook of that
+type. A non-zero exit from any hook aborts the current operation and skips
+subsequent hooks.
+
+Each supported in-container lifecycle hook accepts a shell string (run via
+`/bin/sh -c`), an array of strings (executed directly), or an object mapping
+arbitrary names to either form. Object-form commands run in parallel, and the
+next hook waits for all of them to finish. Hooks run as `containerUser` from
+`workspaceFolder` and support the same variable substitution as
+`remoteEnv`/`mounts`.
+
+To bypass supported runtime hooks for a single `exec` invocation, run
+`dcc exec --skip-lifecycle <command>`. `dcc` prints a warning naming each skipped
+script, so nothing is silently omitted. Build-preparation hooks cannot be skipped
+except by using `dcc build --refresh-only`, which skips `onCreateCommand` only.
 
 
 ## What to expect compared with normal devcontainers
@@ -488,19 +503,7 @@ devcontainer-compatible tools via
 | `workspaceFolder` | Container workdir for build-preparation hooks, startup/attach hooks, and foreground commands. Defaults to `/workspace`; `dcc` warns when it is outside `/workspace` while still mounting the project at `/workspace`. |
 | `workspaceMount` | Parsed for schema compatibility, but ignored because `dcc` owns workspace mounting. |
 | `initializeCommand` | Parsed for schema compatibility and warned as unsupported. It is not executed. |
-| `onCreateCommand` | Runs **in the container** during `dcc build`, before `updateContentCommand`. |
-| `updateContentCommand` | Runs **in the container** during `dcc build`, after `onCreateCommand`. |
-| `postCreateCommand` | Runs **in the container** during `dcc build`, after `updateContentCommand`. |
-| `postStartCommand` | Runs **in the container** when a new runtime container starts. |
-| `postAttachCommand` | Runs **in the container** only for `dcc attach`, immediately before the shell or explicit attach command. |
-
-Each supported in-container lifecycle hook accepts a shell string (run via `/bin/sh -c`), an array of
-strings (executed directly), or an object mapping arbitrary names to either
-form — the named commands run in parallel, and the next hook waits for all of
-them to finish. The five in-container hooks run as `containerUser` from
-`workspaceFolder` and support the same variable substitution as `remoteEnv`/`mounts`.
-A non-zero exit from any hook aborts the current operation, skipping subsequent
-hooks. See [`dcc run`](#dcc-run) for execution order and durable/one-shot behavior.
+| `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Supported in-container lifecycle hooks. See [Lifecycle hooks](#lifecycle-hooks) for trigger behavior, ordering, supported forms, and skip behavior. |
 
 Unrecognised fields produce a warning by default; pass `--strict` to treat them as errors.
 
