@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-20 | Added expanded ignored Docker behavior tests for lifecycle phases, state persistence, durable/one-shot reuse, workspaceFolder, env substitution, and Feature metadata. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Added `--dry-run` and `--format json` support for Docker-free CLI validation and converted fragile CLI acceptance checks to dry-run assertions. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Added a GitHub-hosted Docker smoke test workflow job while keeping Docker tests ignored for local development-container test runs. | `readme/tasks/README.md#tasks` |
 | 2026-07-15 | Installed validation tooling and completed official Dev Container CLI config validation for the `dcc` rewrite. | `readme/quality/0004-dcc-rewrite-quality.md` |
@@ -57,6 +58,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 11
+- Completed repository-changing tasks since that pass: 12
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first

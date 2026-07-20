@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0014
+- Next task ID: T-0015
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -26,6 +26,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0011 | Install missing validation tooling and run official Dev Container CLI config validation for the completed rewrite. | User resume and sudo/tooling approval 2026-07-15 / r1 | Done | T-0004 | Quick change / Low | None | Stop; outcome complete. | `readme/quality/0004-dcc-rewrite-quality.md`; `readme/tasks/0004-dcc-rewrite-notes.md` | Installed Node.js v20.19.2, npm 9.2.0, `@devcontainers/cli 0.87.0`, and Docker 26.1.5; started a constrained Docker daemon for CLI inspection; `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace` passed and produced merged configuration output. Ignored live Docker smoke was attempted but blocked by harness mount/namespace restrictions. |
 | T-0012 | Enable Docker-dependent smoke tests in GitHub Actions while keeping local development-container tests Docker-free by default. | User request 2026-07-20 / r1 | Done | T-0011 | Quick change / Low | None | Stop; outcome complete. | None | Added a `docker-test` CI job on GitHub-hosted Ubuntu runners that verifies Docker availability and explicitly runs the ignored Docker smoke tests. Updated test comments and standards to record that local `cargo test` remains Docker-free while CI owns live Docker build/run coverage. Verified workflow syntax with `actionlint`, listed the ignored Docker tests without running them locally, and passed fmt, clippy, tests, and build. |
 | T-0013 | Add Docker-free dry-run validation and JSON output for CLI acceptance tests. | User request 2026-07-20 / r1 | Done | T-0012 | Quick change / Medium | None | Stop; outcome complete. | None | Added global `--dry-run` and `--format text\|json` flags, stable dry-run reports, Docker-boundary exits for build/runtime/stop commands, JSON output for `dcc id`, docs, and CLI tests that use dry-run success instead of fragile Docker error parsing. Kept ignored Docker smokes for real build/exec/run coverage. Verified fmt, tests, clippy, build, help output, dry-run JSON output, ignored-test listing, and workflow lint with `actionlint 1.7.12`. |
+| T-0014 | Add expanded Docker behavior smoke tests for the completed rewrite. | User request 2026-07-20 / r1 | Done | T-0012, T-0013 | Quick change / Medium | None | Stop; outcome complete. | None | Added ignored `tests/docker_smoke.rs` coverage for project named commands, lifecycle hook phase separation, state directory/file persistence across one-shot containers and refresh-only builds, durable vs one-shot container reuse, `workspaceFolder` workdir behavior, runtime environment substitution, and local Feature command/state metadata. Updated CI to run the suite serially on GitHub Docker runners. Verified fmt, tests, clippy, build, actionlint, and ignored-test listings locally; live Docker execution remains delegated to GitHub runners. |
 
 ## Operating Contract
 
