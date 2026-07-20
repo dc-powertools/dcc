@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 
 use crate::{
     cache::CacheDir,
-    config, docker, exec,
+    config, docker, dry_run, exec,
     features::{self, FeatureRuntimeConfig},
     profile::{ContainerId, ProfileName},
     version,
@@ -27,6 +27,36 @@ pub(crate) async fn run(
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
     let current_uses_fast_path = crate::build::uses_fast_path(&config);
+
+    if opts.dry_run {
+        if let Some(arg) = script_arg {
+            let cmd = resolve_script(arg, &config.scripts, &[])
+                .with_context(|| format!("failed to resolve project script `{arg}`"))?;
+            let exec_args = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()];
+            return exec::dry_run_runtime(
+                workspace,
+                profile,
+                config_path,
+                "run",
+                &exec_args,
+                opts,
+                vec![
+                    "docker image label inspection for Feature commands",
+                    "docker image/container inspection",
+                    "docker run",
+                    "docker exec",
+                ],
+            );
+        }
+        return dry_run::DryRunReport::new(
+            "run",
+            profile,
+            config_path,
+            vec!["workspace resolved", "profile resolved", "config loaded"],
+            vec!["docker image label inspection for Feature command listing"],
+        )
+        .print(opts.format);
+    }
 
     let feature_runtime = match docker::inspect_image_label(image_tag.as_str()).await? {
         None => FeatureRuntimeConfig::default(),

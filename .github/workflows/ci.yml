@@ -58,7 +58,8 @@ jobs:
       - name: Run ignored Docker tests
         run: |
           cargo test --test cli_flags strict_accepts_valid_config -- --ignored --exact --nocapture
-          cargo test --test cli_flags dash_dash_passes_command_override -- --ignored --exact --nocapture
+          cargo test --test cli_flags exec_runs_direct_command -- --ignored --exact --nocapture
+          cargo test --test cli_flags run_executes_named_command -- --ignored --exact --nocapture
 
   build:
     name: Build

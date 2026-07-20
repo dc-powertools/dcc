@@ -15,9 +15,10 @@ Record only commands verified by successful execution in this environment.
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-07-20 |
 | Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.0.33`. | 2026-07-14 |
 | Lint | `cargo clippy -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied. | 2026-07-20 |
-| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 406 unit tests, 23 runnable CLI/config integration tests with 2 ignored, and 9 config error integration tests passed. | 2026-07-20 |
+| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 406 unit tests, 24 runnable CLI/config integration tests with 3 ignored, and 9 config error integration tests passed. | 2026-07-20 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-07-20 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
+| Workflow lint | `actionlint .github/workflows/ci.yml` | `actionlint` on `PATH` | Passed with no findings using `actionlint 1.7.12`. | 2026-07-20 |
 | Devcontainer config validation | `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace > /tmp/dcc-devcontainer-read-configuration.json` | Node.js v20.19.2, npm 9.2.0, `@devcontainers/cli 0.87.0`, Docker 26.1.5, and a running Docker daemon. In this harness, Docker needed `dockerd --iptables=false --storage-driver=vfs --bridge=none --ip-forward=false --ip-masq=false`. | Passed; produced 14,073 bytes of merged configuration for `.devcontainer/devcontainer.json`, including root image, Features, mounts, hooks, workspace mount, and defaulted compatibility fields. | 2026-07-15 |
 
 ## Architecture

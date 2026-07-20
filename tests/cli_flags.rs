@@ -33,14 +33,10 @@ fn strict_exec_accepts_devcontainer_name_field() {
         r#"{ "name": "example/project", "image": "rust:1" }"#,
     );
     let output = fx
-        .dcc(&["--strict", "exec", "echo", "OK"])
+        .dcc(&["--strict", "--dry-run", "exec", "echo", "OK"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unrecognized field 'name'"),
-        "`--strict exec` should accept devcontainer `name`\nstderr: {stderr}"
-    );
+    assert_success(&output);
 }
 
 #[test]
@@ -58,17 +54,11 @@ fn strict_accepts_customizations_dcc_config() {
             }
         }"#,
     );
-    let output = fx.dcc(&["--strict", "build"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unrecognized field 'customizations'"),
-        "`--strict build` should accept official `customizations`\nstderr: {stderr}"
-    );
-    assert!(
-        !stderr.contains("customizations.dcc.commands")
-            && !stderr.contains("customizations.dcc.state"),
-        "`--strict build` should accept recognized `customizations.dcc` fields\nstderr: {stderr}"
-    );
+    let output = fx
+        .dcc(&["--strict", "--dry-run", "build"])
+        .output()
+        .unwrap();
+    assert_success(&output);
 }
 
 #[test]
@@ -82,9 +72,14 @@ fn default_mode_warns_on_unknown_fields_but_does_not_fail_early() {
     // It may still fail (Docker not available), but the failure should
     // NOT be about strict mode / unknown field being fatal.
     // Set RUST_LOG=warn so tracing::warn! output appears in stderr.
-    let output = fx.dcc(&["build"]).env("RUST_LOG", "warn").output().unwrap();
+    let output = fx
+        .dcc(&["--dry-run", "build"])
+        .env("RUST_LOG", "warn")
+        .output()
+        .unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_success(&output);
     // The unknown field should have produced a warning (appears in stderr)
     assert!(
         stderr.contains("unknownField"),
@@ -108,8 +103,13 @@ fn default_mode_warns_on_legacy_dcc_fields() {
             "scripts": { "build": "cargo build" }
         }"#,
     );
-    let output = fx.dcc(&["build"]).env("RUST_LOG", "warn").output().unwrap();
+    let output = fx
+        .dcc(&["--dry-run", "build"])
+        .env("RUST_LOG", "warn")
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_success(&output);
     assert!(
         stderr.contains("top-level `extends` is deprecated"),
         "expected deprecation warning for legacy extends, got: {stderr}"
@@ -137,10 +137,12 @@ fn strict_mode_warns_on_legacy_dcc_fields() {
     );
     let output = fx
         .dcc(&["--strict", "build"])
+        .arg("--dry-run")
         .env("RUST_LOG", "warn")
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_success(&output);
     assert!(
         stderr.contains("top-level `extends` is deprecated"),
         "expected strict-mode deprecation warning for legacy extends, got: {stderr}"
@@ -160,24 +162,22 @@ fn dash_dash_not_rejected_by_arg_parser() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
     // `dcc run --` should be accepted syntactically (may fail due to missing Docker)
-    let output = fx.dcc(&["run", "--"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "`--` should be valid CLI syntax, not rejected by clap\nstderr: {stderr}"
-    );
+    let output = fx.dcc(&["--dry-run", "run", "--"]).output().unwrap();
+    assert_success(&output);
 }
 
 #[test]
 fn positional_args_after_run_accepted() {
     let fx = Fixture::new();
-    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
-    let output = fx.dcc(&["run", "/bin/true"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "positional args after `run` should be accepted by clap\nstderr: {stderr}"
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": { "dcc": { "commands": { "true": "/bin/true" } } }
+        }"#,
     );
+    let output = fx.dcc(&["--dry-run", "run", "true"]).output().unwrap();
+    assert_success(&output);
 }
 
 #[test]
@@ -260,50 +260,50 @@ fn skip_lifecycle_flag_accepted_by_exec() {
     // `--skip-lifecycle` must precede the trailing command. It may still fail (no
     // Docker daemon), but clap must not reject the flag as unexpected.
     let output = fx
-        .dcc(&["exec", "--skip-lifecycle", "/bin/true"])
+        .dcc(&["--dry-run", "exec", "--skip-lifecycle", "/bin/true"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument") && !stderr.contains("--skip-lifecycle"),
-        "`exec --skip-lifecycle` should be accepted by clap\nstderr: {stderr}"
-    );
+    assert_success(&output);
 }
 
 #[test]
 fn debug_flag_accepted_by_exec_and_run() {
     let fx = Fixture::new();
-    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": { "dcc": { "commands": { "noop": "true" } } }
+        }"#,
+    );
     // `--debug` must precede the trailing command on exec. Both may still fail (no
     // Docker daemon), but clap must not reject the flag as unexpected.
     for args in [
-        ["exec", "--debug", "/bin/true"].as_slice(),
-        ["run", "--debug", "noop"].as_slice(),
+        ["--dry-run", "exec", "--debug", "/bin/true"].as_slice(),
+        ["--dry-run", "run", "--debug", "noop"].as_slice(),
     ] {
         let output = fx.dcc(args).output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("unexpected argument") && !stderr.contains("--debug"),
-            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
-        );
+        assert_success(&output);
     }
 }
 
 #[test]
 fn allow_unsafe_runtime_flag_accepted_by_build_exec_and_run() {
     let fx = Fixture::new();
-    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": { "dcc": { "commands": { "noop": "true" } } }
+        }"#,
+    );
     for args in [
-        ["build", "--allow-unsafe-runtime"].as_slice(),
-        ["exec", "--allow-unsafe-runtime", "/bin/true"].as_slice(),
-        ["run", "--allow-unsafe-runtime", "noop"].as_slice(),
+        ["--dry-run", "build", "--allow-unsafe-runtime"].as_slice(),
+        ["--dry-run", "exec", "--allow-unsafe-runtime", "/bin/true"].as_slice(),
+        ["--dry-run", "run", "--allow-unsafe-runtime", "noop"].as_slice(),
     ] {
         let output = fx.dcc(args).output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("unexpected argument") && !stderr.contains("--allow-unsafe-runtime"),
-            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
-        );
+        assert_success(&output);
     }
 }
 
@@ -312,39 +312,35 @@ fn start_and_attach_commands_are_accepted() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
     for args in [
-        ["start"].as_slice(),
-        ["attach"].as_slice(),
-        ["attach", "/bin/sh"].as_slice(),
+        ["--dry-run", "start"].as_slice(),
+        ["--dry-run", "attach"].as_slice(),
+        ["--dry-run", "attach", "/bin/sh"].as_slice(),
     ] {
         let output = fx.dcc(args).output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("unrecognized subcommand") && !stderr.contains("unexpected argument"),
-            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
-        );
+        assert_success(&output);
     }
 }
 
 #[test]
 fn keep_flag_accepted_by_run_exec_and_attach() {
     let fx = Fixture::new();
-    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": { "dcc": { "commands": { "noop": "true" } } }
+        }"#,
+    );
     for args in [
-        ["run", "--keep", "noop"].as_slice(),
-        ["run", "-k", "noop"].as_slice(),
-        ["exec", "--keep", "/bin/true"].as_slice(),
-        ["exec", "-k", "/bin/true"].as_slice(),
-        ["attach", "--keep"].as_slice(),
-        ["attach", "-k", "/bin/sh"].as_slice(),
+        ["--dry-run", "run", "--keep", "noop"].as_slice(),
+        ["--dry-run", "run", "-k", "noop"].as_slice(),
+        ["--dry-run", "exec", "--keep", "/bin/true"].as_slice(),
+        ["--dry-run", "exec", "-k", "/bin/true"].as_slice(),
+        ["--dry-run", "attach", "--keep"].as_slice(),
+        ["--dry-run", "attach", "-k", "/bin/sh"].as_slice(),
     ] {
         let output = fx.dcc(args).output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("unexpected argument")
-                && !stderr.contains("--keep")
-                && !stderr.contains("-k"),
-            "`{args:?}` should be accepted by clap\nstderr: {stderr}"
-        );
+        assert_success(&output);
     }
 }
 
@@ -352,11 +348,35 @@ fn keep_flag_accepted_by_run_exec_and_attach() {
 fn refresh_only_flag_accepted_by_build() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
-    let output = fx.dcc(&["build", "--refresh-only"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let output = fx
+        .dcc(&["--dry-run", "build", "--refresh-only"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+}
+
+#[test]
+fn dry_run_format_json_outputs_stable_report() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    let output = fx
+        .dcc(&["--dry-run", "--format", "json", "build", "--refresh-only"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid json: {e}\n{stdout}"));
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["command"], "build --refresh-only");
+    assert_eq!(json["docker_invoked"], false);
+    assert_eq!(json["profile"], "devcontainer");
     assert!(
-        !stderr.contains("unexpected argument") && !stderr.contains("--refresh-only"),
-        "`build --refresh-only` should be accepted by clap\nstderr: {stderr}"
+        json["skipped"].as_array().is_some_and(|items| items
+            .iter()
+            .any(|item| item == "profile image existence check")),
+        "expected skipped image-existence check in dry-run report: {json}"
     );
 }
 
@@ -374,12 +394,11 @@ fn strict_accepts_official_build_source_field() {
             }
         }"#,
     );
-    let output = fx.dcc(&["--strict", "build"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unrecognized field 'build'"),
-        "`--strict build` should accept official `build`\nstderr: {stderr}"
-    );
+    let output = fx
+        .dcc(&["--strict", "--dry-run", "build"])
+        .output()
+        .unwrap();
+    assert_success(&output);
 }
 
 #[test]
@@ -403,12 +422,11 @@ fn strict_accepts_final_compatibility_fields() {
             "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind"
         }"#,
     );
-    let output = fx.dcc(&["--strict", "build"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.to_lowercase().contains("unrecognized field"),
-        "`--strict build` should accept final compatibility fields\nstderr: {stderr}"
-    );
+    let output = fx
+        .dcc(&["--strict", "--dry-run", "build"])
+        .output()
+        .unwrap();
+    assert_success(&output);
 }
 
 #[test]
@@ -448,11 +466,34 @@ fn strict_accepts_valid_config() {
 
 #[test]
 #[ignore]
-fn dash_dash_passes_command_override() {
+fn exec_runs_direct_command() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
     // Build first
     assert_success(&fx.dcc(&["build"]).output().unwrap());
-    // Then run with override
-    assert_success(&fx.dcc(&["run", "--", "/bin/true"]).output().unwrap());
+    // Then execute an explicit command.
+    assert_success(&fx.dcc(&["exec", "/bin/true"]).output().unwrap());
+}
+
+#[test]
+#[ignore]
+fn run_executes_named_command() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": {
+                "dcc": {
+                    "commands": {
+                        "true": "/bin/true"
+                    }
+                }
+            }
+        }"#,
+    );
+    // Build first
+    assert_success(&fx.dcc(&["build"]).output().unwrap());
+    // Then resolve and execute the named dcc command.
+    assert_success(&fx.dcc(&["run", "true"]).output().unwrap());
 }

@@ -3,6 +3,7 @@ mod cache;
 mod cli;
 mod config;
 mod docker;
+mod dry_run;
 mod exec;
 mod features;
 mod forward;
@@ -55,6 +56,8 @@ async fn run() -> anyhow::Result<()> {
                     refresh_only,
                     strict: cli.strict,
                     allow_unsafe_runtime,
+                    dry_run: cli.dry_run,
+                    format: cli.format,
                 },
             )
             .await
@@ -84,6 +87,8 @@ async fn run() -> anyhow::Result<()> {
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
                     keep,
+                    dry_run: cli.dry_run,
+                    format: cli.format,
                 },
             )
             .await?;
@@ -110,6 +115,8 @@ async fn run() -> anyhow::Result<()> {
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
                     keep: true,
+                    dry_run: cli.dry_run,
+                    format: cli.format,
                 },
             )
             .await
@@ -138,16 +145,40 @@ async fn run() -> anyhow::Result<()> {
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
                     keep,
+                    dry_run: cli.dry_run,
+                    format: cli.format,
                 },
             )
             .await?;
             std::process::exit(status.code().unwrap_or(1));
         }
         cli::Command::Stop {} => {
-            stop::stop(&workspace, &profile, &config_path, cli.strict, &cli.profile).await
+            stop::stop(
+                &workspace,
+                &profile,
+                &config_path,
+                stop::StopOptions {
+                    strict: cli.strict,
+                    profile_arg: &cli.profile,
+                    dry_run: cli.dry_run,
+                    format: cli.format,
+                },
+            )
+            .await
         }
         cli::Command::Id {} => {
-            println!("{}", profile::ContainerId::new(&workspace, &profile));
+            let container_id = profile::ContainerId::new(&workspace, &profile);
+            if cli.format == cli::OutputFormat::Json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "profile": profile.as_str(),
+                        "container_id": container_id.as_str()
+                    })
+                );
+            } else {
+                println!("{container_id}");
+            }
             Ok(())
         }
         cli::Command::Run {
@@ -174,6 +205,8 @@ async fn run() -> anyhow::Result<()> {
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
                     keep,
+                    dry_run: cli.dry_run,
+                    format: cli.format,
                 },
             )
             .await

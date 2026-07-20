@@ -221,6 +221,24 @@ command-wrapper, and build-preparation hook assets into the image. During
 and `postCreateCommand` in order, with Feature hooks before project hooks for
 each phase and state mounts attached.
 
+### Dry runs and JSON output
+
+Pass `--dry-run` to `dcc build`, `dcc run`, `dcc exec`, `dcc start`,
+`dcc attach`, or `dcc stop` to validate the workspace, profile, config, command
+line, and config-local safety gates without invoking Docker. Dry runs stop before
+Docker image inspection, image build/pull/tag, container lookup/start/exec/stop,
+port forwarding, and lifecycle hook execution.
+
+By default a dry run prints a short text report and exits 0 when validation
+succeeds. Pass `--format json` with `--dry-run` for a stable machine-readable
+report containing the command, profile, config path, `docker_invoked: false`,
+checks performed, and Docker-dependent checks skipped.
+
+Dry runs cannot validate information that only exists in Docker image metadata,
+such as Feature-contributed command metadata from `devcontainer.metadata`, or
+values that require inspecting/probing the built image. The live Docker smoke
+tests remain the source of truth for build/run behavior past that boundary.
+
 ### `dcc run`
 
 Runs a named command from `customizations.dcc.commands` or Feature command

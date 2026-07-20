@@ -10,7 +10,7 @@ use crate::{
         self,
         vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE},
     },
-    docker,
+    docker, dry_run,
     features::{self, FeatureRuntimeConfig, FeatureUnsafeRuntime},
     forward, lifecycle,
     profile::{ContainerId, ContainerName, ProfileName},
@@ -36,6 +36,8 @@ pub(crate) struct ExecOptions<'a> {
     pub(crate) profile_arg: &'a str,
     pub(crate) allow_unsafe_runtime: bool,
     pub(crate) keep: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) format: crate::cli::OutputFormat,
 }
 
 pub(crate) async fn exec(
@@ -45,6 +47,22 @@ pub(crate) async fn exec(
     override_args: &[String],
     opts: ExecOptions<'_>,
 ) -> anyhow::Result<ExitStatus> {
+    if opts.dry_run {
+        dry_run_runtime(
+            workspace,
+            profile,
+            config_path,
+            "exec",
+            override_args,
+            opts,
+            vec![
+                "docker image/container inspection",
+                "docker run",
+                "docker exec",
+            ],
+        )?;
+        return Ok(success_status());
+    }
     execute_foreground(
         workspace,
         profile,
@@ -68,6 +86,23 @@ pub(crate) async fn attach(
     } else {
         override_args.to_vec()
     };
+    if opts.dry_run {
+        dry_run_runtime(
+            workspace,
+            profile,
+            config_path,
+            "attach",
+            &raw_args,
+            opts,
+            vec![
+                "docker image/container inspection",
+                "docker run",
+                "postAttachCommand hooks",
+                "docker exec",
+            ],
+        )?;
+        return Ok(success_status());
+    }
     execute_foreground(
         workspace,
         profile,
@@ -85,6 +120,22 @@ pub(crate) async fn start(
     config_path: &Path,
     opts: ExecOptions<'_>,
 ) -> anyhow::Result<()> {
+    if opts.dry_run {
+        dry_run_runtime(
+            workspace,
+            profile,
+            config_path,
+            "start",
+            &[],
+            opts,
+            vec![
+                "docker image/container inspection",
+                "docker run",
+                "postStartCommand hooks",
+            ],
+        )?;
+        return Ok(());
+    }
     let plan = RuntimePlan::prepare(workspace, profile, config_path, &[], opts).await?;
     let state = RuntimeState::new(&plan.cache_dir);
     let _lock = state.acquire_lock()?;
@@ -103,6 +154,59 @@ pub(crate) async fn start(
     }
     start_container(&plan, ContainerMode::Durable).await?;
     run_runtime_hooks(&plan, plan.container.as_str(), RuntimeHookPhase::Startup).await
+}
+
+pub(crate) fn dry_run_runtime(
+    workspace: &Workspace,
+    profile: &ProfileName,
+    config_path: &Path,
+    command: &str,
+    override_args: &[String],
+    opts: ExecOptions<'_>,
+    mut skipped: Vec<&'static str>,
+) -> anyhow::Result<()> {
+    let cache_dir = CacheDir::new(workspace, profile);
+    let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
+        .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
+    let empty_feature_runtime = FeatureRuntimeConfig::default();
+    ensure_unsafe_runtime_allowed(&config, &empty_feature_runtime, opts.allow_unsafe_runtime)?;
+    sanitize_run_args(&config.run_args, opts.allow_unsafe_runtime)?;
+    ensure_mounts_safe(&config.mounts, opts.allow_unsafe_runtime)?;
+    if references_container_env(override_args, &config, &empty_feature_runtime) {
+        skipped.push("containerEnv resolution from image/user probe");
+    }
+    skipped.extend([
+        "devcontainer.metadata feature runtime inspection",
+        "state/cache mount preparation",
+        "port forwarding",
+    ]);
+    dry_run::DryRunReport::new(
+        command,
+        profile,
+        config_path,
+        vec![
+            "workspace resolved",
+            "profile resolved",
+            "config loaded",
+            "devcontainer unsafe runtime checked",
+            "runArgs checked",
+            "mount safety checked",
+        ],
+        skipped,
+    )
+    .print(opts.format)
+}
+
+#[cfg(unix)]
+fn success_status() -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt as _;
+    ExitStatus::from_raw(0)
+}
+
+#[cfg(windows)]
+fn success_status() -> ExitStatus {
+    use std::os::windows::process::ExitStatusExt as _;
+    ExitStatus::from_raw(0)
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
