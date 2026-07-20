@@ -40,6 +40,26 @@ jobs:
 
       - run: cargo test
 
+  docker-test:
+    name: Docker smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify Docker host
+        run: |
+          docker version
+          docker info
+
+      # These tests are ignored in Rust so local cargo test runs stay Docker-free.
+      # GitHub-hosted Ubuntu runners provide a host Docker daemon for build/run tests.
+      - name: Run ignored Docker tests
+        run: |
+          cargo test --test cli_flags strict_accepts_valid_config -- --ignored --exact --nocapture
+          cargo test --test cli_flags dash_dash_passes_command_override -- --ignored --exact --nocapture
+
   build:
     name: Build
     runs-on: ubuntu-latest

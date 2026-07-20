@@ -435,7 +435,8 @@ fn build_rejects_devcontainer_unsafe_runtime_without_flag_before_docker() {
     assert_stderr_contains(&output, "securityOpt");
 }
 
-// Tests below require a live Docker daemon — skipped in CI
+// Tests below require a live Docker daemon. They stay ignored for local/devcontainer
+// cargo test runs; GitHub Actions runs them explicitly on an Ubuntu Docker host.
 #[test]
 #[ignore]
 fn strict_accepts_valid_config() {
