@@ -13,9 +13,9 @@ Record only commands verified by successful execution in this environment.
 | Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.96.0 (ac68faa20 2026-05-25)`. | 2026-07-14 |
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-07-20 |
-| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.0.33`. | 2026-07-14 |
+| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.0`. | 2026-07-20 |
 | Lint | `cargo clippy -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied. | 2026-07-20 |
-| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 406 unit tests, 24 runnable CLI/config integration tests with 3 ignored, and 9 config error integration tests passed. | 2026-07-20 |
+| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 406 unit tests, 24 runnable CLI/config integration tests with 3 ignored, 9 config error integration tests, and 7 ignored Docker smoke tests passed/listed without running Docker. | 2026-07-20 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-07-20 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 | Workflow lint | `actionlint .github/workflows/ci.yml` | `actionlint` on `PATH` | Passed with no findings using `actionlint 1.7.12`. | 2026-07-20 |
