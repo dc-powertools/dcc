@@ -837,7 +837,7 @@ must include the full command that was attempted.
 ## CLI Definition (`cli.rs`)
 
 ```
-dcc [--strict] [--dry-run] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
+dcc [--strict] [--dry-run] [--debug] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
 
 Commands:
   build  [--no-cache] [--update] [--refresh-only]
@@ -849,8 +849,8 @@ Commands:
   id
 ```
 
-`--profile` (`-p`), `--strict`, `--dry-run`, and `--format` are clap **global
-arguments** declared once on `Cli` and read from the single global fields. As
+`--profile` (`-p`), `--strict`, `--dry-run`, `--debug`, and `--format` are clap
+**global arguments** declared once on `Cli` and read from the single global fields. As
 global arguments they are accepted in both positions — `dcc -p claude --strict run`
 and `dcc run -p claude --strict` are equivalent — so users are not forced to
 remember whether the flags precede or follow the subcommand. Earlier versions
@@ -872,6 +872,10 @@ the command, profile, config path, `docker_invoked: false`, checks performed, an
 Docker-dependent checks skipped. Dry-run cannot validate image-derived data such as
 Feature runtime metadata from `devcontainer.metadata` or `${containerEnv:...}` values
 that require image/user probing.
+
+`--debug` emits command-specific resolved details to stderr. Runtime commands print
+the launch plan and Docker command. `build`, `stop`, and `id` print the resolved
+profile/config/container/image details available before acting.
 
 The exit code of `dcc run` mirrors the container process exit code.
 All other commands exit 0 on success and 1 on error.

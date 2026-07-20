@@ -57,6 +57,7 @@ async fn run() -> anyhow::Result<()> {
                     strict: cli.strict,
                     allow_unsafe_runtime,
                     dry_run: cli.dry_run,
+                    debug: cli.debug,
                     format: cli.format,
                 },
             )
@@ -66,7 +67,6 @@ async fn run() -> anyhow::Result<()> {
             memory,
             cpus,
             skip_lifecycle,
-            debug,
             allow_unsafe_runtime,
             keep,
             args,
@@ -82,7 +82,7 @@ async fn run() -> anyhow::Result<()> {
                         cpus: &cpus,
                     },
                     skip_lifecycle,
-                    debug,
+                    debug: cli.debug,
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
@@ -97,7 +97,6 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Start {
             memory,
             cpus,
-            debug,
             allow_unsafe_runtime,
         } => {
             exec::start(
@@ -110,7 +109,7 @@ async fn run() -> anyhow::Result<()> {
                         cpus: &cpus,
                     },
                     skip_lifecycle: false,
-                    debug,
+                    debug: cli.debug,
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
@@ -124,7 +123,6 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Attach {
             memory,
             cpus,
-            debug,
             allow_unsafe_runtime,
             keep,
             args,
@@ -140,7 +138,7 @@ async fn run() -> anyhow::Result<()> {
                         cpus: &cpus,
                     },
                     skip_lifecycle: false,
-                    debug,
+                    debug: cli.debug,
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,
@@ -161,6 +159,7 @@ async fn run() -> anyhow::Result<()> {
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     dry_run: cli.dry_run,
+                    debug: cli.debug,
                     format: cli.format,
                 },
             )
@@ -168,6 +167,15 @@ async fn run() -> anyhow::Result<()> {
         }
         cli::Command::Id {} => {
             let container_id = profile::ContainerId::new(&workspace, &profile);
+            if cli.debug {
+                eprintln!("dcc debug: profile `{}`", profile.as_str());
+                eprintln!("dcc debug: config `{}`", config_path.display());
+                eprintln!("dcc debug: container id `{}`", container_id.as_str());
+                eprintln!(
+                    "dcc debug: image tag `{}`",
+                    container_id.as_image_tag().as_str()
+                );
+            }
             if cli.format == cli::OutputFormat::Json {
                 println!(
                     "{}",
@@ -184,7 +192,6 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Run {
             memory,
             cpus,
-            debug,
             allow_unsafe_runtime,
             keep,
             script,
@@ -200,7 +207,7 @@ async fn run() -> anyhow::Result<()> {
                         cpus: &cpus,
                     },
                     skip_lifecycle: false,
-                    debug,
+                    debug: cli.debug,
                     strict: cli.strict,
                     profile_arg: &cli.profile,
                     allow_unsafe_runtime,

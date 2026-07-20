@@ -219,11 +219,12 @@ All commands accept `--profile <name>` or `-p <name>`. The default profile is
 `devcontainer`, which loads `.devcontainer/devcontainer.json`; `-p ci` loads
 `.devcontainer/ci.json`.
 
-Because `--profile`, `--strict`, `--dry-run`, and `--format` are global flags,
-they may appear before or after the subcommand, before any positional command
-arguments. For commands like `dcc exec` and `dcc attach`, whose trailing
-arguments form the in-container command, global flags must come before the first
-positional command argument or they are passed through to the container command.
+Because `--profile`, `--strict`, `--dry-run`, `--debug`, and `--format` are
+global flags, they may appear before or after the subcommand, before any
+positional command arguments. For commands like `dcc exec` and `dcc attach`,
+whose trailing arguments form the in-container command, global flags must come
+before the first positional command argument or they are passed through to the
+container command.
 
 Pass `--strict` to treat unrecognised configuration fields as errors instead of
 warnings.
@@ -246,11 +247,14 @@ such as Feature-contributed command metadata from `devcontainer.metadata`, or
 values that require inspecting/probing the built image. The live Docker smoke
 tests remain the source of truth for build/run behavior past that boundary.
 
-Pass `--debug` to print the fully-resolved launch details to stderr just before
-the container starts: the container name and image, the runtime environment
-(`remoteEnv`) and image-baked `containerEnv`, every mount with its resolved
-`src -> dst` and options, forwarded ports, lifecycle scripts in execution order,
-and the exact `docker run` command. It does not change behavior.
+Pass `--debug` to print resolved command details to stderr without changing
+behavior. Runtime commands print launch details just before the container starts:
+the container name and image, the runtime environment (`remoteEnv`) and
+image-baked `containerEnv`, every mount with its resolved `src -> dst` and
+options, forwarded ports, lifecycle scripts in execution order, and the exact
+`docker run` command. `dcc build`, `dcc stop`, and `dcc id` print the resolved
+profile, config, image, and container identity details available to those
+commands.
 
 ### `dcc build`
 

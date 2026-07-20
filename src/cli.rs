@@ -8,6 +8,9 @@ pub(crate) struct Cli {
     /// Validate and report what would be done without invoking Docker.
     #[arg(long, global = true)]
     pub(crate) dry_run: bool,
+    /// Print resolved launch or command details to stderr before acting.
+    #[arg(long, global = true)]
+    pub(crate) debug: bool,
     /// Output format for dry-run reports and supported structured output.
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
     pub(crate) format: OutputFormat,
@@ -47,10 +50,6 @@ pub(crate) enum Command {
         /// each one skipped. Useful for debugging a misbehaving script.
         #[arg(long)]
         skip_lifecycle: bool,
-        /// Print the resolved launch details (env, mounts, lifecycle scripts, and
-        /// the docker command) to stderr before starting the container.
-        #[arg(long)]
-        debug: bool,
         #[arg(long)]
         allow_unsafe_runtime: bool,
         #[arg(short = 'k', long)]
@@ -64,8 +63,6 @@ pub(crate) enum Command {
         #[arg(long, default_value = "2")]
         cpus: String,
         #[arg(long)]
-        debug: bool,
-        #[arg(long)]
         allow_unsafe_runtime: bool,
     },
     #[command(trailing_var_arg = true)]
@@ -74,8 +71,6 @@ pub(crate) enum Command {
         memory: String,
         #[arg(long, default_value = "2")]
         cpus: String,
-        #[arg(long)]
-        debug: bool,
         #[arg(long)]
         allow_unsafe_runtime: bool,
         #[arg(short = 'k', long)]
@@ -90,10 +85,6 @@ pub(crate) enum Command {
         memory: String,
         #[arg(long, default_value = "2")]
         cpus: String,
-        /// Print the resolved launch details (env, mounts, lifecycle scripts, and
-        /// the docker command) to stderr before starting the container.
-        #[arg(long)]
-        debug: bool,
         #[arg(long)]
         allow_unsafe_runtime: bool,
         #[arg(short = 'k', long)]
