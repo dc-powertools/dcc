@@ -46,7 +46,7 @@ Readiness verdict: Ready with concerns
 | Yes | Specialist review for non-trivial code slices. | T-0005 read-only review found no blocking findings. | Pass | |
 | Yes | Security review for runtime/mount/script slices. | T-0010 read-only review found a blocking non-normalized mount bypass plus lower-severity coverage/docs issues. Root fixed path/SSH-agent mount gating, cache auto-create escape, merge tests, and records. | Pass | |
 | Yes | Official devcontainer config validation | Passed on 2026-07-15 with `@devcontainers/cli 0.87.0`, Node.js v20.19.2, npm 9.2.0, and Docker 26.1.5. Command: `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace`; output file `/tmp/dcc-devcontainer-read-configuration.json` was 14,073 bytes and included merged root image, Feature metadata, mounts, hooks, workspace mount, and defaulted compatibility fields. | Pass | |
-| No | Live Docker smoke test | Attempted on 2026-07-15 with the ignored `strict_accepts_valid_config` test against a constrained local Docker daemon. BuildKit failed to mount its build context with `operation not permitted`; retrying with `DOCKER_BUILDKIT=0` failed with `unshare: operation not permitted`. No containers or images were left behind. | Blocked | Run the ignored Docker smoke tests on a host or harness that grants Docker the mount, namespace, and network capabilities needed for image build and container run. |
+| No | Live Docker smoke test | Attempted on 2026-07-15 with the ignored `strict_accepts_valid_config` test against a constrained local Docker daemon. BuildKit failed to mount its build context with `operation not permitted`; retrying with `DOCKER_BUILDKIT=0` failed with `unshare: operation not permitted`. No containers or images were left behind. On 2026-07-20, CI was configured to run both ignored Docker smoke tests on GitHub-hosted Ubuntu runners. | Pending CI | Review the first GitHub Actions `docker-test` run on a host runner that grants Docker the mount, namespace, and network capabilities needed for image build and container run. |
 
 - Criteria or methods amended after implementation began, with reason and impact: None yet.
 - Counterfactual evidence for new regression or behavior tests: Pending per child task.
@@ -87,14 +87,14 @@ Readiness verdict: Ready with concerns
 - T-0010 parses port attributes for schema compatibility, but browser/preview auto-open
   behavior is not implemented.
 - Official Dev Container CLI config validation passed in a follow-up environment with
-  installed tooling; live Docker smoke tests of `dcc` build/runtime behavior remain
-  blocked by this harness container's Docker mount/namespace restrictions.
+  installed tooling. Live Docker smoke tests of `dcc` build/runtime behavior remain
+  blocked by this harness container's Docker mount/namespace restrictions, so GitHub
+  Actions now runs them on Ubuntu host runners.
 
 ## Completion
 
 - Required checks all passed: Yes
 - Status: Done with residual risks
 - Exact incomplete condition, if not Done: None; live Docker smoke testing remains a
-  recorded residual risk.
-- Next action: Optional future live Docker smoke in an environment that can build and run
-  the managed devcontainer image without mount or namespace restrictions.
+  recorded residual risk until the GitHub `docker-test` job has produced a passing run.
+- Next action: Review the first GitHub Actions Docker smoke run.
