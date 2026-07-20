@@ -290,7 +290,7 @@ fn skip_lifecycle_flag_accepted_by_exec() {
 }
 
 #[test]
-fn debug_flag_accepted_by_exec_and_run() {
+fn debug_flag_is_global() {
     let fx = Fixture::new();
     fx.write_config(
         "devcontainer.json",
@@ -299,15 +299,37 @@ fn debug_flag_accepted_by_exec_and_run() {
             "customizations": { "dcc": { "commands": { "noop": "true" } } }
         }"#,
     );
-    // `--debug` must precede the trailing command on exec. Both may still fail (no
-    // Docker daemon), but clap must not reject the flag as unexpected.
     for args in [
+        ["--debug", "--dry-run", "build"].as_slice(),
+        ["--dry-run", "build", "--debug"].as_slice(),
         ["--dry-run", "exec", "--debug", "/bin/true"].as_slice(),
+        ["--dry-run", "start", "--debug"].as_slice(),
+        ["--dry-run", "attach", "--debug", "/bin/true"].as_slice(),
+        ["--dry-run", "stop", "--debug"].as_slice(),
+        ["id", "--debug"].as_slice(),
         ["--dry-run", "run", "--debug", "noop"].as_slice(),
     ] {
         let output = fx.dcc(args).output().unwrap();
         assert_success(&output);
     }
+}
+
+#[test]
+fn debug_output_is_emitted_for_new_global_commands() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+
+    let build = fx.dcc(&["--dry-run", "--debug", "build"]).output().unwrap();
+    assert_success(&build);
+    assert_stderr_contains(&build, "dcc debug: command `build`");
+
+    let stop = fx.dcc(&["--dry-run", "--debug", "stop"]).output().unwrap();
+    assert_success(&stop);
+    assert_stderr_contains(&stop, "dcc debug: command `stop`");
+
+    let id = fx.dcc(&["--debug", "id"]).output().unwrap();
+    assert_success(&id);
+    assert_stderr_contains(&id, "dcc debug: container id");
 }
 
 #[test]

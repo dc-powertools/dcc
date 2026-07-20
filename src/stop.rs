@@ -18,6 +18,16 @@ pub(crate) async fn stop(
     opts: StopOptions<'_>,
 ) -> anyhow::Result<()> {
     let container_id = ContainerId::new(workspace, profile);
+    if opts.debug {
+        eprintln!("dcc debug: command `stop`");
+        eprintln!("dcc debug: profile `{}`", profile.as_str());
+        eprintln!("dcc debug: config `{}`", config_path.display());
+        eprintln!("dcc debug: container id `{}`", container_id.as_str());
+        eprintln!(
+            "dcc debug: image tag `{}`",
+            container_id.as_image_tag().as_str()
+        );
+    }
     if opts.dry_run {
         let cache_dir = CacheDir::new(workspace, profile);
         let _config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
@@ -48,6 +58,9 @@ pub(crate) async fn stop(
     let container = docker::running_container_name_by_id(container_id.as_str())
         .await?
         .unwrap_or_else(|| container_id.as_str().to_string());
+    if opts.debug {
+        eprintln!("dcc debug: stopping container `{container}`");
+    }
     docker::stop_container(&container)
         .await
         .with_context(|| format!("failed to stop container `{container}`"))?;
@@ -58,6 +71,7 @@ pub(crate) struct StopOptions<'a> {
     pub(crate) strict: bool,
     pub(crate) profile_arg: &'a str,
     pub(crate) dry_run: bool,
+    pub(crate) debug: bool,
     pub(crate) format: crate::cli::OutputFormat,
 }
 

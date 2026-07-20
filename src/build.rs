@@ -32,6 +32,26 @@ pub(crate) async fn build(
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
 
+    if opts.debug {
+        eprintln!("dcc debug: command `build`");
+        eprintln!("dcc debug: profile `{}`", profile.as_str());
+        eprintln!("dcc debug: config `{}`", config_path.display());
+        eprintln!("dcc debug: image tag `{}`", image_tag.as_str());
+        match (config.image.as_deref(), config.build.as_ref()) {
+            (Some(image), None) => eprintln!("dcc debug: image source `{image}`"),
+            (None, Some(build)) => {
+                eprintln!("dcc debug: build context `{}`", build.context);
+                eprintln!("dcc debug: build dockerfile `{}`", build.dockerfile);
+                if let Some(target) = &build.target {
+                    eprintln!("dcc debug: build target `{target}`");
+                }
+            }
+            _ => {}
+        }
+        eprintln!("dcc debug: refresh-only `{}`", opts.refresh_only);
+        eprintln!("dcc debug: fast path `{}`", uses_fast_path(&config));
+    }
+
     if opts.dry_run {
         let mut skipped = vec![
             "docker image build/pull/tag",
@@ -110,6 +130,7 @@ pub(crate) struct BuildOptions {
     pub(crate) strict: bool,
     pub(crate) allow_unsafe_runtime: bool,
     pub(crate) dry_run: bool,
+    pub(crate) debug: bool,
     pub(crate) format: crate::cli::OutputFormat,
 }
 

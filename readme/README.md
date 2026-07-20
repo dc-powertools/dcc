@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-20 | Made `--debug` a global CLI flag and added debug output for build, stop, and id. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Moved README command flag guidance into a dedicated `Global flags` subsection. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Reorganized README lifecycle-hook documentation into a dedicated trigger table. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Removed `initializeCommand` execution so the hook is only parsed with an unsupported warning. | `readme/tasks/README.md#tasks` |
@@ -62,6 +63,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 16
+- Completed repository-changing tasks since that pass: 17
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first
