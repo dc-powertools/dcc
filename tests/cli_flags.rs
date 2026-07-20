@@ -125,6 +125,29 @@ fn default_mode_warns_on_legacy_dcc_fields() {
 }
 
 #[test]
+fn initialize_command_is_parse_only_and_warns() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "initializeCommand": "echo should-not-run"
+        }"#,
+    );
+    let output = fx
+        .dcc(&["--dry-run", "build"])
+        .env("RUST_LOG", "warn")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_success(&output);
+    assert!(
+        stderr.contains("initializeCommand is parsed for devcontainer compatibility"),
+        "expected unsupported initializeCommand warning, got: {stderr}"
+    );
+}
+
+#[test]
 fn strict_mode_warns_on_legacy_dcc_fields() {
     let fx = Fixture::new();
     fx.write_config("base.json", r#"{ "image": "rust:1" }"#);

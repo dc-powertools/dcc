@@ -226,8 +226,8 @@ build time, so only container-side constants are substituted:
 | `${containerWorkspaceFolder}` | `/workspace` |
 
 **Runtime-applied properties** — `remoteEnv`, `mounts`, `runArgs`, `workspaceFolder`,
-the container command (`dcc run` scripts / `dcc exec` args), and the lifecycle commands
-(`initializeCommand` plus the in-container hooks) — additionally substitute:
+the container command (`dcc run` scripts / `dcc exec` args), and supported
+in-container lifecycle hooks — additionally substitute:
 
 | Variable | Value |
 |---|---|
@@ -519,11 +519,12 @@ container can disappear before readiness polling or attach observes it. User com
 run via `docker exec` (phase 4). `dcc` polls `docker inspect` at 100 ms intervals (up
 to 10 s) until the keep-alive container reports as running.
 
-When a new container starts, `initializeCommand` runs on the host before `docker run`
-unless lifecycle skipping is enabled, then `postStartCommand` runs inside the container.
-Feature-contributed startup hooks run before the project hook for that phase.
-Build-preparation hooks (`onCreateCommand`, `updateContentCommand`,
-`postCreateCommand`) are not part of ordinary runtime commands; `dcc build` owns them.
+`initializeCommand` is parsed for devcontainer compatibility but is not executed,
+because `dcc` does not run devcontainer-defined commands on the host. When a new
+container starts, `postStartCommand` runs inside the container. Feature-contributed
+startup hooks run before the project hook for that phase. Build-preparation hooks
+(`onCreateCommand`, `updateContentCommand`, `postCreateCommand`) are not part of
+ordinary runtime commands; `dcc build` owns them.
 
 `runArgs` are deliberately allowlisted. Safe value-taking flags such as `--add-host`,
 `--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`,
@@ -839,10 +840,13 @@ must include the full command that was attempted.
 dcc [--strict] [--dry-run] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
 
 Commands:
-  build  [--no-cache]
+  build  [--no-cache] [--update] [--refresh-only]
   run    [--memory <size>] [--cpus <n>] [command-name]
   exec   [--memory <size>] [--cpus <n>] <command...>
+  start  [--memory <size>] [--cpus <n>]
+  attach [--memory <size>] [--cpus <n>] [command...]
   stop
+  id
 ```
 
 `--profile` (`-p`), `--strict`, `--dry-run`, and `--format` are clap **global

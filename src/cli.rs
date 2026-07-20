@@ -43,9 +43,8 @@ pub(crate) enum Command {
         memory: String,
         #[arg(long, default_value = "2")]
         cpus: String,
-        /// Skip lifecycle scripts (initializeCommand and the in-container hooks),
-        /// printing a warning for each one skipped. Useful for debugging a
-        /// misbehaving script.
+        /// Skip supported in-container lifecycle scripts, printing a warning for
+        /// each one skipped. Useful for debugging a misbehaving script.
         #[arg(long)]
         skip_lifecycle: bool,
         /// Print the resolved launch details (env, mounts, lifecycle scripts, and

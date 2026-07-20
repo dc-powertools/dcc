@@ -1,5 +1,5 @@
 use std::io::IsTerminal as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitStatus;
 
 use anyhow::Context as _;
@@ -303,20 +303,6 @@ async fn execute_foreground(
 }
 
 async fn start_container(plan: &RuntimePlan, mode: ContainerMode) -> anyhow::Result<()> {
-    // initializeCommand runs on the host before the container is created/started.
-    if let Some(cmd) = &plan.config.initialize_command {
-        if plan.opts.skip_lifecycle {
-            eprintln!("warning: skipping initializeCommand (--skip-lifecycle)");
-        } else {
-            let cmd = cmd
-                .try_substitute(&|s| config::vars::resolve_container_env(s, &plan.container_env))
-                .context("initializeCommand")?;
-            lifecycle::run_on_host(&cmd, &plan.workspace_root)
-                .await
-                .context("initializeCommand failed")?;
-        }
-    }
-
     if plan.opts.debug {
         eprintln!(
             "dcc debug: starting {} container `{}`",
@@ -361,7 +347,6 @@ fn default_attach_command() -> Vec<String> {
 }
 
 struct RuntimePlan {
-    workspace_root: PathBuf,
     cache_dir: CacheDir,
     config: config::DevcontainerConfig,
     feature_runtime: FeatureRuntimeConfig,
@@ -724,7 +709,6 @@ impl RuntimePlan {
         }
 
         Ok(Self {
-            workspace_root: workspace.root.clone(),
             cache_dir,
             config,
             feature_runtime,
@@ -1215,10 +1199,10 @@ fn references_container_env(
     {
         return true;
     }
-    // Lifecycle commands: host initializeCommand plus runtime startup/attach hooks
-    // from both devcontainer.json and features. Build-prep hooks are intentionally
-    // excluded from ordinary runtime commands.
-    let mut cmds: Vec<&lifecycle::LifecycleCommand> = config.initialize_command.iter().collect();
+    // Runtime startup/attach hooks from both devcontainer.json and features.
+    // Build-prep hooks and unsupported host hooks are intentionally excluded from
+    // ordinary runtime commands.
+    let mut cmds: Vec<&lifecycle::LifecycleCommand> = Vec::new();
     for phase in [RuntimeHookPhase::Startup, RuntimeHookPhase::Attach] {
         cmds.extend(phase.get(&config.lifecycle));
         for (_id, hooks) in &feature_runtime.feature_hooks {
@@ -1288,9 +1272,9 @@ fn describe_lifecycle_command(cmd: &lifecycle::LifecycleCommand) -> String {
     }
 }
 
-/// Builds the `--debug` runtime lifecycle listing in execution order:
-/// `initializeCommand` (host), startup hooks, then attach hooks. Build-prep hooks
-/// stay out of ordinary runtime commands.
+/// Builds the `--debug` runtime lifecycle listing in execution order: startup
+/// hooks, then attach hooks. Build-prep hooks and unsupported host hooks stay
+/// out of ordinary runtime commands.
 fn debug_lifecycle_lines(
     config: &config::DevcontainerConfig,
     feature_runtime: &FeatureRuntimeConfig,
@@ -1302,12 +1286,6 @@ fn debug_lifecycle_lines(
         ""
     };
     let mut lines = Vec::new();
-    if let Some(cmd) = &config.initialize_command {
-        lines.push(format!(
-            "  initializeCommand (host): {}{suffix}",
-            describe_lifecycle_command(cmd)
-        ));
-    }
     for phase in [RuntimeHookPhase::Startup, RuntimeHookPhase::Attach] {
         let name = phase.hook_name();
         for (feature_id, hooks) in &feature_runtime.feature_hooks {
@@ -1698,7 +1676,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_lifecycle_lines_order_initialize_feature_then_devcontainer() {
+    fn debug_lifecycle_lines_order_feature_then_devcontainer() {
         let mut config = empty_config();
         config.initialize_command = Some(LifecycleCommand::Shell("echo init".into()));
         config.lifecycle.post_start_command = shell("cargo fetch");
@@ -1713,7 +1691,6 @@ mod tests {
         assert_eq!(
             debug_lifecycle_lines(&config, &runtime, false),
             vec![
-                "  initializeCommand (host): echo init".to_string(),
                 "  postStartCommand (feature node): npm ci".to_string(),
                 "  postStartCommand: cargo fetch".to_string(),
             ]
@@ -1817,6 +1794,19 @@ mod tests {
     fn references_container_env_false_for_build_prep_hook_only() {
         let mut config = empty_config();
         config.lifecycle.post_create_command = shell("echo ${containerEnv:HOME}");
+        assert!(!references_container_env(
+            &[],
+            &config,
+            &FeatureRuntimeConfig::default()
+        ));
+    }
+
+    #[test]
+    fn references_container_env_false_for_initialize_command() {
+        let mut config = empty_config();
+        config.initialize_command = Some(LifecycleCommand::Shell(
+            "echo ${containerEnv:HOME}".to_string(),
+        ));
         assert!(!references_container_env(
             &[],
             &config,

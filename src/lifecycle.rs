@@ -1,10 +1,6 @@
-use std::path::Path;
-use std::process::{ExitStatus, Stdio};
-
 use anyhow::Context as _;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use crate::docker;
 
@@ -192,29 +188,6 @@ pub(crate) async fn run_in_container(
     join_all(handles).await
 }
 
-/// Runs `cmd` on the host with working directory `cwd`. Same parallel
-/// semantics as [`run_in_container`].
-pub(crate) async fn run_on_host(cmd: &LifecycleCommand, cwd: &Path) -> anyhow::Result<()> {
-    let argvs = cmd.argvs();
-    if argvs.is_empty() {
-        return Ok(());
-    }
-    if let [argv] = argvs.as_slice() {
-        let status = exec_on_host(cwd, argv).await?;
-        return docker::check_status(status, &argv.join(" "));
-    }
-
-    let mut handles = Vec::with_capacity(argvs.len());
-    for argv in argvs {
-        let cwd = cwd.to_owned();
-        handles.push(tokio::spawn(async move {
-            let status = exec_on_host(&cwd, &argv).await?;
-            docker::check_status(status, &argv.join(" "))
-        }));
-    }
-    join_all(handles).await
-}
-
 /// Awaits every handle, returning the first `Err` (in handle order) once all
 /// have completed, or `Ok(())` if every command succeeded.
 async fn join_all(handles: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>) -> anyhow::Result<()> {
@@ -229,21 +202,6 @@ async fn join_all(handles: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>) -> 
         Some(e) => Err(e),
         None => Ok(()),
     }
-}
-
-async fn exec_on_host(cwd: &Path, argv: &[String]) -> anyhow::Result<ExitStatus> {
-    let program = argv.first().context("empty lifecycle command")?;
-    Command::new(program)
-        .args(&argv[1..])
-        .current_dir(cwd)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("failed to spawn `{}`", argv.join(" ")))?
-        .wait()
-        .await
-        .with_context(|| format!("failed to wait for `{}`", argv.join(" ")))
 }
 
 #[cfg(test)]
@@ -547,92 +505,5 @@ mod tests {
                 Some(&LifecycleCommand::Shell("post-attach".to_string())),
             ]
         );
-    }
-
-    // --- run_on_host (no Docker required) ---
-
-    #[tokio::test]
-    async fn run_on_host_shell_success() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cmd = LifecycleCommand::Shell("exit 0".to_string());
-        run_on_host(&cmd, tmp.path()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn run_on_host_shell_failure() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cmd = LifecycleCommand::Shell("exit 7".to_string());
-        let err = run_on_host(&cmd, tmp.path()).await.unwrap_err();
-        assert!(
-            err.to_string().contains('7'),
-            "expected exit code 7 in error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn run_on_host_runs_in_cwd() {
-        let tmp = tempfile::tempdir().unwrap();
-        let marker = tmp.path().join("marker");
-        let cmd = LifecycleCommand::Exec(vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "pwd > marker".to_string(),
-        ]);
-        run_on_host(&cmd, tmp.path()).await.unwrap();
-        let contents = std::fs::read_to_string(marker).unwrap();
-        assert_eq!(contents.trim(), tmp.path().to_str().unwrap());
-    }
-
-    #[tokio::test]
-    async fn run_on_host_parallel_all_succeed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut map = IndexMap::new();
-        map.insert(
-            "a".to_string(),
-            LifecycleCommandSingle::Exec(vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                "echo a > a.txt".to_string(),
-            ]),
-        );
-        map.insert(
-            "b".to_string(),
-            LifecycleCommandSingle::Exec(vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                "echo b > b.txt".to_string(),
-            ]),
-        );
-        let cmd = LifecycleCommand::Parallel(map);
-        run_on_host(&cmd, tmp.path()).await.unwrap();
-        assert!(tmp.path().join("a.txt").exists());
-        assert!(tmp.path().join("b.txt").exists());
-    }
-
-    #[tokio::test]
-    async fn run_on_host_parallel_propagates_failure() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut map = IndexMap::new();
-        map.insert(
-            "ok".to_string(),
-            LifecycleCommandSingle::Shell("exit 0".to_string()),
-        );
-        map.insert(
-            "fail".to_string(),
-            LifecycleCommandSingle::Shell("exit 3".to_string()),
-        );
-        let cmd = LifecycleCommand::Parallel(map);
-        let err = run_on_host(&cmd, tmp.path()).await.unwrap_err();
-        assert!(
-            err.to_string().contains('3'),
-            "expected exit code 3 in error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn run_on_host_empty_command_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cmd = LifecycleCommand::Exec(vec![]);
-        run_on_host(&cmd, tmp.path()).await.unwrap();
     }
 }

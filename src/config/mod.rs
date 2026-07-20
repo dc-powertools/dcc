@@ -351,6 +351,12 @@ pub(crate) fn load_config(
 }
 
 fn warn_unsupported_compatibility_fields(config: &DevcontainerConfig, path: &Path) {
+    if config.initialize_command.is_some() {
+        tracing::warn!(
+            file = %path.display(),
+            "initializeCommand is parsed for devcontainer compatibility, but dcc does not execute host lifecycle hooks"
+        );
+    }
     if config.override_command.is_some() {
         tracing::warn!(
             file = %path.display(),

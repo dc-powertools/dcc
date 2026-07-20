@@ -146,6 +146,7 @@ fn lifecycle_hooks_run_in_expected_phases() {
         r#"{{
             "image": "{IMAGE}",
             "containerUser": "root",
+            "initializeCommand": "printf 'initialize\n' >> hooks.log",
             "onCreateCommand": "printf 'onCreate\n' >> /workspace/hooks.log",
             "updateContentCommand": "printf 'updateContent\n' >> /workspace/hooks.log",
             "postCreateCommand": "printf 'postCreate\n' >> /workspace/hooks.log",

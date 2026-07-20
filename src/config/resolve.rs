@@ -336,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lifecycle_commands_substituted() {
+    fn test_lifecycle_commands_substituted_except_unsupported_initialize() {
         let dir = TempDir::new().unwrap();
         let path = write(
             dir.path(),
@@ -352,7 +352,7 @@ mod tests {
             config.initialize_command,
             Some(LifecycleCommand::Exec(vec![
                 "echo".to_string(),
-                "/tmp/.dcc/test".to_string(),
+                "${localCacheFolder}".to_string(),
             ]))
         );
         assert_eq!(
