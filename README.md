@@ -1,13 +1,22 @@
 # dcc — Dev Container CLI
 
-`dcc` is a CLI for macOS and Linux that streamlines the use of devcontainers.
+`dcc` is a CLI for macOS and Linux that runs devcontainer-based workspaces with
+profile-specific images, profile-local state, and predictable container reuse.
 
-`dcc` facilitates the use of multiple profile-specific devcontainers with either
-one-shot or durable runtime lifecycles across the development cycle. It introduces
-two extensions to the devcontainer spec that make this possible:
+Think of `dcc` as three pieces:
 
-1. a durable cache directory, which persists artifacts across executions
-2. the "extends" property, which enables inheritance of common configuration
+1. `dcc build` prepares the profile image and runs build-preparation lifecycle
+   hooks.
+2. Runtime commands (`dcc run`, `dcc exec`, `dcc attach`, and `dcc start`) share
+   one managed profile container when it is running.
+3. State declared under `customizations.dcc.state` is mounted from the
+   workspace's `.dcc/<profile>/state` directory, so tool caches and selected files
+   can survive one-shot containers and rebuilds.
+
+`dcc` also adds `customizations.dcc.extends` for local config inheritance and
+`customizations.dcc.commands` for named project commands. Legacy top-level
+`extends` and `scripts` are still accepted with warnings, but new configs should
+use the `customizations.dcc` namespace.
 
 `dcc` is designed for the constant churn of environments in agentic coding.
 Spinning up and tearing down sessions must be easy, automatic, and safe.
@@ -36,23 +45,23 @@ The default profile is represented by the standard `devcontainer.json`
 configuration. Every command also accepts a `-p/--profile <name>` flag, which
 causes `dcc` to load the configuration at `.devcontainer/<name>.json`.
 
-In order to simplify configuration management, the "extends" property
-described below allows inheritance from a common base configuration.
+In order to simplify configuration management, `customizations.dcc.extends`
+allows inheritance from a common base configuration.
 
 In order to isolate profiles, the durable cache directory described
 below is not shared between profiles.
 
 
-## The "extends" property
+## The `customizations.dcc.extends` property
 
-A devcontainer config file may use the property "extends" to indicate that
-it inherits all properties from another local file. This allows multiple
-profiles to layer small changes on top of a common base configuration.
+A devcontainer config file may use `customizations.dcc.extends` to inherit all
+properties from another local file. This allows multiple profiles to layer small
+changes on top of a common base configuration.
 
 `dcc` generally follows the outline of the proposal in
 [devcontainers/spec#22](https://github.com/devcontainers/spec/issues/22).
 Arrays and objects are combined as a union of values, while basic types are
-overwritten. Exception: `command` always takes the child value (see below).
+overwritten. Lifecycle command fields are not merged; the child value wins.
 
 The path given in "extends" is resolved relative to the file that contains it.
 Extension chains (A extends B extends C) are permitted. Circular chains are
@@ -60,36 +69,40 @@ invalid and cause `dcc build` to exit with an error.
 
 For example:
 
-```
+```jsonc
 // .devcontainer/base.json
 {
     "name": "example/project",
     "forwardPorts": [80, 5432],
-    "hostRequirements": {
-        "storage": "64gb",
-        "memory": "16gb"
+    "containerEnv": {
+        "CARGO_HOME": "/cache/cargo",
+        "RUST_BACKTRACE": "0"
     }
 }
 
 // .devcontainer/derived.json
 {
-    "extends": "./base.json",
-    "forwardPorts": [80, 2222],
-    "hostRequirements": {
-        "memory": "32gb"
+    "customizations": {
+        "dcc": {
+            "extends": "./base.json"
+        }
     },
-   "onCreateCommand": "echo hello"
+    "forwardPorts": [80, 2222],
+    "containerEnv": {
+        "RUST_BACKTRACE": "1"
+    },
+    "onCreateCommand": "echo hello"
 }
 
 // Results in
 {
     "name": "example/project",
     "forwardPorts": [80, 5432, 2222],  // <-- union
-    "hostRequirements": {
-        "storage": "64gb",
-        "memory": "32gb"               // <-- overwritten
+    "containerEnv": {
+        "CARGO_HOME": "/cache/cargo",
+        "RUST_BACKTRACE": "1"          // <-- overwritten
     },
-   "onCreateCommand": "echo hello"
+    "onCreateCommand": "echo hello"
 }
 ```
 
@@ -151,9 +164,9 @@ Explicit mounts remain supported when you need the full Docker mount syntax:
 ]
 ```
 
-`dcc run` automatically creates the host-side source directory for any bind
-mount whose source path lies under `${localCacheFolder}`, so the directory
-does not need to exist before the first run.
+Runtime launches automatically create the host-side source directory for any
+bind mount whose source path lies under `${localCacheFolder}`, so the directory
+does not need to exist before the first use.
 
 The container workspace directory is always `/workspace`.
 
@@ -176,11 +189,39 @@ empty tmpfs mount, to prevent data from leaking across profiles.
 
 ## Commands
 
-All commands accept the flag `--profile <name>` that indicates which profile to load.
-The default profile is simply `devcontainer`, which loads from the standard config
-file location `.devcontainer/devcontainer.json`.
+The CLI supports these subcommands: `build`, `run`, `exec`, `start`, `attach`,
+`stop`, and `id`.
+
+All commands accept the global flag `--profile <name>` or `-p <name>`. The
+default profile is `devcontainer`, which loads
+`.devcontainer/devcontainer.json`; `-p ci` loads `.devcontainer/ci.json`.
+Because `--profile`, `--strict`, `--dry-run`, and `--format` are global flags,
+they may appear before or after the subcommand, before any positional command
+arguments.
+
 Pass `--strict` before or after the subcommand to treat unrecognised
 configuration fields as errors instead of warnings.
+
+Common workflows:
+
+```sh
+dcc build                    # build the default profile image and run build-prep hooks
+dcc build -p ci              # build .devcontainer/ci.json
+dcc build --refresh-only     # rerun update/post-create prep hooks; image must exist
+
+dcc run                      # list named project and Feature commands
+dcc run test                 # run a named command from customizations.dcc.commands
+dcc exec cargo test          # run an explicit argv directly in the container
+
+dcc start                    # start or promote a durable profile container
+dcc attach                   # run attach hooks, then open a shell
+dcc stop                     # stop the profile container and clear runtime bookkeeping
+dcc id --format json         # print the stable profile id as JSON
+```
+
+`dcc build` is explicit: runtime commands do not build the image for you. Run it
+after changing `image`, `build`, Features, `containerEnv`, forwarded ports,
+declared state, or build-preparation hooks.
 
 ### `dcc build`
 
@@ -234,6 +275,9 @@ succeeds. Pass `--format json` with `--dry-run` for a stable machine-readable
 report containing the command, profile, config path, `docker_invoked: false`,
 checks performed, and Docker-dependent checks skipped.
 
+Outside dry runs, structured output is currently supported by `dcc id --format
+json`, which prints the resolved profile container id.
+
 Dry runs cannot validate information that only exists in Docker image metadata,
 such as Feature-contributed command metadata from `devcontainer.metadata`, or
 values that require inspecting/probing the built image. The live Docker smoke
@@ -245,6 +289,32 @@ Runs a named command from `customizations.dcc.commands` or Feature command
 metadata. With no command argument, `dcc run` lists available commands. Project
 commands are shown as `:<name>`; Feature commands are shown as
 `<feature-id>:<name>`. Unqualified command names are accepted only when unique.
+
+Project commands are shell strings:
+
+```json
+{
+  "customizations": {
+    "dcc": {
+      "commands": {
+        "test": "cargo test",
+        "lint": "cargo clippy -- -D warnings"
+      }
+    }
+  }
+}
+```
+
+Then run them by name:
+
+```sh
+dcc run test
+dcc run :lint
+```
+
+`dcc run` does not treat the argument as a host path or arbitrary executable.
+For example, `dcc run /bin/true` looks for a configured command named
+`/bin/true`; use `dcc exec /bin/true` for direct execution.
 
 If the profile container is already running, `dcc run` executes the command in
 that container. If none is running, it starts a one-shot container by default.
@@ -258,9 +328,15 @@ automatically.
 
 ### `dcc exec`
 
-Runs an explicit command in the profile container. Like `dcc run`, it reuses an
-existing container when present, otherwise starts a one-shot container unless
-`--keep` / `-k` is supplied.
+Runs an explicit command in the profile container:
+
+```sh
+dcc exec cargo test
+dcc exec npm run build
+```
+
+Like `dcc run`, it reuses an existing container when present, otherwise starts a
+one-shot container unless `--keep` / `-k` is supplied.
 
 The argument `--` can be supplied to explicitly indicate the boundary between
 `dcc` flags and the command. All arguments following `--` are passed through to
@@ -316,6 +392,34 @@ Stops the profile's container if it is running and clears local runtime
 bookkeeping. It is safe to run when no container is active.
 
 
+## What to expect compared with normal devcontainers
+
+`dcc` reads standard `.devcontainer/<profile>.json` files, but it is deliberately
+more opinionated than a general IDE devcontainer implementation:
+
+- `dcc build` owns `onCreateCommand`, `updateContentCommand`, and
+  `postCreateCommand`. Runtime commands do not rerun those hooks.
+- Runtime commands use a managed keepalive PID 1 and run foreground work through
+  `docker exec`, so `overrideCommand` is ignored.
+- `workspaceMount` is ignored. The workspace is always mounted at `/workspace`,
+  and `/workspace/.dcc` is masked inside the container.
+- `workspaceFolder` controls the workdir for hooks and commands, but it does not
+  change where the project is mounted.
+- `containerUser` controls the user for hooks and foreground commands. Top-level
+  `remoteUser` is not implemented; in strict mode it is an unknown field.
+- `forwardPorts` uses a host-side relay into the container's `127.0.0.1`, not
+  Docker `-p` publishing. `dcc start` starts the durable container but does not
+  leave background port-forwarding processes running.
+- `portsAttributes` and `otherPortsAttributes` are parsed for compatibility, but
+  browser and preview auto-open behavior is not implemented.
+- `runArgs`, sensitive mounts, `privileged`, `capAdd`, `securityOpt`, and unsafe
+  Feature runtime settings are gated. Host-integrating or privilege-escalating
+  options require `--allow-unsafe-runtime`; unknown `runArgs` are rejected.
+- `customizations.dcc.state` is the preferred persistence mechanism. It is not an
+  arbitrary mount escape hatch; paths are validated and stored under the
+  profile-local `.dcc/<profile>/state` directory.
+
+
 ## Configuration
 
 `dcc` searches for the `.devcontainer` directory by walking up from the current
@@ -367,9 +471,12 @@ devcontainer-compatible tools via
 | `containerEnv` | Environment variables baked into the Docker image as `ENV` directives. Supports `${containerWorkspaceFolder}` and `${containerCacheFolder}`. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `containerUser` | User to run as inside the container. Defaults to `dev`. Unless set to `root`, `dcc build` creates the user in the image if it does not already exist. Feature install scripts run as `root`; `_REMOTE_USER`/`_CONTAINER_USER`/`_REMOTE_USER_HOME`/`_CONTAINER_USER_HOME` are exported for scripts that need to `su` into `containerUser`. |
+| `remoteUser` | Not implemented as a top-level field. Default mode warns because it is unrecognised; `--strict` rejects it. Use `containerUser` for the user that runs hooks and foreground commands. |
 | `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. Sensitive host sources such as `/`, `/etc`, `/var/run`, Docker sockets, and SSH paths require `--allow-unsafe-runtime`. |
 | `runArgs` | Conservative allowlist of extra Docker runtime flags. Safe flags such as `--add-host`, `--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`, `--cap-drop`, and explicit `--env KEY=VALUE` are passed through. Privileged or host-integrating flags such as `--privileged`, `--cap-add`, `--security-opt`, `--pid=host`, `--ipc=host`, `--network=host`, `--device`, and sensitive mounts require `--allow-unsafe-runtime`; unknown flags are rejected. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` invocation includes `--allow-unsafe-runtime`. |
+| `customizations.dcc.extends` | Local config file to inherit from. Parent arrays and objects are merged, and child scalar values win. Legacy top-level `extends` still works with a warning. |
+| `customizations.dcc.commands` | Project named shell commands invokable through `dcc run <name>`. Legacy top-level `scripts` still works with a warning. |
 | `customizations.dcc.state` | Container paths whose contents are persisted under the profile cache and mounted back into the container. String entries are directories; object entries support `{ "path": "...", "type": "file" }`. |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
 | `portsAttributes`, `otherPortsAttributes` | Parsed for schema compatibility. `label`, `protocol`, and `onAutoForward` values `openBrowser`, `openBrowserOnce`, `openPreview`, `silent`, and `ignore` are accepted; browser/preview auto-open behavior is not implemented. |
@@ -377,11 +484,11 @@ devcontainer-compatible tools via
 | `workspaceFolder` | Container workdir for build-preparation hooks, startup/attach hooks, and foreground commands. Defaults to `/workspace`; `dcc` warns when it is outside `/workspace` while still mounting the project at `/workspace`. |
 | `workspaceMount` | Parsed for schema compatibility, but ignored because `dcc` owns workspace mounting. |
 | `initializeCommand` | Runs on the **host**, before the container is created or started. |
-| `onCreateCommand` | Runs **in the container**, first among the lifecycle hooks below. |
-| `updateContentCommand` | Runs **in the container**, after `onCreateCommand`. |
-| `postCreateCommand` | Runs **in the container**, after `updateContentCommand`. |
-| `postStartCommand` | Runs **in the container**, after `postCreateCommand`. |
-| `postAttachCommand` | Runs **in the container**, immediately before attaching — last of the lifecycle hooks. |
+| `onCreateCommand` | Runs **in the container** during `dcc build`, before `updateContentCommand`. |
+| `updateContentCommand` | Runs **in the container** during `dcc build`, after `onCreateCommand`. |
+| `postCreateCommand` | Runs **in the container** during `dcc build`, after `updateContentCommand`. |
+| `postStartCommand` | Runs **in the container** when a new runtime container starts. |
+| `postAttachCommand` | Runs **in the container** only for `dcc attach`, immediately before the shell or explicit attach command. |
 
 Each lifecycle hook accepts a shell string (run via `/bin/sh -c`), an array of
 strings (executed directly), or an object mapping arbitrary names to either
@@ -405,14 +512,14 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | `options` | Configuration options. Keys are uppercased and passed as environment variables to `install.sh`. User-supplied values override declared defaults. |
 | `containerEnv` | Environment variables baked into the image as Dockerfile `ENV` directives, set before the feature's `install.sh` runs. |
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Stored as templates; `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}` are substituted at run time. |
-| `mounts` | Additional mounts attached at `dcc run` time. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, `${localEnv:VAR}`, `${containerEnv:VAR}`, etc.). |
+| `mounts` | Additional mounts attached when the runtime profile container starts. Each entry is a JSON object with `type`, `source`, and `target` fields — the same format accepted by Docker's `--mount` flag. Supports the same variable substitution as `devcontainer.json` mounts (`${localCacheFolder}`, `${localEnv:VAR}`, `${containerEnv:VAR}`, etc.). |
 | `customizations.dcc.commands` | Named shell commands invokable through `dcc run`. Feature commands are addressed as `<feature-id>:<command>`; legacy top-level `scripts` still works with a deprecation warning. |
 | `customizations.dcc.state` | Feature-contributed persistent state paths. Uses the same validation and cache mount behavior as project `customizations.dcc.state`; Feature state is mounted before project state. |
 | `installsAfter` | Soft ordering hint. An array of feature IDs (the `id` field from `devcontainer-feature.json`). This feature is installed after the listed features if they are already in the installation set. Not evaluated recursively. |
 | `dependsOn` | Hard dependencies. An object whose keys are feature references (same format as `devcontainer.json` `features`) and values are the options for each dependency. Missing dependencies are added to the installation set automatically. Evaluated recursively. Circular dependencies are an error. |
 | `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Lifecycle hooks. Same forms and variable substitution as the identically-named `devcontainer.json` properties. For each hook type, feature-contributed hooks run before the `devcontainer.json` hook of that type, in feature installation order. |
 | `init`, `entrypoint` | Parsed for compatibility but ignored with a warning because `dcc` owns PID 1 startup. |
-| `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc run`, or `dcc exec` invocation includes `--allow-unsafe-runtime`. |
+| `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` invocation includes `--allow-unsafe-runtime`. |
 
 Feature `containerUser` and `remoteUser` are rejected because the Feature schema does
 not permit Features to set users.
@@ -434,11 +541,14 @@ not permit Features to set users.
 
 ## Resource Limits
 
-`dcc run` defaults to **4 GB memory** and **2 CPUs**. Override with Docker-equivalent flags:
+Runtime container creation defaults to **4 GB memory** and **2 CPUs**. Override
+with Docker-equivalent flags on `dcc run`, `dcc exec`, `dcc attach`, or
+`dcc start`:
 
 ```sh
-dcc run --memory 8g --cpus 6
-dcc run --memory 512m npm test
+dcc run --memory 8g --cpus 6 test
+dcc exec --memory 512m npm test
+dcc start --memory 8g --cpus 6
 ```
 
 ## Releasing
