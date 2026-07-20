@@ -1,16 +1,28 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "dcc", about = "Dev Container CLI", version)]
 pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) strict: bool,
+    /// Validate and report what would be done without invoking Docker.
+    #[arg(long, global = true)]
+    pub(crate) dry_run: bool,
+    /// Output format for dry-run reports and supported structured output.
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
+    pub(crate) format: OutputFormat,
     /// Profile to operate on. Global so it may appear before or after the
     /// subcommand (`dcc -p base build` and `dcc build -p base` are equivalent).
     #[arg(short = 'p', long, global = true, default_value = "devcontainer")]
     pub(crate) profile: String,
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum OutputFormat {
+    Text,
+    Json,
 }
 
 #[derive(Debug, Subcommand)]

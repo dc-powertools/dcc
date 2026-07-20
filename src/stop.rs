@@ -4,7 +4,7 @@ use anyhow::Context as _;
 
 use crate::{
     cache::CacheDir,
-    config, docker,
+    config, docker, dry_run,
     profile::{ContainerId, ProfileName},
     runtime::RuntimeState,
     version,
@@ -15,16 +15,34 @@ pub(crate) async fn stop(
     workspace: &Workspace,
     profile: &ProfileName,
     config_path: &Path,
-    strict: bool,
-    profile_arg: &str,
+    opts: StopOptions<'_>,
 ) -> anyhow::Result<()> {
     let container_id = ContainerId::new(workspace, profile);
-    let current_uses_fast_path = current_uses_fast_path(workspace, profile, config_path, strict);
+    if opts.dry_run {
+        let cache_dir = CacheDir::new(workspace, profile);
+        let _config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
+            .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
+        return dry_run::DryRunReport::new(
+            "stop",
+            profile,
+            config_path,
+            vec!["workspace resolved", "profile resolved", "config loaded"],
+            vec![
+                "docker image version inspection",
+                "docker container lookup",
+                "docker stop",
+                "runtime state clearing",
+            ],
+        )
+        .print(opts.format);
+    }
+    let current_uses_fast_path =
+        current_uses_fast_path(workspace, profile, config_path, opts.strict);
     version::warn_if_image_version_mismatch_best_effort(
         container_id.as_image_tag().as_str(),
         current_uses_fast_path,
-        profile_arg,
-        strict,
+        opts.profile_arg,
+        opts.strict,
     )
     .await;
     let container = docker::running_container_name_by_id(container_id.as_str())
@@ -34,6 +52,13 @@ pub(crate) async fn stop(
         .await
         .with_context(|| format!("failed to stop container `{container}`"))?;
     RuntimeState::new(&CacheDir::new(workspace, profile)).clear()
+}
+
+pub(crate) struct StopOptions<'a> {
+    pub(crate) strict: bool,
+    pub(crate) profile_arg: &'a str,
+    pub(crate) dry_run: bool,
+    pub(crate) format: crate::cli::OutputFormat,
 }
 
 fn current_uses_fast_path(

@@ -836,30 +836,38 @@ must include the full command that was attempted.
 ## CLI Definition (`cli.rs`)
 
 ```
-dcc [--strict] [-p/--profile <name>] <command> [--strict] [-p/--profile <name>] [command-flags] [--] [args...]
+dcc [--strict] [--dry-run] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
 
 Commands:
   build  [--no-cache]
-  run    [--memory <size>] [--cpus <n>] [--] [command...]
+  run    [--memory <size>] [--cpus <n>] [command-name]
+  exec   [--memory <size>] [--cpus <n>] <command...>
   stop
 ```
 
-`--profile` (`-p`) and `--strict` are clap **global arguments** declared once on
-`Cli` and read from the single `Cli::profile` / `Cli::strict` fields. As global
-arguments they are accepted in both positions — `dcc -p claude --strict run` and
-`dcc run -p claude --strict` are equivalent — so users are not forced to remember
-whether the flags precede or follow the subcommand. Earlier versions declared
-`-p` on each subcommand to allow it after the subcommand; the global argument
-supersedes that, supporting both orderings with no duplication. `--profile`
-defaults to `"devcontainer"`. `--strict` affects config parsing, which applies
-identically across all subcommands. (For commands like `dcc exec`/`dcc run` whose
-trailing arguments form the in-container command, global flags must precede the
-first positional argument, otherwise they are passed through to that command.)
+`--profile` (`-p`), `--strict`, `--dry-run`, and `--format` are clap **global
+arguments** declared once on `Cli` and read from the single global fields. As
+global arguments they are accepted in both positions — `dcc -p claude --strict run`
+and `dcc run -p claude --strict` are equivalent — so users are not forced to
+remember whether the flags precede or follow the subcommand. Earlier versions
+declared `-p` on each subcommand to allow it after the subcommand; the global
+argument supersedes that, supporting both orderings with no duplication.
+`--profile` defaults to `"devcontainer"`. `--strict` affects config parsing,
+which applies identically across all subcommands. For commands like `dcc exec` and
+`dcc attach`, whose trailing arguments form the in-container command, global flags
+must precede the first positional argument, otherwise they are passed through to
+that command.
 
-Implemented with `clap` derive macros. `trailing_var_arg = true` is set on the
-`run` subcommand so that clap stops flag parsing at the first positional
-argument, allowing `dcc run npm serve` and `dcc run -- npm serve` to behave
-identically.
+Implemented with `clap` derive macros. `dcc run` accepts an optional named command
+from project or Feature metadata; explicit argv execution belongs to `dcc exec`.
+
+`--dry-run` validates the command to the Docker boundary and exits before Docker
+subprocesses, cache/state preparation, port forwarding, or lifecycle hook execution.
+The text report is intentionally short; `--format json` emits a stable report with
+the command, profile, config path, `docker_invoked: false`, checks performed, and
+Docker-dependent checks skipped. Dry-run cannot validate image-derived data such as
+Feature runtime metadata from `devcontainer.metadata` or `${containerEnv:...}` values
+that require image/user probing.
 
 The exit code of `dcc run` mirrors the container process exit code.
 All other commands exit 0 on success and 1 on error.
@@ -896,6 +904,9 @@ All other commands exit 0 on success and 1 on error.
 - Error on missing profile config file
 - Error on circular `extends`
 - `--strict` rejects unknown fields; default mode warns and continues
-- `--` separator passes remaining args as command override
+- `--dry-run` validates command/config behavior before Docker invocation
+- `--format json` emits parseable dry-run reports
+- `dcc run --` is accepted syntactically, while direct command execution is tested
+  through `dcc exec`
 
 Integration tests that require a live Docker daemon are annotated `#[ignore]`.

@@ -10,7 +10,7 @@ use crate::{
         vars::{CONTAINER_CACHE, CONTAINER_WORKSPACE},
         BuildConfig,
     },
-    docker,
+    docker, dry_run,
     features::{FeatureRuntimeConfig, LockEntry},
     lifecycle::{self, LifecycleCommand, LifecycleHooks},
     profile::{ContainerId, ProfileName},
@@ -31,6 +31,35 @@ pub(crate) async fn build(
 
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
+
+    if opts.dry_run {
+        let mut skipped = vec![
+            "docker image build/pull/tag",
+            "docker image label inspection",
+            "build-preparation container start",
+            "build-preparation lifecycle hooks",
+        ];
+        if opts.refresh_only {
+            skipped.push("profile image existence check");
+        }
+        return dry_run::DryRunReport::new(
+            if opts.refresh_only {
+                "build --refresh-only"
+            } else {
+                "build"
+            },
+            profile,
+            config_path,
+            vec![
+                "workspace resolved",
+                "profile resolved",
+                "config loaded",
+                "devcontainer unsafe runtime checked",
+            ],
+            skipped,
+        )
+        .print(opts.format);
+    }
 
     if opts.refresh_only {
         ensure_refresh_image_exists(image_tag.as_str()).await?;
@@ -80,6 +109,8 @@ pub(crate) struct BuildOptions {
     pub(crate) refresh_only: bool,
     pub(crate) strict: bool,
     pub(crate) allow_unsafe_runtime: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) format: crate::cli::OutputFormat,
 }
 
 pub(crate) fn uses_fast_path(config: &config::DevcontainerConfig) -> bool {
