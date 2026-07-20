@@ -192,16 +192,6 @@ empty tmpfs mount, to prevent data from leaking across profiles.
 The CLI supports these subcommands: `build`, `run`, `exec`, `start`, `attach`,
 `stop`, and `id`.
 
-All commands accept the global flag `--profile <name>` or `-p <name>`. The
-default profile is `devcontainer`, which loads
-`.devcontainer/devcontainer.json`; `-p ci` loads `.devcontainer/ci.json`.
-Because `--profile`, `--strict`, `--dry-run`, and `--format` are global flags,
-they may appear before or after the subcommand, before any positional command
-arguments.
-
-Pass `--strict` before or after the subcommand to treat unrecognised
-configuration fields as errors instead of warnings.
-
 Common workflows:
 
 ```sh
@@ -222,6 +212,45 @@ dcc id --format json         # print the stable profile id as JSON
 `dcc build` is explicit: runtime commands do not build the image for you. Run it
 after changing `image`, `build`, Features, `containerEnv`, forwarded ports,
 declared state, or build-preparation hooks.
+
+### Global flags
+
+All commands accept `--profile <name>` or `-p <name>`. The default profile is
+`devcontainer`, which loads `.devcontainer/devcontainer.json`; `-p ci` loads
+`.devcontainer/ci.json`.
+
+Because `--profile`, `--strict`, `--dry-run`, and `--format` are global flags,
+they may appear before or after the subcommand, before any positional command
+arguments. For commands like `dcc exec` and `dcc attach`, whose trailing
+arguments form the in-container command, global flags must come before the first
+positional command argument or they are passed through to the container command.
+
+Pass `--strict` to treat unrecognised configuration fields as errors instead of
+warnings.
+
+Pass `--dry-run` to validate the workspace, profile, config, command line, and
+config-local safety gates without invoking Docker. Dry runs stop before Docker
+image inspection, image build/pull/tag, container lookup/start/exec/stop, port
+forwarding, and lifecycle hook execution.
+
+By default a dry run prints a short text report and exits 0 when validation
+succeeds. Pass `--format json` with `--dry-run` for a stable machine-readable
+report containing the command, profile, config path, `docker_invoked: false`,
+checks performed, and Docker-dependent checks skipped.
+
+Outside dry runs, structured output is currently supported by `dcc id --format
+json`, which prints the resolved profile container id.
+
+Dry runs cannot validate information that only exists in Docker image metadata,
+such as Feature-contributed command metadata from `devcontainer.metadata`, or
+values that require inspecting/probing the built image. The live Docker smoke
+tests remain the source of truth for build/run behavior past that boundary.
+
+Pass `--debug` to print the fully-resolved launch details to stderr just before
+the container starts: the container name and image, the runtime environment
+(`remoteEnv`) and image-baked `containerEnv`, every mount with its resolved
+`src -> dst` and options, forwarded ports, lifecycle scripts in execution order,
+and the exact `docker run` command. It does not change behavior.
 
 ### `dcc build`
 
@@ -261,27 +290,6 @@ command-wrapper, and build-preparation hook assets into the image. During
 `dcc build`, build preparation runs `onCreateCommand`, `updateContentCommand`,
 and `postCreateCommand` in order, with Feature hooks before project hooks for
 each phase and state mounts attached.
-
-### Dry runs and JSON output
-
-Pass `--dry-run` to `dcc build`, `dcc run`, `dcc exec`, `dcc start`,
-`dcc attach`, or `dcc stop` to validate the workspace, profile, config, command
-line, and config-local safety gates without invoking Docker. Dry runs stop before
-Docker image inspection, image build/pull/tag, container lookup/start/exec/stop,
-port forwarding, and lifecycle hook execution.
-
-By default a dry run prints a short text report and exits 0 when validation
-succeeds. Pass `--format json` with `--dry-run` for a stable machine-readable
-report containing the command, profile, config path, `docker_invoked: false`,
-checks performed, and Docker-dependent checks skipped.
-
-Outside dry runs, structured output is currently supported by `dcc id --format
-json`, which prints the resolved profile container id.
-
-Dry runs cannot validate information that only exists in Docker image metadata,
-such as Feature-contributed command metadata from `devcontainer.metadata`, or
-values that require inspecting/probing the built image. The live Docker smoke
-tests remain the source of truth for build/run behavior past that boundary.
 
 ### `dcc run`
 
@@ -355,15 +363,6 @@ chooses an interactive shell in this order: executable absolute `$SHELL`,
 `/bin/bash`, then `/bin/sh`. `dcc attach` runs collected `postAttachCommand`
 hooks before the shell or explicit attach command. `dcc run` and `dcc exec` do
 not run attach hooks by default.
-
-#### Debugging a launch
-
-Pass `--debug` to `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` to print
-the fully-resolved launch details to stderr just before the container starts:
-the container name and image, the runtime environment (`remoteEnv`) and
-image-baked `containerEnv`, every mount with its resolved `src -> dst` and
-options, forwarded ports, the lifecycle scripts in execution order, and the
-exact `docker run` command. It does not change behavior.
 
 ### `dcc stop`
 

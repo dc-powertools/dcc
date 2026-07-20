@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0018
+- Next task ID: T-0019
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -30,6 +30,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0015 | Update user-facing documentation to match the completed `dcc` rewrite design and implementation. | User request 2026-07-20 / r1 | Done | T-0004, T-0013, T-0014 | Quick change / Low | None | Stop; outcome complete. | None | Reworked the README around the current mental model, common workflows, `customizations.dcc` config, explicit build requirements, named `dcc run` commands versus direct `dcc exec`, one-shot/durable reuse, dry-run/JSON output, and documented differences from normal devcontainers including ignored compatibility fields, port forwarding, unsafe runtime gating, and unsupported top-level `remoteUser`. Verified `git diff --check`, stale README searches, and `cargo test`. |
 | T-0016 | Remove `initializeCommand` execution and keep it parse-and-warn only. | User correction 2026-07-20 / r1 | Done | T-0004 | Quick change / Medium | None | Stop; outcome complete. | None | Removed host execution of `initializeCommand`, deleted the host lifecycle executor, excluded `initializeCommand` from runtime `${containerEnv:...}` probing and debug lifecycle output, preserved parser compatibility with an unsupported-field warning, and updated README/architecture docs. Added CLI coverage for the warning and Docker smoke coverage that would fail if the hook mutates the host workspace. Verified fmt, tests, clippy, diff check, and stale-reference search. |
 | T-0017 | Reorganize README lifecycle-hook guidance into a dedicated trigger table. | User request 2026-07-20 / r1 | Done | T-0016 | Quick change / Low | None | Stop; outcome complete. | None | Moved lifecycle-hook behavior into its own README section, added a hook-by-hook table showing which `dcc` commands trigger or skip each hook, called out `dcc id`/`dcc stop`, and reduced duplicate hook behavior in the configuration table. Verified `git diff --check` and targeted lifecycle README searches. |
+| T-0018 | Move shared README command flag guidance into a dedicated global flags subsection. | User request 2026-07-20 / r1 | Done | T-0017 | Quick change / Low | None | Stop; outcome complete. | None | Moved `--strict`, `--dry-run`, `--format json`, and launch debugging guidance into `Commands` > `Global flags`, removed the old dry-run and debugging subsections, and left command-specific sections focused on subcommand behavior. Verified `git diff --check` and targeted README heading/flag searches. |
 
 ## Operating Contract
 
