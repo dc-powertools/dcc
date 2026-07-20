@@ -184,7 +184,7 @@ empty tmpfs mount, to prevent data from leaking across profiles.
 
 `${containerEnv:VAR}` is substituted with the value of `VAR` in the **built image's** environment — the base image's `ENV` plus every `containerEnv` directive `dcc build` baked in — read via `docker image inspect` at run time. It is valid in the same places as `${localEnv:VAR}` (below). The canonical use is extending a value the base image set, e.g. `"remoteEnv": { "PATH": "${containerEnv:PATH}:/opt/tool/bin" }`. Because the source is the image, it does **not** see `remoteEnv` values (which are not part of the image) or variables set only when the container starts. An undefined reference resolves to the empty string; supply a fallback with `${containerEnv:VAR:default}`. It is not substituted inside `containerEnv` itself.
 
-`${localEnv:VAR}` is substituted with the value of the host environment variable `VAR`, evaluated on every run. It is valid in `remoteEnv`, `mounts`, the lifecycle commands (`initializeCommand` and the in-container hooks), and the container command (the script run by `dcc run` or the arguments to `dcc exec`) — the fields `dcc` resolves at run time. It is **not** substituted in `containerEnv`, which is baked into the image at build time and must not embed host-specific values. An undefined variable resolves to the empty string; supply a fallback with `${localEnv:VAR:default}`.
+`${localEnv:VAR}` is substituted with the value of the host environment variable `VAR`, evaluated on every run. It is valid in `remoteEnv`, `mounts`, supported in-container lifecycle hooks, and the container command (the script run by `dcc run` or the arguments to `dcc exec`) — the fields `dcc` resolves at run time. It is **not** substituted in `containerEnv`, which is baked into the image at build time and must not embed host-specific values. An undefined variable resolves to the empty string; supply a fallback with `${localEnv:VAR:default}`.
 
 
 ## Commands
@@ -369,11 +369,13 @@ exact `docker run` command. It does not change behavior.
 
 Runtime commands do not run build-preparation hooks. `onCreateCommand`,
 `updateContentCommand`, and `postCreateCommand` run during `dcc build` instead.
+`initializeCommand` is parsed for devcontainer compatibility, but `dcc` does not
+execute host lifecycle hooks.
+
 Runtime lifecycle hooks are scoped to the operation:
 
-1. `initializeCommand` runs on the host before a new container is created.
-2. `postStartCommand` runs when a new container starts.
-3. `postAttachCommand` runs only for `dcc attach`, immediately before the shell
+1. `postStartCommand` runs when a new container starts.
+2. `postAttachCommand` runs only for `dcc attach`, immediately before the shell
    or explicit attach command.
 
 For in-container hooks, feature-contributed hooks of that type run first, in feature
@@ -381,7 +383,7 @@ installation order, followed by the `devcontainer.json` hook of that type. A
 non-zero exit from any hook aborts the current operation and skips subsequent
 hooks.
 
-To bypass the lifecycle scripts for a single invocation — for example when one
+To bypass the supported lifecycle scripts for a single invocation — for example when one
 is misbehaving and you want a shell to debug it — run
 `dcc exec --skip-lifecycle <command>`. `dcc` prints a warning naming each
 skipped script, so nothing is silently omitted.
@@ -401,6 +403,8 @@ more opinionated than a general IDE devcontainer implementation:
   `postCreateCommand`. Runtime commands do not rerun those hooks.
 - Runtime commands use a managed keepalive PID 1 and run foreground work through
   `docker exec`, so `overrideCommand` is ignored.
+- `initializeCommand` is parsed and warned about, but not executed. `dcc` avoids
+  running devcontainer-defined commands on the host.
 - `workspaceMount` is ignored. The workspace is always mounted at `/workspace`,
   and `/workspace/.dcc` is masked inside the container.
 - `workspaceFolder` controls the workdir for hooks and commands, but it does not
@@ -483,21 +487,18 @@ devcontainer-compatible tools via
 | `overrideCommand` | Parsed for schema compatibility. Ignored because `dcc` always uses its managed keepalive startup. |
 | `workspaceFolder` | Container workdir for build-preparation hooks, startup/attach hooks, and foreground commands. Defaults to `/workspace`; `dcc` warns when it is outside `/workspace` while still mounting the project at `/workspace`. |
 | `workspaceMount` | Parsed for schema compatibility, but ignored because `dcc` owns workspace mounting. |
-| `initializeCommand` | Runs on the **host**, before the container is created or started. |
+| `initializeCommand` | Parsed for schema compatibility and warned as unsupported. It is not executed. |
 | `onCreateCommand` | Runs **in the container** during `dcc build`, before `updateContentCommand`. |
 | `updateContentCommand` | Runs **in the container** during `dcc build`, after `onCreateCommand`. |
 | `postCreateCommand` | Runs **in the container** during `dcc build`, after `updateContentCommand`. |
 | `postStartCommand` | Runs **in the container** when a new runtime container starts. |
 | `postAttachCommand` | Runs **in the container** only for `dcc attach`, immediately before the shell or explicit attach command. |
 
-Each lifecycle hook accepts a shell string (run via `/bin/sh -c`), an array of
+Each supported in-container lifecycle hook accepts a shell string (run via `/bin/sh -c`), an array of
 strings (executed directly), or an object mapping arbitrary names to either
 form — the named commands run in parallel, and the next hook waits for all of
-them to finish. `initializeCommand` runs on the host and supports
-`${localWorkspaceFolder}`/`${localCacheFolder}`/`${localEnv:VAR}`/`${containerEnv:VAR}`
-(and the container-side variables); the other five hooks run in the container as
-`containerUser` from `workspaceFolder` and support the same variable substitution as
-`remoteEnv`/`mounts`.
+them to finish. The five in-container hooks run as `containerUser` from
+`workspaceFolder` and support the same variable substitution as `remoteEnv`/`mounts`.
 A non-zero exit from any hook aborts the current operation, skipping subsequent
 hooks. See [`dcc run`](#dcc-run) for execution order and durable/one-shot behavior.
 

@@ -59,9 +59,7 @@ pub(crate) fn apply_substitutions(
             &local_cache,
         ),
         workspace_mount: config.workspace_mount,
-        initialize_command: config.initialize_command.as_ref().map(|c| {
-            c.substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache))
-        }),
+        initialize_command: config.initialize_command,
         lifecycle: config
             .lifecycle
             .substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache)),
