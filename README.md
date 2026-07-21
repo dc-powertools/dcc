@@ -190,7 +190,7 @@ empty tmpfs mount, to prevent data from leaking across profiles.
 ## Commands
 
 The CLI supports these subcommands: `build`, `run`, `exec`, `start`, `attach`,
-`stop`, and `id`.
+`stop`, `id`, and `feature`.
 
 Common workflows:
 
@@ -202,6 +202,8 @@ dcc build --refresh-only     # rerun update/post-create prep hooks; image must e
 dcc run                      # list named project and Feature commands
 dcc run test                 # run a named command from customizations.dcc.commands
 dcc exec cargo test          # run an explicit argv directly in the container
+dcc feature -a ghcr.io/devcontainers/features/node:1
+dcc feature -r ghcr.io/devcontainers/features/node:1
 
 dcc start                    # start or promote a durable profile container
 dcc attach                   # run attach hooks, then open a shell
@@ -240,7 +242,8 @@ report containing the command, profile, config path, `docker_invoked: false`,
 checks performed, and Docker-dependent checks skipped.
 
 Outside dry runs, structured output is currently supported by `dcc id --format
-json`, which prints the resolved profile container id.
+json`, which prints the resolved profile container id, and `dcc feature --format
+json`, which prints the profile feature edit summary.
 
 Dry runs cannot validate information that only exists in Docker image metadata,
 such as Feature-contributed command metadata from `devcontainer.metadata`, or
@@ -294,6 +297,29 @@ command-wrapper, and build-preparation hook assets into the image. During
 `dcc build`, build preparation runs `onCreateCommand`, `updateContentCommand`,
 and `postCreateCommand` in order, with Feature hooks before project hooks for
 each phase and state mounts attached.
+
+### `dcc feature`
+
+Adds or removes entries in the selected profile's top-level `features` object.
+New features are added with empty options (`{}`), and existing options are left
+unchanged when a feature is already present:
+
+```sh
+dcc feature --add ghcr.io/devcontainers/features/node:1
+dcc feature -a ghcr.io/devcontainers/features/python:1
+dcc feature --remove ghcr.io/devcontainers/features/node:1
+dcc feature -r ghcr.io/devcontainers/features/python:1
+```
+
+`--add`/`-a` and `--remove`/`-r` may be repeated in one invocation. Removals are
+applied before additions. The command edits only the selected profile file
+(`.devcontainer/devcontainer.json` by default, or `.devcontainer/<profile>.json`
+with `--profile`). It does not edit parent configs referenced through
+`customizations.dcc.extends`, and it does not build the image; run `dcc build`
+after changing Features.
+
+The command parses JSONC input but rewrites the profile file as formatted JSON.
+Use `--dry-run` to validate and preview the operation without writing.
 
 ### `dcc run`
 

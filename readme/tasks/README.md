@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0020
+- Next task ID: T-0021
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -32,6 +32,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0017 | Reorganize README lifecycle-hook guidance into a dedicated trigger table. | User request 2026-07-20 / r1 | Done | T-0016 | Quick change / Low | None | Stop; outcome complete. | None | Moved lifecycle-hook behavior into its own README section, added a hook-by-hook table showing which `dcc` commands trigger or skip each hook, called out `dcc id`/`dcc stop`, and reduced duplicate hook behavior in the configuration table. Verified `git diff --check` and targeted lifecycle README searches. |
 | T-0018 | Move shared README command flag guidance into a dedicated global flags subsection. | User request 2026-07-20 / r1 | Done | T-0017 | Quick change / Low | None | Stop; outcome complete. | None | Moved `--strict`, `--dry-run`, `--format json`, and launch debugging guidance into `Commands` > `Global flags`, removed the old dry-run and debugging subsections, and left command-specific sections focused on subcommand behavior. Verified `git diff --check` and targeted README heading/flag searches. |
 | T-0019 | Make `--debug` a global CLI flag supported by all commands. | User request 2026-07-20 / r1 | Done | T-0018 | Quick change / Medium | None | Stop; outcome complete. | None | Moved `--debug` from runtime subcommands to the global CLI options, threaded it through existing runtime launch debugging, added build/stop/id debug output for resolved profile/config/container/image details, updated README and architecture docs, and added CLI tests for global placement plus non-runtime debug output. Verified fmt, tests, clippy, help output, grep checks, and diff check. |
+| T-0020 | Design and implement a `feature` subcommand that accepts `--add`/`-a` and `--remove`/`-r` to add and remove features from the profile. | User request 2026-07-21 / r1 | Done | None | Quick change / Medium | None | Stop; outcome complete. | None | Added `dcc feature` with repeatable `--add`/`-a` and `--remove`/`-r`, Docker-free dry-run/debug/JSON output support, JSONC profile parsing with formatted JSON writes, docs, and integration coverage. Verified fmt, check, tests, clippy, build, diff check, help output, and dry-run JSON output. |
 
 ## Operating Contract
 

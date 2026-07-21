@@ -29,6 +29,7 @@ src/
   cache.rs            Cache directory creation and path resolution
   docker.rs           Thin wrappers around docker CLI subcommands
   build.rs            dcc build command
+  feature.rs          dcc feature profile config edit command
   run.rs              dcc run command
   runtime.rs          Host-side runtime mode and active-command bookkeeping
   stop.rs             dcc stop command
@@ -56,7 +57,7 @@ third level of nesting.
 |---|---|---|
 | `clap` | `derive` | CLI argument parsing |
 | `serde` | `derive` | Struct deserialization |
-| `serde_json` | — | JSON value type; used in feature option maps |
+| `serde_json` | `preserve_order` | JSON value type; used in feature option maps and profile feature edits where object order should remain stable |
 | `json5` | — | JSONC-compatible parsing (trailing commas, `//` comments); devcontainer configs use this format |
 | `anyhow` | — | Error handling with context |
 | `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container readiness polling |

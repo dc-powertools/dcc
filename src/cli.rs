@@ -80,6 +80,14 @@ pub(crate) enum Command {
     },
     Stop {},
     Id {},
+    Feature {
+        /// Add a Feature reference to the selected profile.
+        #[arg(short = 'a', long = "add", value_name = "FEATURE")]
+        add: Vec<String>,
+        /// Remove a Feature reference from the selected profile.
+        #[arg(short = 'r', long = "remove", value_name = "FEATURE")]
+        remove: Vec<String>,
+    },
     Run {
         #[arg(long, default_value = "4g")]
         memory: String,
