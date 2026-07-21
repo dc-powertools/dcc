@@ -5,6 +5,7 @@ mod config;
 mod docker;
 mod dry_run;
 mod exec;
+mod feature;
 mod features;
 mod forward;
 mod lifecycle;
@@ -189,6 +190,19 @@ async fn run() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        cli::Command::Feature { add, remove } => feature::update_features(
+            &workspace,
+            &profile,
+            &config_path,
+            feature::FeatureOptions {
+                add,
+                remove,
+                strict: cli.strict,
+                dry_run: cli.dry_run,
+                debug: cli.debug,
+                format: cli.format,
+            },
+        ),
         cli::Command::Run {
             memory,
             cpus,

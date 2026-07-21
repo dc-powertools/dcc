@@ -26,6 +26,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-21 | Added `dcc feature --add`/`--remove` for profile Feature edits. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Made `--debug` a global CLI flag and added debug output for build, stop, and id. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Moved README command flag guidance into a dedicated `Global flags` subsection. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Reorganized README lifecycle-hook documentation into a dedicated trigger table. | `readme/tasks/README.md#tasks` |
@@ -63,6 +64,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 17
+- Completed repository-changing tasks since that pass: 18
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first
