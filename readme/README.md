@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `readme/tasks/README.md`
-- Primary task: None
-- Primary details: None
+- Primary task: T-0021
+- Primary details: `readme/tasks/0021-state-path-guards-brief.md`
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -20,7 +20,12 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 ## Known Global Dead Ends
 
-- None.
+- Baking a seed store into the image (extra build stage staging state tarballs) — rejected
+  for image overhead; the image already holds the data at its natural path. See
+  `readme/decisions/0001-state-seeding-from-image.md`.
+- Using `mv` instead of `cp` to relocate state data during build to control image size —
+  ineffective, because additive layers never reclaim bytes from the layer that created the
+  path, and it breaks standalone `docker run` use of the image. Same decision record.
 
 ## Recently Completed
 
@@ -50,6 +55,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 - Reusable framework: `readme/meta/README.md`
 - Task catalog: `readme/tasks/README.md`
+- State seeding decision: `readme/decisions/0001-state-seeding-from-image.md`
 - Rewrite quality record: `readme/quality/0004-dcc-rewrite-quality.md`
 - Runtime threat model: `readme/threat-models/0004-dcc-runtime.md`
 - Product brief: `readme/project/brief.md`

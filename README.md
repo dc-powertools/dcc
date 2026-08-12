@@ -146,8 +146,29 @@ Each state path is mounted from `.dcc/<profile>/state/...` on the host. State
 paths must be absolute container paths. `${containerWorkspaceFolder}`,
 `${containerCacheFolder}`, and `${containerEnv:VAR}` are supported; host-local
 variables such as `${localCacheFolder}` and `${localEnv:VAR}` are rejected.
-`dcc` also rejects root, relative, overlapping, unresolved, and runtime/system
-paths such as `/tmp`, `/run`, `/proc`, `/sys`, `/dev`, and `/workspace/.dcc`.
+`dcc` also rejects root, relative, overlapping, and unresolved paths.
+
+State bind mounts mask image content with an empty host source, so `dcc` guards
+container paths whose masking would break the container or `dcc` itself. These
+guards are hard rejects (not gated by `--allow-unsafe-runtime`) and apply both at
+config load and after `${containerEnv:VAR}` resolution:
+
+- **Whole subtree blocked** (the path and everything beneath it): `/proc`,
+  `/sys`, `/dev`, `/tmp`, `/run`, `/var/run`, `/var/lock`, `/boot`, `/bin`,
+  `/sbin`, `/lib`, `/lib32`, `/lib64`, `/libx32`, `/usr/bin`, `/usr/sbin`,
+  `/usr/lib`, `/usr/lib32`, `/usr/lib64`, `/usr/libx32`, `/etc`,
+  `/workspace/.dcc`, `/cache`, and `/usr/local/share/dcc`.
+  `/etc` is blocked as a subtree because empty-file state corrupts `passwd`,
+  `group`, and `nsswitch.conf`; use a lifecycle hook to manage system files.
+  `/cache` is blocked because it is the profile cache mount itself (self-nesting),
+  and `/usr/local/share/dcc` holds `dcc`'s own generated assets.
+- **Exact path only blocked** (specific subdirectories stay valid): `/usr`,
+  `/var`, `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`.
+  For example `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`, and
+  `/workspace/target` remain accepted.
+
+These guards are textual; a state path that is a symlink in the image resolving
+outside itself (e.g. `/home/dev/.cache` -> `/etc`) is not detected here.
 
 You can also preserve state within `/cache` by injecting an environment variable
 that specifies where to store state. For example:

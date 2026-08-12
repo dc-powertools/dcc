@@ -350,10 +350,33 @@ Docker image itself (see `devcontainer.metadata` label below).
 
 Declared `customizations.dcc.state` entries are validated as absolute container
 paths after config merge and container-side substitution. They reject unresolved
-host-local variables, parent/child overlaps, `/`, `..`, reserved runtime paths
-(`/tmp`, `/run`, `/proc`, `/sys`, `/dev`), and `/workspace/.dcc`. Runtime
-`${containerEnv:VAR}` references are resolved after image/user environment
-probing and then validated again.
+host-local variables, parent/child overlaps, `/`, `..`, and reserved container
+paths. Runtime `${containerEnv:VAR}` references are resolved after image/user
+environment probing and then validated again.
+
+State bind mounts mask image content with an empty host source, so reserved-path
+guards prevent masking a path whose loss would break the container or `dcc`
+itself. Two tiers are enforced at both config-load normalization and
+post-`${containerEnv:VAR}` resolution:
+
+- **Subtree** (path and all descendants): `/proc`, `/sys`, `/dev`, `/tmp`,
+  `/run`, `/var/run`, `/var/lock`, `/boot`, `/bin`, `/sbin`, `/lib`, `/lib32`,
+  `/lib64`, `/libx32`, `/usr/bin`, `/usr/sbin`, `/usr/lib`, `/usr/lib32`,
+  `/usr/lib64`, `/usr/libx32`, `/etc`, `/workspace/.dcc`, `/cache`, and
+  `/usr/local/share/dcc`. `/bin` and `/usr/bin` are both listed because
+  merged-`usr` distributions symlink one to the other, so blocking one spelling
+  does not block the other. `/etc` is a subtree block because empty-file state
+  corrupts `passwd`/`group`/`nsswitch.conf`; the error names the lifecycle-hook
+  alternative. `/cache` is the profile cache mount itself (self-nesting), and
+  `/usr/local/share/dcc` holds `dcc`'s generated controller, command-wrapper, and
+  build-prep hook assets.
+- **Exact** (bare path only; subdirectories stay valid): `/usr`, `/var`,
+  `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`. Legitimate
+  cache targets such as `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`,
+  `/root/.cargo`, and `/workspace/target` nest beneath these and remain accepted.
+
+The guards are textual; a state path that is a symlink in the image resolving
+outside itself is not detected in `normalize_state_path`.
 
 Each accepted state path is planned as a bind mount rooted below
 `<workspace>/.dcc/<profile>/state/` using the normalized container path. Directory
