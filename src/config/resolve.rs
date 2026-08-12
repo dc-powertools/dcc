@@ -215,6 +215,68 @@ fn validate_deferred_state_entry(
     Ok(())
 }
 
+/// Tier 1: the whole path and its subtree are blocked. Masking any of these can
+/// only break the container or `dcc` itself; there is no legitimate state target
+/// beneath them.
+const RESERVED_SUBTREE_PATHS: &[&str] = &[
+    "/proc",
+    "/sys",
+    "/dev",
+    "/tmp",
+    "/run",
+    "/var/run",
+    "/var/lock",
+    "/boot",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/libx32",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/lib",
+    "/usr/lib32",
+    "/usr/lib64",
+    "/usr/libx32",
+    "/etc",
+    "/workspace/.dcc",
+    "/cache",
+    "/usr/local/share/dcc",
+];
+
+/// Tier 2: only the exact path is blocked; specific subdirectories stay valid.
+/// Each entry pairs the blocked path with a one-line rationale used in the error.
+const RESERVED_EXACT_PATHS: &[(&str, &str)] = &[
+    (
+        "/usr",
+        "masks the entire system tree; declare a specific subdirectory such as `/usr/local/cargo`",
+    ),
+    (
+        "/var",
+        "masks all system state; declare a specific subdirectory such as `/var/cache/apt`",
+    ),
+    (
+        "/home",
+        "masks every user's home; declare a specific subdirectory such as `/home/dev/.cargo`",
+    ),
+    (
+        "/root",
+        "masks root's entire home; declare a specific subdirectory such as `/root/.cargo`",
+    ),
+    (
+        "/opt",
+        "masks all opt trees; declare a specific subdirectory such as `/opt/toolchain/cache`",
+    ),
+    (
+        "/workspace",
+        "shadows the repository bind mount; declare a specific subdirectory such as `/workspace/target`",
+    ),
+    ("/srv", "is a low-value bare state target; declare a specific subdirectory"),
+    ("/mnt", "is a low-value bare state target; declare a specific subdirectory"),
+    ("/media", "is a low-value bare state target; declare a specific subdirectory"),
+];
+
 fn normalize_state_path(path: &str) -> anyhow::Result<String> {
     let unresolved = vars::unresolved_variables(path);
     if !unresolved.is_empty() {
@@ -248,14 +310,28 @@ fn normalize_state_path(path: &str) -> anyhow::Result<String> {
     }
 
     let normalized = format!("/{}", segments.join("/"));
-    for reserved in ["/tmp", "/run", "/proc", "/sys", "/dev", "/workspace/.dcc"] {
-        if is_path_or_child(&normalized, reserved) {
+    check_reserved_state_path(&normalized)?;
+    Ok(normalized)
+}
+
+/// Rejects `normalized` when it targets a reserved container path. Subtree
+/// reservations block the path and its descendants; exact reservations block only
+/// the bare path. Both error shapes name the rejected path, the matched reserved
+/// path, and a supported alternative so the message is self-diagnosing.
+fn check_reserved_state_path(normalized: &str) -> anyhow::Result<()> {
+    for reserved in RESERVED_SUBTREE_PATHS {
+        if is_path_or_child(normalized, reserved) {
             anyhow::bail!(
-                "customizations.dcc.state path `{normalized}` targets reserved runtime path `{reserved}`"
+                "customizations.dcc.state path `{normalized}` targets reserved system path `{reserved}`; use a lifecycle hook to manage system files"
             );
         }
     }
-    Ok(normalized)
+    for (reserved, reason) in RESERVED_EXACT_PATHS {
+        if normalized == *reserved {
+            anyhow::bail!("customizations.dcc.state path `{normalized}` {reason}");
+        }
+    }
+    Ok(())
 }
 
 fn insert_state_entry(validated: &mut Vec<StateEntry>, entry: StateEntry) -> anyhow::Result<()> {
@@ -301,7 +377,10 @@ fn state_kind_name(kind: StateKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_state_entries_container_env, validate_state_entries};
+    use super::{
+        resolve_state_entries_container_env, validate_state_entries,
+        validate_state_entries_allowing_deferred_container_env,
+    };
     use crate::{
         cache::CacheDir, config::load_config, lifecycle::LifecycleCommand, workspace::Workspace,
     };
@@ -615,6 +694,201 @@ mod tests {
         }])
         .unwrap_err();
         assert!(err.to_string().contains("/workspace/.dcc"));
+    }
+
+    // ── T-0021: critical container path guards ───────────────────────────────
+
+    fn reject_dir(path: &str) -> anyhow::Error {
+        validate_state_entries(vec![crate::config::StateEntry {
+            path: path.to_string(),
+            kind: crate::config::StateKind::Directory,
+        }])
+        .expect_err("expected rejection")
+    }
+
+    fn accept_dir(path: &str) -> Vec<crate::config::StateEntry> {
+        validate_state_entries(vec![crate::config::StateEntry {
+            path: path.to_string(),
+            kind: crate::config::StateKind::Directory,
+        }])
+        .expect("expected acceptance")
+    }
+
+    #[test]
+    fn state_tier1_rejects_exact_and_child_for_every_path() {
+        for reserved in [
+            "/proc",
+            "/sys",
+            "/dev",
+            "/tmp",
+            "/run",
+            "/var/run",
+            "/var/lock",
+            "/boot",
+            "/bin",
+            "/sbin",
+            "/lib",
+            "/lib32",
+            "/lib64",
+            "/libx32",
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/lib",
+            "/usr/lib32",
+            "/usr/lib64",
+            "/usr/libx32",
+            "/etc",
+            "/workspace/.dcc",
+            "/cache",
+            "/usr/local/share/dcc",
+        ] {
+            let err = reject_dir(reserved);
+            assert!(
+                err.to_string().contains(reserved),
+                "exact {reserved} should be rejected naming the path, got: {err:#}"
+            );
+            let child = format!("{reserved}/sub");
+            let err = reject_dir(&child);
+            assert!(
+                err.to_string().contains(reserved),
+                "child {child} should be rejected naming `{reserved}`, got: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_tier1_error_names_alternative() {
+        let err = reject_dir("/etc/passwd");
+        let msg = err.to_string();
+        assert!(msg.contains("/etc"), "got: {msg}");
+        assert!(msg.contains("lifecycle hook"), "got: {msg}");
+    }
+
+    #[test]
+    fn state_rejects_cache_and_children() {
+        for path in ["/cache", "/cache/state", "/cache/runtime/anything"] {
+            let err = reject_dir(path);
+            assert!(
+                err.to_string().contains("/cache"),
+                "{path} should be rejected naming `/cache`, got: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_rejects_dcc_assets_and_children() {
+        for path in [
+            "/usr/local/share/dcc",
+            "/usr/local/share/dcc/bin",
+            "/usr/local/share/dcc/hooks/build-prep/010-001-project.sh",
+        ] {
+            let err = reject_dir(path);
+            assert!(
+                err.to_string().contains("/usr/local/share/dcc"),
+                "{path} should be rejected naming the dcc asset path, got: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_rejects_both_bin_spellings() {
+        // merged-usr: /bin -> /usr/bin; a textual guard must list both spellings.
+        for path in ["/bin/sh", "/usr/bin/sh"] {
+            let err = reject_dir(path);
+            assert!(
+                err.to_string().contains("/bin") || err.to_string().contains("/usr/bin"),
+                "{path} should be rejected, got: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_tier2_rejects_exact_but_accepts_child() {
+        for (reserved, child) in [
+            ("/usr", "/usr/local/cargo"),
+            ("/var", "/var/cache/apt"),
+            ("/home", "/home/dev/.cargo"),
+            ("/root", "/root/.cargo"),
+            ("/opt", "/opt/toolchain/cache"),
+            ("/workspace", "/workspace/target"),
+            ("/srv", "/srv/app"),
+            ("/mnt", "/mnt/data"),
+            ("/media", "/media/usb"),
+        ] {
+            let err = reject_dir(reserved);
+            assert!(
+                err.to_string().contains(reserved),
+                "exact {reserved} should be rejected, got: {err:#}"
+            );
+            let accepted = accept_dir(child);
+            assert_eq!(accepted[0].path, child, "{child} should be accepted");
+        }
+    }
+
+    #[test]
+    fn state_tier2_error_names_alternative() {
+        let err = reject_dir("/home");
+        let msg = err.to_string();
+        assert!(msg.contains("/home/dev/.cargo"), "got: {msg}");
+    }
+
+    #[test]
+    fn state_accepts_known_legitimate_nested_paths() {
+        for path in [
+            "/usr/local/cargo",
+            "/var/cache/apt",
+            "/home/dev/.cargo",
+            "/root/.cargo",
+            "/workspace/target",
+        ] {
+            let accepted = accept_dir(path);
+            assert_eq!(accepted[0].path, path, "{path} should be accepted");
+        }
+    }
+
+    #[test]
+    fn state_rejects_critical_path_after_container_env_resolution() {
+        // A deferred path that only becomes critical after ${containerEnv:VAR}
+        // resolution must be rejected at the resolution point.
+        let deferred = vec![crate::config::StateEntry {
+            path: "${containerEnv:HOME}".to_string(),
+            kind: crate::config::StateKind::Directory,
+        }];
+        // First: deferred path passes config-load validation.
+        let loaded = validate_state_entries_allowing_deferred_container_env(deferred.clone())
+            .expect("deferred path should pass load-time validation");
+        assert_eq!(loaded[0].path, "${containerEnv:HOME}");
+        // Then: resolving HOME=/etc is rejected at the resolution point.
+        let env = std::collections::HashMap::from([("HOME".to_string(), "/etc".to_string())]);
+        let err = resolve_state_entries_container_env(&loaded, &env).unwrap_err();
+        assert!(
+            err.to_string().contains("/etc"),
+            "resolved /etc should be rejected, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn state_accepts_nested_path_after_container_env_resolution() {
+        let deferred = vec![crate::config::StateEntry {
+            path: "${containerEnv:HOME}/.cargo".to_string(),
+            kind: crate::config::StateKind::Directory,
+        }];
+        let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
+        let env = std::collections::HashMap::from([("HOME".to_string(), "/home/dev".to_string())]);
+        let resolved = resolve_state_entries_container_env(&loaded, &env).unwrap();
+        assert_eq!(resolved[0].path, "/home/dev/.cargo");
+    }
+
+    #[test]
+    fn state_rejects_file_kind_critical_path() {
+        // File-kind state on a reserved path is still rejected (empty-file masking
+        // of e.g. /etc/passwd is the motivating defect).
+        let err = validate_state_entries(vec![crate::config::StateEntry {
+            path: "/etc/passwd".to_string(),
+            kind: crate::config::StateKind::File,
+        }])
+        .unwrap_err();
+        assert!(err.to_string().contains("/etc"), "got: {err:#}");
     }
 
     #[test]
