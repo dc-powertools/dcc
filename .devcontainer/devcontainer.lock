@@ -30,6 +30,12 @@
       "options": {},
       "ref": "ghcr.io/dc-powertools/features/codex:latest",
       "resolved": "sha256:5837b425b44d2a1f1c59d0b897a9d80a7921b83981e85044f65d791a4ffb64c4"
+    },
+    {
+      "direct": true,
+      "options": {},
+      "ref": "ghcr.io/dc-powertools/features/mo:latest",
+      "resolved": "sha256:c8be6d8830ef044ee30f2decfbaedb6ca4f9c57e438fa917f5f236457285b2a4"
     }
   ]
 }
