@@ -31,9 +31,9 @@ src/
   build.rs            dcc build command
   feature.rs          dcc feature profile config edit command
   run.rs              dcc run command
-  runtime.rs          Host-side runtime mode and active-command bookkeeping
+  supervisor.rs       In-container PID 1 lifecycle supervisor (scripts + host-side rt dir)
   seed.rs             State seeding from the image (hydration, dcc.seed label, ledger)
-  stop.rs             dcc stop command
+  stop.rs             dcc stop command (graceful / --now / --kill variants)
   forward.rs          Host-side TCP relay for forwardPorts
   config/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
@@ -369,8 +369,7 @@ post-`${containerEnv:VAR}` resolution:
   does not block the other. `/etc` is a subtree block because empty-file state
   corrupts `passwd`/`group`/`nsswitch.conf`; the error names the lifecycle-hook
   alternative. `/cache` is the profile cache mount itself (self-nesting), and
-  `/usr/local/share/dcc` holds `dcc`'s generated controller, command-wrapper, and
-  build-prep hook assets.
+  `/usr/local/share/dcc` holds `dcc`'s bind-mounted supervisor scripts and build-prep hook assets.
 - **Exact** (bare path only; subdirectories stay valid): `/usr`, `/var`,
   `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`. Legitimate
   cache targets such as `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`,
@@ -498,8 +497,10 @@ the Dockerfile) from stdin as a tar archive. No Dockerfile is written to disk.
 
 Official `build` sources are built first as a generated base image using their
 Dockerfile, context, build args, and optional target. `dcc` then builds its own
-generated stage from that base image so user creation, Features, controller
-assets, hook assets, and metadata labels remain consistent.
+generated stage from that base image so user creation, Features, hook assets, and
+metadata labels remain consistent. The PID 1 supervisor scripts are not baked into the
+image — they are bind-mounted read-only from the host at runtime (see Runtime Commands),
+so they exist in every container including the fast path.
 
 When features contribute runtime properties (mounts, commands, state, hooks, or
 unsafe runtime settings), `dcc build` passes
@@ -533,15 +534,19 @@ Runtime entrypoints share the launch planner in `exec.rs`:
 
 `dcc run`, `dcc exec`, and `dcc attach` reuse an existing profile container when one is
 running. If no container is running, they start a one-shot container unless `--keep` /
-`-k` is supplied. One-shot containers are stopped only after all active
-`dcc`-launched commands finish; the active-command records and durable/one-shot mode
-live under `<workspace>/.dcc/<profile>/runtime`. `dcc start`, `dcc run -k`,
-`dcc exec -k`, and `dcc attach -k` write durable mode, which prevents automatic teardown
-until `dcc stop`.
+`-k` is supplied. One-shot containers are stopped automatically when the last active
+`dcc`-launched command finishes: the in-container supervisor (PID 1) drains its
+active-command set and exits, and Docker's `--rm` removes the container. `dcc start`,
+`dcc run -k`, `dcc exec -k`, and `dcc attach -k` set durable mode, which prevents
+automatic teardown until `dcc stop`.
 
-This is host-side runtime bookkeeping. Docker labels are still used for stable lookup
-(`dcc.container_id=<container-id>`), but mutable mode and active-command state are not
-stored solely in labels because labels cannot be changed after container creation.
+Lifecycle state — durable/one-shot mode, the active-command set, and the stopping flag —
+is owned by the PID 1 supervisor and held in a container-private tmpfs at `/run/dcc`
+(never host-backed). Docker labels (`dcc.container_id=<container-id>`) are used only for
+stable container lookup. The supervisor scripts are generated from a single Rust source
+of truth (`src/supervisor.rs`), materialized into a host sibling directory
+`<workspace>/.dcc/<profile>.rt/`, and bind-mounted **read-only** at
+`/usr/local/share/dcc/rt`. Container-side code can execute them but cannot modify them.
 
 **Phase 1 — pre-flight checks and argument construction**
 
@@ -584,21 +589,25 @@ docker run
   -u <containerUser>
   -e KEY=VALUE ...           (remoteEnv after variable substitution)
   -e KEY=VALUE ...           (feature remoteEnv after template substitution)
+  -e DCC_MODE=oneshot|durable (initial supervisor mode)
   --mount <spec> ...         (mounts after variable substitution)
   -v <workspace-root>:/workspace
   -v <host-cache-path>:/cache
+  --mount <host>/.dcc/<profile>.rt:/usr/local/share/dcc/rt:ro
   --tmpfs /workspace/.dcc
-  --entrypoint tail          (keep-alive; the user command runs via docker exec)
+  --tmpfs /run/dcc:mode=1777  (supervisor lifecycle state; container-private)
+  --entrypoint /usr/local/share/dcc/rt/dcc-supervisor
   <image-tag>
-  -f /dev/null
 ```
 
-The container's PID 1 is a keep-alive process (`tail -f /dev/null`) so it stays
-running independent of foreground commands. This is deliberate: making a user command
-PID 1 and attaching to it fails for commands that exit quickly (e.g. `ls`) because the
-container can disappear before readiness polling or attach observes it. User commands
-run via `docker exec` (phase 4). `dcc` polls `docker inspect` at 100 ms intervals (up
-to 10 s) until the keep-alive container reports as running.
+The container's PID 1 is the `dcc` lifecycle supervisor, a POSIX `sh` script
+bind-mounted read-only from the host. It owns the durable/one-shot mode, the
+active-command set, and the teardown decision. This is deliberate: making a user
+command PID 1 and attaching to it fails for commands that exit quickly (e.g. `ls`)
+because the container can disappear before readiness polling or attach observes it.
+User commands run via `docker exec` through the `dcc-exec` wrapper (phase 4), which
+registers/deregisters each command with the supervisor. `dcc` polls `docker inspect`
+at 100 ms intervals (up to 10 s) until the container reports as running.
 
 `initializeCommand` is parsed for devcontainer compatibility but is not executed,
 because `dcc` does not run devcontainer-defined commands on the host. When a new
@@ -616,7 +625,7 @@ host-integrating flags (`--privileged`, `--cap-add`, `--security-opt`, `--pid=ho
 and `securityOpt` use the same explicit unsafe gate.
 
 `workspaceMount` is parsed but ignored because `dcc` owns the project mount. `overrideCommand`
-is parsed but ignored because `dcc` owns PID 1 keepalive startup. `portsAttributes` and
+is parsed but ignored because `dcc` owns PID 1 (the lifecycle supervisor). `portsAttributes` and
 `otherPortsAttributes` are parsed for compatibility; browser/preview auto-open behavior is
 not implemented.
 
@@ -655,10 +664,12 @@ hook. With no explicit attach command, it executes:
 **Phase 5 — teardown**
 
 After the foreground command returns, all relay task handles for that invocation are
-aborted. The active-command record is removed under the runtime lock. If the container
-mode is one-shot and no active commands remain, `dcc` stops the keep-alive container
-(`docker stop`; `--rm` then removes it) and clears the runtime bookkeeping directory.
-Durable containers remain running until `dcc stop`.
+aborted. The `dcc-exec` wrapper deregisters the command from the supervisor (via an
+`EXIT` trap) as the command exits. If the container mode is one-shot and no active
+commands remain, the supervisor drains and exits; Docker's `--rm` then removes the
+container. The host does not manage teardown state — it only waits for the container to
+disappear so port listeners are cleanly gone. Durable containers remain running until
+`dcc stop`.
 
 `dcc run` command resolution is owned by `run.rs`: project commands are addressed as
 `:<name>`, Feature commands as `<feature-id>:<name>`, and unqualified names are accepted
@@ -669,14 +680,19 @@ the container, hiding the host `.dcc/` directory from the container.
 
 ### dcc stop
 
-```
-docker stop <container-name>
-```
+`dcc stop` has three variants:
 
-If the container does not exist or is not running, `docker stop` returns a
-non-zero exit code. `dcc stop` treats this as a success (idempotent). The
-distinction is made by inspecting the error output rather than suppressing all
-errors.
+- **`dcc stop`** (default, graceful): signals the supervisor via `docker exec
+  dcc-ctl stop` to stop accepting new commands and exit after all remaining
+  commands finish (drain). The host then waits for the container to disappear.
+- **`dcc stop --now`**: signals `docker exec dcc-ctl stop-now`, which force-terminates
+  running commands (`TERM`), runs shutdown hooks, and exits.
+- **`dcc stop --kill`**: unconditionally `docker kill`s the container. Emergency path
+  for wedged or corrupted containers.
+
+If no container is running, all three variants are idempotent successes. If the
+supervisor is unreachable during a graceful stop (e.g. the container is wedged), `dcc
+stop` falls back to `docker stop` and points the user at `--kill`.
 
 ---
 

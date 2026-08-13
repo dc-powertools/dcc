@@ -161,7 +161,7 @@ config load and after `${containerEnv:VAR}` resolution:
   `/etc` is blocked as a subtree because empty-file state corrupts `passwd`,
   `group`, and `nsswitch.conf`; use a lifecycle hook to manage system files.
   `/cache` is blocked because it is the profile cache mount itself (self-nesting),
-  and `/usr/local/share/dcc` holds `dcc`'s own generated assets.
+  and `/usr/local/share/dcc` holds `dcc`'s bind-mounted supervisor scripts and hook assets.
 - **Exact path only blocked** (specific subdirectories stay valid): `/usr`,
   `/var`, `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`.
   For example `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`, and
@@ -271,7 +271,7 @@ dcc feature -r ghcr.io/devcontainers/features/node:1
 
 dcc start                    # start or promote a durable profile container
 dcc attach                   # run attach hooks, then open a shell
-dcc stop                     # stop the profile container and clear runtime bookkeeping
+dcc stop                     # stop the profile container (graceful drain)
 dcc id --format json         # print the stable profile id as JSON
 ```
 
@@ -356,8 +356,10 @@ image does not already exist.
 
 The generated Dockerfile stamps the installed `dcc` version as a `LABEL`
 immediately after `FROM`, so upgrading `dcc` automatically invalidates the cache
-for every dcc-controlled step. `dcc` also installs generated controller,
-command-wrapper, and build-preparation hook assets into the image. During
+for every dcc-controlled step. `dcc` also installs build-preparation hook assets
+into the image. The PID 1 lifecycle supervisor scripts are not baked into the
+image — they are bind-mounted read-only from the host at runtime, so they exist
+in every container including the fast path. During
 `dcc build`, build preparation runs `onCreateCommand`, `updateContentCommand`,
 and `postCreateCommand` in order, with Feature hooks before project hooks for
 each phase and state mounts attached.
@@ -460,8 +462,15 @@ not run attach hooks by default.
 
 ### `dcc stop`
 
-Stops the profile's container if it is running and clears local runtime
-bookkeeping. It is safe to run when no container is active.
+Stops the profile's container if it is running. It is safe to run when no container
+is active (idempotent).
+
+- **`dcc stop`** (default): signals the in-container supervisor to stop accepting new
+  commands and exit after all running commands finish (graceful drain).
+- **`dcc stop --now`**: force-terminates running commands, runs shutdown hooks, then
+  exits.
+- **`dcc stop --kill`**: unconditionally kills the container (`docker kill`). Use this
+  when the container is wedged or corrupted and the supervisor is unresponsive.
 
 
 ## Lifecycle hooks
@@ -509,8 +518,8 @@ more opinionated than a general IDE devcontainer implementation:
 
 - `dcc build` owns `onCreateCommand`, `updateContentCommand`, and
   `postCreateCommand`. Runtime commands do not rerun those hooks.
-- Runtime commands use a managed keepalive PID 1 and run foreground work through
-  `docker exec`, so `overrideCommand` is ignored.
+- Runtime commands use a managed lifecycle supervisor as PID 1 and run foreground
+  work through `docker exec`, so `overrideCommand` is ignored.
 - `initializeCommand` is parsed and warned about, but not executed. `dcc` avoids
   running devcontainer-defined commands on the host.
 - `workspaceMount` is ignored. The workspace is always mounted at `/workspace`,
@@ -592,7 +601,7 @@ devcontainer-compatible tools via
 | `customizations.dcc.state` | Container paths whose contents are persisted under the profile cache and mounted back into the container. String entries are directories; object entries support `{ "path": "...", "type": "file" }`. |
 | `forwardPorts` | Ports to forward from container to host. Each port is tunnelled through the container's loopback interface so the application sees connections as coming from `127.0.0.1`. `dcc build` installs `nc` (netcat) in the image automatically to enable this. |
 | `portsAttributes`, `otherPortsAttributes` | Parsed for schema compatibility. `label`, `protocol`, and `onAutoForward` values `openBrowser`, `openBrowserOnce`, `openPreview`, `silent`, and `ignore` are accepted; browser/preview auto-open behavior is not implemented. |
-| `overrideCommand` | Parsed for schema compatibility. Ignored because `dcc` always uses its managed keepalive startup. |
+| `overrideCommand` | Parsed for schema compatibility. Ignored because `dcc` always uses its managed lifecycle supervisor as PID 1. |
 | `workspaceFolder` | Container workdir for build-preparation hooks, startup/attach hooks, and foreground commands. Defaults to `/workspace`; `dcc` warns when it is outside `/workspace` while still mounting the project at `/workspace`. |
 | `workspaceMount` | Parsed for schema compatibility, but ignored because `dcc` owns workspace mounting. |
 | `initializeCommand` | Parsed for schema compatibility and warned as unsupported. It is not executed. |
@@ -615,7 +624,7 @@ The following properties in a feature's `devcontainer-feature.json` are read and
 | `installsAfter` | Soft ordering hint. An array of feature IDs (the `id` field from `devcontainer-feature.json`). This feature is installed after the listed features if they are already in the installation set. Not evaluated recursively. |
 | `dependsOn` | Hard dependencies. An object whose keys are feature references (same format as `devcontainer.json` `features`) and values are the options for each dependency. Missing dependencies are added to the installation set automatically. Evaluated recursively. Circular dependencies are an error. |
 | `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Lifecycle hooks. Same forms and variable substitution as the identically-named `devcontainer.json` properties. For each hook type, feature-contributed hooks run before the `devcontainer.json` hook of that type, in feature installation order. |
-| `init`, `entrypoint` | Parsed for compatibility but ignored with a warning because `dcc` owns PID 1 startup. |
+| `init`, `entrypoint` | Parsed for compatibility but ignored with a warning because `dcc` owns PID 1 (the lifecycle supervisor). |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` invocation includes `--allow-unsafe-runtime`. |
 
 Feature `containerUser` and `remoteUser` are rejected because the Feature schema does

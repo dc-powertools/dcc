@@ -82,7 +82,15 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
-    Stop {},
+    Stop {
+        /// Force-terminate running commands, run shutdown hooks, then exit.
+        #[arg(long)]
+        now: bool,
+        /// Unconditionally kill the container (`docker kill`). Emergency path for
+        /// wedged or corrupted containers.
+        #[arg(long)]
+        kill: bool,
+    },
     Id {},
     Feature {
         /// Add a Feature reference to the selected profile.

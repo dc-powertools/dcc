@@ -11,9 +11,9 @@ mod forward;
 mod lifecycle;
 mod profile;
 mod run;
-mod runtime;
 mod seed;
 mod stop;
+mod supervisor;
 mod version;
 mod workspace;
 
@@ -154,7 +154,7 @@ async fn run() -> anyhow::Result<()> {
             .await?;
             std::process::exit(status.code().unwrap_or(1));
         }
-        cli::Command::Stop {} => {
+        cli::Command::Stop { now, kill } => {
             stop::stop(
                 &workspace,
                 &profile,
@@ -165,6 +165,8 @@ async fn run() -> anyhow::Result<()> {
                     dry_run: cli.dry_run,
                     debug: cli.debug,
                     format: cli.format,
+                    now,
+                    kill,
                 },
             )
             .await

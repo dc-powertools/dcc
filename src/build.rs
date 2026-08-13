@@ -14,6 +14,7 @@ use crate::{
     features::{FeatureRuntimeConfig, LockEntry},
     lifecycle::{self, LifecycleCommand, LifecycleHooks},
     profile::{ContainerId, ProfileName},
+    supervisor,
     workspace::Workspace,
 };
 
@@ -385,6 +386,10 @@ async fn run_build_preparation(
         return Ok(());
     }
 
+    let rt_dir = supervisor::RtDir::new(workspace, profile);
+    rt_dir.materialize()?;
+    let rt_mount = rt_dir.mount_arg();
+
     let local_workspace = workspace.root.to_string_lossy().into_owned();
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
     let container_name = build_prep_container_name(container_id.as_str());
@@ -397,6 +402,7 @@ async fn run_build_preparation(
         cache: &local_cache,
         config_path,
         state_mounts: &state_mount_args,
+        rt_mount: &rt_mount,
         user: &config.container_user,
         workdir: &workdir,
     });
@@ -568,6 +574,7 @@ struct BuildPrepContainerArgs<'a> {
     cache: &'a str,
     config_path: &'a Path,
     state_mounts: &'a [String],
+    rt_mount: &'a str,
     user: &'a str,
     workdir: &'a str,
 }
@@ -598,10 +605,22 @@ fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
     for mount in input.state_mounts {
         args.extend(["--mount".to_string(), mount.clone()]);
     }
+    args.push("--mount".to_string());
+    args.push(input.rt_mount.to_string());
     args.extend(["--tmpfs".to_string(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
-    args.extend(["--entrypoint".to_string(), "tail".to_string()]);
+    args.extend([
+        "--tmpfs".to_string(),
+        format!("{}:mode=1777", supervisor::STATE_DIR),
+    ]);
+    // Durable mode: the build-prep container is always host-stopped, so the
+    // supervisor never drain-exits during hook execution.
+    args.push("-e".to_string());
+    args.push(format!("{}=durable", supervisor::MODE_ENV));
+    args.extend([
+        "--entrypoint".to_string(),
+        format!("{}/dcc-supervisor", supervisor::RT_MOUNT),
+    ]);
     args.push(input.image.to_string());
-    args.extend(["-f".to_string(), "/dev/null".to_string()]);
     args
 }
 
@@ -982,6 +1001,7 @@ mod tests {
                 "type=bind,src=/workspace/.dcc/dev/state/home/dev/.cargo,dst=/home/dev/.cargo"
                     .to_string(),
             ],
+            rt_mount: "/workspace/.dcc/dev.rt:/usr/local/share/dcc/rt:ro",
             user: "dev",
             workdir: "/workspace/service",
         });

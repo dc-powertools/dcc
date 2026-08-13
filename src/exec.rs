@@ -14,8 +14,7 @@ use crate::{
     features::{self, FeatureRuntimeConfig, FeatureUnsafeRuntime},
     forward, lifecycle,
     profile::{ContainerId, ContainerName, ProfileName},
-    runtime::{ContainerMode, RuntimeState},
-    version,
+    supervisor, version,
     workspace::Workspace,
 };
 
@@ -137,22 +136,37 @@ pub(crate) async fn start(
         return Ok(());
     }
     let plan = RuntimePlan::prepare(workspace, profile, config_path, &[], opts).await?;
-    let state = RuntimeState::new(&plan.cache_dir);
-    let _lock = state.acquire_lock()?;
     let existing =
         running_container_name(plan.container_id.as_str(), plan.container.as_str()).await?;
-    state.set_mode(ContainerMode::Durable)?;
-    if existing.is_some() {
+    if let Some(running) = &existing {
+        // Promote an already-running container to durable via the supervisor.
+        let status = docker::exec(
+            running,
+            &plan.config.container_user,
+            &plan.config.workspace_folder,
+            &[
+                format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+                "mode".to_string(),
+                "durable".to_string(),
+            ],
+        )
+        .await
+        .with_context(|| format!("failed to promote container `{running}` to durable"))?;
+        if !status.success() {
+            anyhow::bail!(
+                "failed to promote container `{running}` to durable: dcc-ctl exited with status {}",
+                status.code().unwrap_or(-1)
+            );
+        }
         if opts.debug {
             eprintln!(
-                "dcc debug: container `{}` already running for `{}`",
-                existing.as_deref().unwrap_or(plan.container.as_str()),
+                "dcc debug: container `{running}` already running, promoted to durable for `{}`",
                 plan.container_id.as_str()
             );
         }
         return Ok(());
     }
-    start_container(&plan, ContainerMode::Durable).await?;
+    start_container(&plan).await?;
     run_runtime_hooks(&plan, plan.container.as_str(), RuntimeHookPhase::Startup).await
 }
 
@@ -224,21 +238,32 @@ async fn execute_foreground(
     opts: ExecOptions<'_>,
 ) -> anyhow::Result<ExitStatus> {
     let plan = RuntimePlan::prepare(workspace, profile, config_path, override_args, opts).await?;
-    let state = RuntimeState::new(&plan.cache_dir);
-    let active = state.create_active_command()?;
-    let container_mode = if opts.keep {
-        ContainerMode::Durable
-    } else {
-        ContainerMode::OneShot
-    };
 
-    let setup_result = async {
-        let _lock = state.acquire_lock()?;
+    let container_name = async {
         let existing =
             running_container_name(plan.container_id.as_str(), plan.container.as_str()).await?;
         let (container_name, started) = if let Some(running) = existing {
             if opts.keep {
-                state.set_mode(ContainerMode::Durable)?;
+                let status = docker::exec(
+                    &running,
+                    &plan.config.container_user,
+                    &plan.config.workspace_folder,
+                    &[
+                        format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+                        "mode".to_string(),
+                        "durable".to_string(),
+                    ],
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to promote container `{running}` to durable")
+                })?;
+                if !status.success() {
+                    anyhow::bail!(
+                        "failed to promote container `{running}` to durable: dcc-ctl exited with status {}",
+                        status.code().unwrap_or(-1)
+                    );
+                }
             }
             if opts.debug {
                 eprintln!(
@@ -248,8 +273,7 @@ async fn execute_foreground(
             }
             (running, false)
         } else {
-            state.set_mode(container_mode)?;
-            start_container(&plan, container_mode).await?;
+            start_container(&plan).await?;
             (plan.container.as_str().to_string(), true)
         };
         if started {
@@ -257,15 +281,7 @@ async fn execute_foreground(
         }
         anyhow::Ok(container_name)
     }
-    .await;
-
-    let container_name = match setup_result {
-        Ok(container_name) => container_name,
-        Err(e) => {
-            let _ = finish_active_command(&state, &active, plan.container.as_str()).await;
-            return Err(e);
-        }
-    };
+    .await?;
 
     let relay_handles = forward::forward_ports(&container_name, &plan.config.forward_ports)
         .await
@@ -280,11 +296,15 @@ async fn execute_foreground(
         if kind == ForegroundKind::Attach {
             run_runtime_hooks(&plan, &container_name, RuntimeHookPhase::Attach).await?;
         }
+        // Run the user command through the dcc-exec wrapper so the supervisor can
+        // register/deregister it. The wrapper exits with the command's status.
+        let mut wrapped = vec![format!("{}/dcc-exec", supervisor::RT_MOUNT)];
+        wrapped.extend(plan.command_args.iter().cloned());
         docker::exec_foreground(
             &container_name,
             &plan.config.container_user,
             &plan.config.workspace_folder,
-            &plan.command_args,
+            &wrapped,
             plan.tty,
         )
         .await
@@ -296,20 +316,22 @@ async fn execute_foreground(
         handle.abort();
     }
 
-    let stop_result = finish_active_command(&state, &active, &container_name).await;
     let status = command_result?;
-    stop_result?;
+
+    // One-shot containers self-teardown: the supervisor (PID 1) drains and exits when
+    // the active set is empty, and Docker's --rm removes the container. The host does
+    // not manage teardown state. We only wait for the container to disappear so the
+    // relay handles and port listeners are cleanly gone before the next invocation.
+    if !opts.keep {
+        wait_for_removed(&container_name).await;
+    }
     Ok(status)
 }
 
-async fn start_container(plan: &RuntimePlan, mode: ContainerMode) -> anyhow::Result<()> {
+async fn start_container(plan: &RuntimePlan) -> anyhow::Result<()> {
     if plan.opts.debug {
         eprintln!(
-            "dcc debug: starting {} container `{}`",
-            match mode {
-                ContainerMode::OneShot => "one-shot",
-                ContainerMode::Durable => "durable",
-            },
+            "dcc debug: starting container `{}`",
             plan.container.as_str()
         );
     }
@@ -322,20 +344,17 @@ async fn start_container(plan: &RuntimePlan, mode: ContainerMode) -> anyhow::Res
         .with_context(|| format!("container `{}` failed to start", plan.container.as_str()))
 }
 
-async fn finish_active_command(
-    state: &RuntimeState,
-    active: &crate::runtime::ActiveCommand,
-    container: &str,
-) -> anyhow::Result<()> {
-    let _lock = state.acquire_lock()?;
-    state.complete_active_command(active)?;
-    if state.mode() == ContainerMode::OneShot && state.active_count()? == 0 {
-        docker::stop_container(container)
-            .await
-            .with_context(|| format!("failed to stop container `{container}`"))?;
-        state.clear()?;
+/// Wait for a container to be removed (e.g. after the supervisor drains and exits in
+/// one-shot mode, with --rm). Best-effort: does not error if the container never
+/// disappears (it may have been promoted to durable by another invocation).
+async fn wait_for_removed(container: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if let Ok(false) = docker::inspect_running(container).await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    Ok(())
 }
 
 fn default_attach_command() -> Vec<String> {
@@ -347,7 +366,6 @@ fn default_attach_command() -> Vec<String> {
 }
 
 struct RuntimePlan {
-    cache_dir: CacheDir,
     config: config::DevcontainerConfig,
     feature_runtime: FeatureRuntimeConfig,
     container_id: ContainerId,
@@ -370,6 +388,7 @@ struct OwnedExecOptions {
     strict: bool,
     profile_arg: String,
     allow_unsafe_runtime: bool,
+    keep: bool,
 }
 
 impl From<ExecOptions<'_>> for OwnedExecOptions {
@@ -382,6 +401,7 @@ impl From<ExecOptions<'_>> for OwnedExecOptions {
             strict: opts.strict,
             profile_arg: opts.profile_arg.to_string(),
             allow_unsafe_runtime: opts.allow_unsafe_runtime,
+            keep: opts.keep,
         }
     }
 }
@@ -396,6 +416,7 @@ impl RuntimePlan {
     ) -> anyhow::Result<Self> {
         let opts = OwnedExecOptions::from(opts);
         let cache_dir = CacheDir::new(workspace, profile);
+        let rt_dir = supervisor::RtDir::new(workspace, profile);
 
         let mut config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
             .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
@@ -409,6 +430,7 @@ impl RuntimePlan {
         // referenced as bind-mount sources (e.g. ${localCacheFolder}/node_modules).
         // Docker requires bind-mount source paths to exist on the host before startup.
         cache_dir.ensure_exists()?;
+        rt_dir.materialize()?;
 
         version::warn_if_image_version_mismatch(
             image_tag.as_str(),
@@ -584,6 +606,16 @@ impl RuntimePlan {
             args.push(format!("{k}={v}"));
         }
 
+        // Initial container mode for the supervisor (PID 1). Set at docker run time so
+        // the supervisor is born in the right mode; only --keep against an already-running
+        // container needs a dcc-ctl mode promotion.
+        args.push("-e".into());
+        args.push(format!(
+            "{}={}",
+            supervisor::MODE_ENV,
+            supervisor::mode_env_value(opts.keep)
+        ));
+
         // mounts: feature contributions first, then devcontainer.json mounts
         for mount in &all_mounts {
             args.push("--mount".into());
@@ -610,21 +642,33 @@ impl RuntimePlan {
             args.push(mount.clone());
         }
 
+        // Read-only bind mount of the supervisor scripts. Lives outside the /cache mount
+        // (a sibling of the cache root) so container-side code can execute but not modify
+        // them.
+        args.push("--mount".into());
+        args.push(rt_dir.mount_arg());
+
         // mask .dcc directory inside container
         args.extend(["--tmpfs".into(), format!("{CONTAINER_WORKSPACE}/.dcc")]);
 
-        // Keep-alive entrypoint: PID 1 must outlive the user command, which is run
-        // separately in the foreground via `docker exec` below. Making the command PID 1
-        // and attaching breaks for anything that exits quickly (e.g. `ls`) — the container
-        // is gone before we can attach. `tail -f /dev/null` blocks forever and exists on
-        // both glibc and BusyBox/Alpine images.
-        args.extend(["--entrypoint".into(), "tail".into()]);
+        // Container-private lifecycle state for the supervisor. Dies with the container;
+        // never host-backed.
+        args.extend([
+            "--tmpfs".into(),
+            format!("{}:mode=1777", supervisor::STATE_DIR),
+        ]);
 
-        // Image tag (must come after all flags)
+        // PID 1 is the dcc lifecycle supervisor. It owns mode, the active-command set,
+        // and the teardown decision. User commands run via `docker exec` through the
+        // dcc-exec wrapper (see execute_foreground).
+        args.extend([
+            "--entrypoint".into(),
+            format!("{}/dcc-supervisor", supervisor::RT_MOUNT),
+        ]);
+
+        // Image tag (must come after all flags). No command args follow: the supervisor
+        // is PID 1 and runs its own event loop.
         args.push(image_tag.as_str().to_owned());
-
-        // Keep-alive command (arguments to the `tail` entrypoint)
-        args.extend(["-f".into(), "/dev/null".into()]);
 
         // Allocate a TTY for the foreground command only when our own stdin is a
         // terminal, so non-interactive use (pipes, CI) still works.
@@ -679,10 +723,24 @@ impl RuntimePlan {
             for m in &state_mount_args {
                 dbg.push(format!("  {}", describe_mount(m)));
             }
+            dbg.push(format!(
+                "  bindro {} -> {}",
+                rt_dir.host_path.display(),
+                supervisor::RT_MOUNT
+            ));
             dbg.push(format!("  tmpfs  -> {CONTAINER_WORKSPACE}/.dcc"));
+            dbg.push(format!(
+                "  tmpfs  -> {} (supervisor state)",
+                supervisor::STATE_DIR
+            ));
             for m in &all_mounts {
                 dbg.push(format!("  {}", describe_mount(m)));
             }
+            dbg.push(format!(
+                "  entry  {} (PID 1 supervisor, mode={})",
+                supervisor::RT_MOUNT,
+                supervisor::mode_env_value(opts.keep)
+            ));
 
             dbg.push(format!(
                 "forwardPorts: {}",
@@ -718,7 +776,6 @@ impl RuntimePlan {
         }
 
         Ok(Self {
-            cache_dir,
             config,
             feature_runtime,
             container_id,

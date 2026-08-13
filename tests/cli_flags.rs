@@ -401,6 +401,74 @@ fn refresh_only_flag_accepted_by_build() {
 }
 
 #[test]
+fn stop_now_and_kill_flags_accepted() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    for args in [
+        ["--dry-run", "stop", "--now"].as_slice(),
+        ["--dry-run", "stop", "--kill"].as_slice(),
+    ] {
+        let output = fx.dcc(args).output().unwrap();
+        assert_success(&output);
+    }
+}
+
+#[test]
+fn stop_dry_run_reports_action_for_each_variant() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+
+    let graceful = fx
+        .dcc(&["--dry-run", "--format", "json", "stop"])
+        .output()
+        .unwrap();
+    assert_success(&graceful);
+    let graceful_json = String::from_utf8_lossy(&graceful.stdout);
+    assert!(
+        graceful_json.contains("dcc-ctl stop (graceful drain)"),
+        "graceful dry-run should report drain action: {graceful_json}"
+    );
+
+    let now = fx
+        .dcc(&["--dry-run", "--format", "json", "stop", "--now"])
+        .output()
+        .unwrap();
+    assert_success(&now);
+    let now_json = String::from_utf8_lossy(&now.stdout);
+    assert!(
+        now_json.contains("dcc-ctl stop-now"),
+        "--now dry-run should report stop-now action: {now_json}"
+    );
+
+    let kill = fx
+        .dcc(&["--dry-run", "--format", "json", "stop", "--kill"])
+        .output()
+        .unwrap();
+    assert_success(&kill);
+    let kill_json = String::from_utf8_lossy(&kill.stdout);
+    assert!(
+        kill_json.contains("docker kill"),
+        "--kill dry-run should report docker kill action: {kill_json}"
+    );
+}
+
+#[test]
+fn stop_dry_run_no_longer_reports_runtime_state_clearing() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    let output = fx
+        .dcc(&["--dry-run", "--format", "json", "stop"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !json.contains("runtime state clearing"),
+        "host-side bookkeeping is removed; dry-run should not mention it: {json}"
+    );
+}
+
+#[test]
 fn dry_run_format_json_outputs_stable_report() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);

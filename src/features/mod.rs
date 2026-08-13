@@ -621,28 +621,11 @@ pub(crate) fn generated_assets(
     feature_hooks: &[(String, LifecycleHooks)],
     project_hooks: &LifecycleHooks,
 ) -> Vec<context::ContextFile> {
-    let mut files = vec![
-        (
-            ".dcc-generated/bin/dcc-controller".to_string(),
-            controller_script().into_bytes(),
-            0o755,
-        ),
-        (
-            ".dcc-generated/bin/dcc-command".to_string(),
-            command_wrapper_script().into_bytes(),
-            0o755,
-        ),
-    ];
-    files.extend(build_prep_hook_assets(feature_hooks, project_hooks));
-    files
-}
-
-fn controller_script() -> String {
-    "#!/bin/sh\nset -eu\nexec tail -f /dev/null\n".to_string()
-}
-
-fn command_wrapper_script() -> String {
-    "#!/bin/sh\nset -eu\nexec \"$@\"\n".to_string()
+    // Build-prep hook assets only. The PID 1 supervisor and command wrapper are
+    // shipped as read-only bind mounts from the host rt directory (see
+    // `src/supervisor.rs`), not baked into the image, so they exist on every
+    // container including the fast path.
+    build_prep_hook_assets(feature_hooks, project_hooks)
 }
 
 fn build_prep_hook_assets(
