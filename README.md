@@ -464,8 +464,9 @@ promotes it to durable mode.
 Attaches to the profile container. If no explicit command is supplied, `dcc`
 chooses an interactive shell in this order: executable absolute `$SHELL`,
 `/bin/bash`, then `/bin/sh`. `dcc attach` runs collected `postAttachCommand`
-hooks before the shell or explicit attach command. `dcc run` and `dcc exec` do
-not run attach hooks by default.
+hooks host-side before the shell or explicit attach command; if it starts a new
+container, it first waits for `postStartCommand` to finish. `dcc run` and `dcc exec`
+do not run attach hooks by default.
 
 ### `dcc stop`
 
@@ -495,8 +496,8 @@ on the host.
 | `onCreateCommand` | `dcc build` | `dcc build --refresh-only`, all runtime commands, `--dry-run` | Runs in the build-preparation container after the image exists. |
 | `updateContentCommand` | `dcc build`, `dcc build --refresh-only` | Runtime commands, `--dry-run` | Runs in the build-preparation container. |
 | `postCreateCommand` | `dcc build`, `dcc build --refresh-only` | Runtime commands, `--dry-run` | Runs in the build-preparation container after `updateContentCommand`. |
-| `postStartCommand` | `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` only when that invocation starts a new profile container | Reusing an already-running container, `dcc exec --skip-lifecycle`, `--dry-run` | Runs in the runtime container before the foreground command or attach shell. |
-| `postAttachCommand` | `dcc attach` | `dcc run`, `dcc exec`, `dcc start`, `dcc build`, `--dry-run` | Runs immediately before the attach shell or explicit attach command. If `dcc attach` starts a new container, `postStartCommand` runs first. |
+| `postStartCommand` | `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` only when that invocation starts a new profile container | Reusing an already-running container, `dcc exec --skip-lifecycle`, `--dry-run` | Runs inside the in-container supervisor (PID 1) at startup. The host pre-substitutes each hook into a script and hands the directory to the supervisor; the foreground command or attach hooks wait for the supervisor's readiness signal before proceeding. |
+| `postAttachCommand` | `dcc attach` | `dcc run`, `dcc exec`, `dcc start`, `dcc build`, `--dry-run` | Runs host-side immediately before the attach shell or explicit attach command. If `dcc attach` starts a new container, the host first waits for `postStartCommand` to finish (readiness handshake), so `postStartCommand` always completes before `postAttachCommand`. |
 
 `dcc id` and `dcc stop` do not trigger lifecycle hooks.
 
@@ -526,7 +527,10 @@ more opinionated than a general IDE devcontainer implementation:
 - `dcc build` owns `onCreateCommand`, `updateContentCommand`, and
   `postCreateCommand`. Runtime commands do not rerun those hooks.
 - Runtime commands use a managed lifecycle supervisor as PID 1 and run foreground
-  work through `docker exec`, so `overrideCommand` is ignored.
+  work through `docker exec`, so `overrideCommand` is ignored. The supervisor runs
+  `postStartCommand` (and Feature startup hooks) itself at startup; the foreground
+  command waits for the supervisor's readiness signal before running, so a slow or
+  failing `postStartCommand` is observed and reported instead of racing the command.
 - `initializeCommand` is parsed and warned about, but not executed. `dcc` avoids
   running devcontainer-defined commands on the host.
 - `workspaceMount` is ignored. The workspace is always mounted at `/workspace`,

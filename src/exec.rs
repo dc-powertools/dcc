@@ -167,7 +167,10 @@ pub(crate) async fn start(
         return Ok(());
     }
     start_container(&plan).await?;
-    run_runtime_hooks(&plan, plan.container.as_str(), RuntimeHookPhase::Startup).await
+    // The supervisor runs postStartCommand hooks internally at startup. Wait for
+    // bootstrap completion so a hook failure surfaces here as a clear error
+    // rather than a hang, and so the container is ready when this returns.
+    wait_ready(&plan, plan.container.as_str()).await
 }
 
 pub(crate) fn dry_run_runtime(
@@ -277,7 +280,10 @@ async fn execute_foreground(
             (plan.container.as_str().to_string(), true)
         };
         if started {
-            run_runtime_hooks(&plan, &container_name, RuntimeHookPhase::Startup).await?;
+            // The supervisor runs postStartCommand hooks internally at startup.
+            // Wait for bootstrap completion so a hook failure surfaces as a
+            // clear error rather than a hang. On reuse, hooks already ran.
+            wait_ready(&plan, &container_name).await?;
         }
         anyhow::Ok(container_name)
     }
@@ -606,15 +612,11 @@ impl RuntimePlan {
             args.push(format!("{k}={v}"));
         }
 
-        // Initial container mode for the supervisor (PID 1). Set at docker run time so
-        // the supervisor is born in the right mode; only --keep against an already-running
-        // container needs a dcc-ctl mode promotion.
-        args.push("-e".into());
-        args.push(format!(
-            "{}={}",
-            supervisor::MODE_ENV,
-            supervisor::mode_env_value(opts.keep)
-        ));
+        // Initial container mode for the supervisor (PID 1). Passed as an
+        // entrypoint argument so the supervisor is born in the right mode; only
+        // --keep against an already-running container needs a dcc-ctl mode
+        // promotion.
+        let mode = supervisor::mode_value(opts.keep);
 
         // mounts: feature contributions first, then devcontainer.json mounts
         for mount in &all_mounts {
@@ -658,16 +660,53 @@ impl RuntimePlan {
             format!("{}:mode=1777", supervisor::STATE_DIR),
         ]);
 
-        // PID 1 is the dcc lifecycle supervisor. It owns mode, the active-command set,
-        // and the teardown decision. User commands run via `docker exec` through the
-        // dcc-exec wrapper (see execute_foreground).
+        // PID 1 is the dcc lifecycle supervisor. It owns mode, startup hooks,
+        // readiness, the active-command set, and the teardown decision. User
+        // commands run via `docker exec` through the dcc-exec wrapper, which
+        // registers with the supervisor and waits for readiness before running.
         args.extend([
             "--entrypoint".into(),
             format!("{}/dcc-supervisor", supervisor::RT_MOUNT),
         ]);
 
-        // Image tag (must come after all flags). No command args follow: the supervisor
-        // is PID 1 and runs its own event loop.
+        // Emit postStartCommand hook scripts (feature hooks first in installation
+        // order, then the devcontainer hook), fully substituted host-side so no
+        // ${containerEnv:...} reaches the container. When --skip-lifecycle is set,
+        // no scripts are written and the supervisor marks itself ready immediately.
+        let has_start_hooks = !opts.skip_lifecycle
+            && supervisor::RtDir::has_start_hooks(
+                &feature_runtime.feature_hooks,
+                &config.lifecycle,
+            );
+        if has_start_hooks {
+            let substitute = |s: &str| -> anyhow::Result<String> {
+                let s = config::vars::apply_substitution(s, &local_workspace, &local_cache);
+                config::vars::resolve_container_env(&s, &container_env)
+            };
+            rt_dir
+                .write_start_hooks(
+                    &feature_runtime.feature_hooks,
+                    &config.lifecycle,
+                    &substitute,
+                    &config.container_user,
+                    &config.workspace_folder,
+                )
+                .context("failed to write startup hook scripts")?;
+        }
+
+        // Entrypoint arguments after the image tag are passed to the supervisor.
+        args.push("--mode".into());
+        args.push(mode.into());
+        // One-shot containers expect a command; durable (dcc start / --keep) do not.
+        if !opts.keep {
+            args.push("--expect-command".into());
+        }
+        if has_start_hooks {
+            args.push("--start-hooks".into());
+            args.push(rt_dir.start_hooks_container_path());
+        }
+
+        // Image tag (must come after all flags). Entrypoint args follow it.
         args.push(image_tag.as_str().to_owned());
 
         // Allocate a TTY for the foreground command only when our own stdin is a
@@ -737,9 +776,8 @@ impl RuntimePlan {
                 dbg.push(format!("  {}", describe_mount(m)));
             }
             dbg.push(format!(
-                "  entry  {} (PID 1 supervisor, mode={})",
+                "  entry  {} (PID 1 supervisor, mode={mode})",
                 supervisor::RT_MOUNT,
-                supervisor::mode_env_value(opts.keep)
             ));
 
             dbg.push(format!(
@@ -820,6 +858,37 @@ async fn wait_for_running(container: &str) -> anyhow::Result<()> {
         }
         tokio::time::sleep(POLL).await;
     }
+}
+
+/// Waits for the supervisor to finish startup (postStartCommand hooks) by running
+/// `dcc-ctl wait-ready` inside the container. Maps a bootstrap failure (exit 252)
+/// to a clear error so a failing hook surfaces here rather than as a hang.
+async fn wait_ready(plan: &RuntimePlan, container: &str) -> anyhow::Result<()> {
+    if plan.opts.skip_lifecycle {
+        // Hooks were skipped; the supervisor writes bootstrap-status=0 immediately.
+        // Still wait so the container is ready, but don't expect hook failures.
+    }
+    let status = docker::exec(
+        container,
+        &plan.config.container_user,
+        &plan.config.workspace_folder,
+        &[
+            format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+            "wait-ready".to_string(),
+        ],
+    )
+    .await
+    .with_context(|| format!("failed to wait for container `{container}` readiness"))?;
+    if !status.success() {
+        if status.code() == Some(supervisor::EXIT_BOOTSTRAP_FAILED) {
+            anyhow::bail!("container `{container}` startup failed: a postStartCommand hook failed");
+        }
+        anyhow::bail!(
+            "container `{container}` startup failed: dcc-ctl wait-ready exited with status {}",
+            status.code().unwrap_or(-1)
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

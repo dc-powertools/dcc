@@ -673,12 +673,14 @@ fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
     ]);
     // Durable mode: the build-prep container is always host-stopped, so the
     // supervisor never drain-exits during hook execution.
-    args.push("-e".to_string());
-    args.push(format!("{}=durable", supervisor::MODE_ENV));
     args.extend([
         "--entrypoint".to_string(),
         format!("{}/dcc-supervisor", supervisor::RT_MOUNT),
     ]);
+    // Entrypoint arguments: --mode durable (no --expect-command, no
+    // --start-hooks — build-prep hooks run host-side, not via the supervisor).
+    args.push("--mode".to_string());
+    args.push("durable".to_string());
     args.push(input.image.to_string());
     args
 }

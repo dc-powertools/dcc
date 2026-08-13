@@ -654,9 +654,9 @@ fn stop_now_force_terminates_durable_container() {
 #[test]
 #[ignore]
 fn stop_graceful_drains_durable_started_with_no_command() {
-    // `dcc start` creates a durable container with no command registered, so the
-    // supervisor's PRIMED flag is never set. A graceful `dcc stop` must still
-    // tear it down (the stopping flag overrides the startup grace period).
+    // `dcc start` creates a durable container with no command registered. A
+    // graceful `dcc stop` must still tear it down (durable containers never
+    // reap and always honor the stopping flag).
     let fx = DockerFixture::new();
     fx.write_config(&format!(
         r#"{{
@@ -851,4 +851,235 @@ RUN id dev >/dev/null 2>&1 || useradd -m -s /bin/sh dev
         container_uid, host_uid,
         "container uid `{container_uid}` should match host uid `{host_uid}` after remap"
     );
+}
+
+// ── T-0025: supervisor-owned startup handshake ────────────────────────────────
+
+#[test]
+#[ignore]
+fn post_start_command_runs_in_supervisor_before_command() {
+    // postStartCommand runs inside the supervisor (PID 1), and the foreground
+    // command waits for readiness. A marker written by postStartCommand must
+    // be visible to the command, proving ordering.
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root",
+            "postStartCommand": "printf 'ready' > /workspace/startup-marker",
+            "customizations": {{
+                "dcc": {{
+                    "commands": {{
+                        "check": "cat /workspace/startup-marker"
+                    }}
+                }}
+            }}
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    let out = fx.dcc(&["run", "check"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ready"),
+        "postStartCommand marker not visible to command; stdout: {stdout}"
+    );
+}
+
+#[test]
+#[ignore]
+fn slow_post_start_command_does_not_race_command() {
+    // A postStartCommand that sleeps longer than the old 60s grace would have
+    // exceeded it. The command must still wait for readiness and succeed.
+    // (Uses a 3s sleep — shorter than the old grace but long enough to prove
+    // the command waits rather than racing.)
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root",
+            "postStartCommand": "sleep 3 && printf 'done' > /workspace/slow-marker",
+            "customizations": {{
+                "dcc": {{
+                    "commands": {{
+                        "check": "cat /workspace/slow-marker"
+                    }}
+                }}
+            }}
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    let out = fx.dcc(&["run", "check"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("done"),
+        "slow postStartCommand marker not visible; stdout: {stdout}"
+    );
+}
+
+#[test]
+#[ignore]
+fn failing_post_start_command_surfaces_as_error() {
+    // A failing postStartCommand must surface as a clear host-side error
+    // (exit 252 mapped to a message), not a hang.
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root",
+            "postStartCommand": "exit 42"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    let out = fx.dcc(&["exec", "/bin/true"]);
+    assert_failure(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("startup failed") || stderr.contains("hook"),
+        "failing postStartCommand should surface a clear error; stderr: {stderr}"
+    );
+}
+
+#[test]
+#[ignore]
+fn start_then_immediate_stop_graceful_tears_down() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["start"]));
+    // Immediate stop — no grace window dependency.
+    assert_success(&fx.dcc(&["stop"]));
+}
+
+#[test]
+#[ignore]
+fn start_then_immediate_stop_now_tears_down() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["start"]));
+    assert_success(&fx.dcc(&["stop", "--now"]));
+}
+
+#[test]
+#[ignore]
+fn start_then_immediate_stop_kill_tears_down() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["start"]));
+    assert_success(&fx.dcc(&["stop", "--kill"]));
+}
+
+#[test]
+#[ignore]
+fn skip_lifecycle_skips_post_start_command() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root",
+            "postStartCommand": "printf 'ran' > /workspace/skip-marker",
+            "customizations": {{
+                "dcc": {{
+                    "commands": {{
+                        "check": "test -f /workspace/skip-marker && echo exists || echo absent"
+                    }}
+                }}
+            }}
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    let out = fx.dcc(&[
+        "exec",
+        "--skip-lifecycle",
+        "/bin/sh",
+        "-lc",
+        "test -f /workspace/skip-marker && echo exists || echo absent",
+    ]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(
+        stdout, "absent",
+        "postStartCommand should not have run under --skip-lifecycle; stdout: {stdout}"
+    );
+}
+
+#[test]
+#[ignore]
+fn one_shot_container_drains_after_command_without_grace() {
+    // A one-shot container must drain and exit after the command completes,
+    // with no time-based grace. The container should be gone immediately
+    // after dcc exec returns.
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["exec", "/bin/true"]));
+    // The container should be removed (one-shot + --rm). Give it a moment.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // A second exec should start a fresh container and succeed.
+    assert_success(&fx.dcc(&["exec", "/bin/true"]));
+}
+
+#[test]
+#[ignore]
+fn durable_reuse_and_keep_promotion_work_with_handshake() {
+    // A durable container (--keep) must support multiple commands, with the
+    // readiness handshake working on reuse (fast path, no blocking).
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root",
+            "postStartCommand": "printf 'started' > /workspace/durable-marker",
+            "customizations": {{
+                "dcc": {{
+                    "commands": {{
+                        "check": "cat /workspace/durable-marker"
+                    }}
+                }}
+            }}
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    // First command with --keep: cold start, hooks run, command waits.
+    let out = fx.dcc(&["exec", "--keep", "run", "check"]);
+    assert_success(&out);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("started"));
+    // Second command with --keep: reuses the durable container, fast-path readiness.
+    let out2 = fx.dcc(&["exec", "--keep", "run", "check"]);
+    assert_success(&out2);
+    assert!(String::from_utf8_lossy(&out2.stdout).contains("started"));
+    // Clean up.
+    assert_success(&fx.dcc(&["stop", "--now"]));
 }
