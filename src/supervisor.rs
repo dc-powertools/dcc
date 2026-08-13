@@ -35,9 +35,10 @@ pub(crate) const MODE_ENV: &str = "DCC_MODE";
 /// register.
 const STARTUP_GRACE_SECS: u32 = 60;
 
-/// Drain poll interval in seconds. POSIX `sleep` does not reliably support
-/// fractional seconds, so this is a whole-second value.
-const POLL_SECS: u32 = 1;
+/// Drain poll interval in milliseconds. Passed to `sleep` as a fractional
+/// second value (e.g. `sleep 0.2`), which GNU coreutils and BusyBox `sleep`
+/// both support — covering glibc, Alpine, and all base images `dcc` targets.
+const POLL_MS: u32 = 200;
 
 /// Host-side runtime assets directory: `<workspace>/.dcc/<profile>.rt/`.
 #[derive(Debug)]
@@ -195,7 +196,7 @@ done
     .replace("__STATE_DIR__", STATE_DIR)
     .replace("__RT_MOUNT__", RT_MOUNT)
     .replace("__STARTUP_GRACE_SECS__", &STARTUP_GRACE_SECS.to_string())
-    .replace("__POLL_SECS__", &POLL_SECS.to_string())
+    .replace("__POLL_SECS__", &format!("{:.1}", POLL_MS as f64 / 1000.0))
 }
 
 /// Control script. Invoked by the host CLI via `docker exec dcc-ctl <verb>`.
@@ -295,6 +296,15 @@ mod tests {
         let s = supervisor_script();
         assert!(s.starts_with("#!/bin/sh\n"));
         assert!(s.contains("set -eu"));
+    }
+
+    #[test]
+    fn supervisor_script_uses_fractional_sleep() {
+        let s = supervisor_script();
+        assert!(
+            s.contains("sleep 0.2"),
+            "expected `sleep 0.2` (200ms as fractional seconds), got: {s}"
+        );
     }
 
     #[test]
