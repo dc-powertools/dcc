@@ -256,6 +256,7 @@ Out of scope:
 | Revision | Date | Source | Change | Reason | Scope Or Acceptance Impact |
 | --- | --- | --- | --- | --- | --- |
 | r1 | 2026-08-13 | User direction | Initial intake | — | — |
+| r2 | 2026-08-13 | Design pass + review feedback | Recorded the r3 design (`readme/tasks/0025-r1-startup-handshake-design.md`) settling all seven implementer decisions; readiness signalling is a single `bootstrap-status` file with a per-waiter FIFO handshake rather than a polled marker; the startup grace is replaced by a supervisor-local `arrived` flag plus a 10 s one-shot orphan reaper; removal of the `image` fast path was split out as T-0027 | The design pass changed the readiness mechanism and added a bounded reaper; the fast-path removal is a user-visible behavior change that needs its own authority | Acceptance criterion "`STARTUP_GRACE_SECS`, the `PRIMED` marker, and the grace branch of `should_exit` are deleted" still holds. The `wait-ready` criterion is met by a FIFO block rather than a poll. A 10 s reaper is added, scoped to one-shot containers and clocked from bootstrap completion, so it cannot bound hook duration. Fast-path removal is out of scope for T-0025 and not a prerequisite |
 
 ## Done When
 
