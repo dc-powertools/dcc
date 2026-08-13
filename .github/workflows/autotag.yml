@@ -31,7 +31,7 @@ jobs:
       # when called by bump.yml the caller's SHA is stale, so pin to main (which
       # already has the just-pushed bump commit). Version read and tag target
       # come from the same checkout, so they are always self-consistent.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
 

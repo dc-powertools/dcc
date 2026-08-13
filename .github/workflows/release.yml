@@ -44,7 +44,7 @@ jobs:
             use_cross: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref_name }}
 
@@ -67,7 +67,7 @@ jobs:
       - name: Package
         run: tar -czf dcc-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release dcc
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: dcc-${{ matrix.target }}
           path: dcc-${{ matrix.target }}.tar.gz
@@ -79,15 +79,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref_name }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts/
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.ref || github.ref_name }}
           files: artifacts/**/*.tar.gz
