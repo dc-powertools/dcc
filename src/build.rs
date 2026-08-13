@@ -504,8 +504,15 @@ async fn hydrate_state(
     let state_root = crate::seed::state_root(cache_dir);
     std::fs::create_dir_all(&state_root)
         .with_context(|| format!("failed to create state root `{}`", state_root.display()))?;
+    let (host_uid, host_gid) = host_owner(&state_root);
     let state_root_str = state_root.to_string_lossy().into_owned();
-    let args = crate::seed::hydration_container_args(image, &state_root_str, &to_hydrate);
+    let args = crate::seed::hydration_container_args(
+        image,
+        &state_root_str,
+        &to_hydrate,
+        host_uid,
+        host_gid,
+    );
     eprintln!(
         "dcc: seeding {} declared state path(s) from image `{image}`",
         to_hydrate.len()
@@ -534,6 +541,23 @@ async fn hydrate_state(
         .write(&ledger_path)
         .context("failed to write seed ledger after hydration")?;
     Ok(())
+}
+
+/// Returns the (uid, gid) of the host user that owns `path`, so the hydration
+/// container can `chown` extracted content back to the host user. Falls back to
+/// 0:0 on non-Unix targets.
+#[cfg(unix)]
+pub(crate) fn host_owner(path: &std::path::Path) -> (u32, u32) {
+    use std::os::unix::fs::MetadataExt as _;
+    match std::fs::metadata(path) {
+        Ok(meta) => (meta.uid(), meta.gid()),
+        Err(_) => (0, 0),
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn host_owner(_path: &std::path::Path) -> (u32, u32) {
+    (0, 0)
 }
 
 async fn read_feature_runtime(image: &str) -> anyhow::Result<FeatureRuntimeConfig> {

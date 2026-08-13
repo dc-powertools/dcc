@@ -1003,9 +1003,11 @@ async fn runtime_seed_guard(cache_dir: &CacheDir, image: &str, state: &[config::
         );
         return;
     }
+    let (host_uid, host_gid) = crate::build::host_owner(&state_root);
     let state_root_str = state_root.to_string_lossy().into_owned();
     let entries: Vec<crate::seed::SeedManifestEntry> = manifest.entries.clone();
-    let args = crate::seed::hydration_container_args(image, &state_root_str, &entries);
+    let args =
+        crate::seed::hydration_container_args(image, &state_root_str, &entries, host_uid, host_gid);
     if let Err(e) = crate::docker::run_to_completion(&args).await {
         eprintln!("warning: state hydration from image `{image}` failed: {e:#}");
         return;
