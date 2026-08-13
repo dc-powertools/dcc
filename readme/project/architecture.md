@@ -62,7 +62,7 @@ third level of nesting.
 | `serde_json` | `preserve_order` | JSON value type; used in feature option maps and profile feature edits where object order should remain stable |
 | `json5` | — | JSONC-compatible parsing (trailing commas, `//` comments); devcontainer configs use this format |
 | `anyhow` | — | Error handling with context |
-| `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container readiness polling |
+| `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container-exists polling (`wait_for_running`) |
 | `reqwest` | `json`, `rustls-tls` | HTTP client for OCI registry; `rustls-tls` avoids OpenSSL for cross-compilation |
 | `tar` | — | In-memory tar archive construction for the Docker build context |
 | `flate2` | — | gzip decompression of OCI layer blobs |
@@ -592,7 +592,6 @@ docker run
   -u <containerUser>
   -e KEY=VALUE ...           (remoteEnv after variable substitution)
   -e KEY=VALUE ...           (feature remoteEnv after template substitution)
-  -e DCC_MODE=oneshot|durable (initial supervisor mode)
   --mount <spec> ...         (mounts after variable substitution)
   -v <workspace-root>:/workspace
   -v <host-cache-path>:/cache
@@ -600,24 +599,37 @@ docker run
   --tmpfs /workspace/.dcc
   --tmpfs /run/dcc:mode=1777  (supervisor lifecycle state; container-private)
   --entrypoint /usr/local/share/dcc/rt/dcc-supervisor
-  <image-tag>
+  <image-tag> --mode oneshot|durable [--expect-command] [--start-hooks <rt>/start-hooks]
 ```
 
 The container's PID 1 is the `dcc` lifecycle supervisor, a POSIX `sh` script
-bind-mounted read-only from the host. It owns the durable/one-shot mode, the
+bind-mounted read-only from the host. It owns the durable/one-shot mode, startup
+sequencing, `postStartCommand` hook execution, a readiness handshake, the
 active-command set, and the teardown decision. This is deliberate: making a user
 command PID 1 and attaching to it fails for commands that exit quickly (e.g. `ls`)
 because the container can disappear before readiness polling or attach observes it.
 User commands run via `docker exec` through the `dcc-exec` wrapper (phase 4), which
-registers/deregisters each command with the supervisor. `dcc` polls `docker inspect`
-at 100 ms intervals (up to 10 s) until the container reports as running.
+registers each command with the supervisor and waits for the readiness signal before
+running it. `dcc` polls `docker inspect` at 100 ms intervals (up to 10 s) until the
+container reports as running (`wait_for_running`); this detects total launch failure
+(bad image, invalid mount) but is not a readiness check — readiness is the
+supervisor's `bootstrap-status` handshake (phase 4).
 
 `initializeCommand` is parsed for devcontainer compatibility but is not executed,
 because `dcc` does not run devcontainer-defined commands on the host. When a new
-container starts, `postStartCommand` runs inside the container. Feature-contributed
-startup hooks run before the project hook for that phase. Build-preparation hooks
-(`onCreateCommand`, `updateContentCommand`, `postCreateCommand`) are not part of
-ordinary runtime commands; `dcc build` owns them.
+container starts, `postStartCommand` runs **inside the supervisor** (PID 1), not via
+a host-side `docker exec`. The host pre-substitutes each hook (resolving
+`${localEnv:…}`, `${containerEnv:…}`, etc. using the image's baked environment) into
+an executable script in `.dcc/<profile>.rt/start-hooks/`, named `NN-<source>` so
+lexical order is execution order; feature hooks run before the project hook. The
+directory is passed to the supervisor via `--start-hooks`. When it finishes, the
+supervisor writes `/run/dcc/bootstrap-status` (`0` on success, `<exit-code>
+<hook-name>` on failure) and signals waiters. There is no time-based startup grace:
+`STARTUP_GRACE_SECS`, `PRIMED`, and the grace branch are deleted; a one-shot
+`--expect-command` flag and a 10 s post-bootstrap orphan reaper (one-shot only)
+cover the host-side gap between `docker run` and `docker exec`. Build-preparation
+hooks (`onCreateCommand`, `updateContentCommand`, `postCreateCommand`) are not part
+of ordinary runtime commands; `dcc build` owns them.
 
 `runArgs` are deliberately allowlisted. Safe value-taking flags such as `--add-host`,
 `--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`,
@@ -648,17 +660,33 @@ container; it does not leave a background host-side port-forwarding process behi
 **Phase 4 — foreground command**
 
 ```
-docker exec -i [-t] -u <containerUser> -w <workspaceFolder> <container-name> <command...>
+docker exec -i [-t] -u <containerUser> -w <workspaceFolder> <container-name> \
+  /usr/local/share/dcc/rt/dcc-exec <command...>
 ```
 
-The foreground command runs via `docker exec`, with stdio inherited, so output streams
-live and the command's real exit code is returned. This works uniformly for one-off
-commands (`ls`) and interactive shells (`bash`). `-t` is requested only when dcc's own
-stdin is a terminal, so non-interactive use (pipes, CI) still works. The exit status is
-propagated via `std::process::exit`.
+The foreground command runs via `docker exec` through the `dcc-exec` wrapper, with
+stdio inherited, so output streams live and the command's real exit code is returned.
+This works uniformly for one-off commands (`ls`) and interactive shells (`bash`). `-t`
+is requested only when dcc's own stdin is a terminal, so non-interactive use (pipes,
+CI) still works. The exit status is propagated via `std::process::exit`.
 
-`dcc attach` first runs `postAttachCommand` hooks, with Feature hooks before the project
-hook. With no explicit attach command, it executes:
+The `dcc-exec` wrapper first **registers** its command with the supervisor (writing a
+record to `/run/dcc/active/<id>`) and then **waits for readiness** by running
+`dcc-ctl wait-ready`. The wait is event-driven: `wait-ready` creates a per-waiter FIFO
+in `/run/dcc/waiters/<id>` *before* checking `bootstrap-status`, so a signal cannot be
+lost; if the status file already exists (steady state) it returns immediately. When
+the supervisor finishes bootstrap it writes `bootstrap-status` atomically and signals
+every waiter FIFO via a non-blocking `<>` open (so an orphaned FIFO with no reader
+cannot wedge PID 1). On success `wait-ready` exits `0`; on hook failure it prints the
+failing hook name and the tail of `/run/dcc/hook.log` to stderr and exits `252`, which
+the host maps to a clear error. Only after readiness does `dcc-exec` run the user
+command and deregister on exit. `dcc start` (which runs no command) calls
+`dcc-ctl wait-ready` host-side so a hook failure surfaces immediately.
+
+`dcc attach` first runs `postAttachCommand` hooks **host-side**, with Feature hooks
+before the project hook. On a cold start, the host first waits for the supervisor's
+readiness signal (`wait-ready`) so `postStartCommand` always completes before
+`postAttachCommand`. With no explicit attach command, it executes:
 
 ```
 /bin/sh -lc 'if [ -n "${SHELL:-}" ] && [ "${SHELL#/}" != "$SHELL" ] && [ -x "$SHELL" ]; then exec "$SHELL"; elif [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'
@@ -668,11 +696,21 @@ hook. With no explicit attach command, it executes:
 
 After the foreground command returns, all relay task handles for that invocation are
 aborted. The `dcc-exec` wrapper deregisters the command from the supervisor (via an
-`EXIT` trap) as the command exits. If the container mode is one-shot and no active
-commands remain, the supervisor drains and exits; Docker's `--rm` then removes the
-container. The host does not manage teardown state — it only waits for the container to
-disappear so port listeners are cleanly gone. Durable containers remain running until
-`dcc stop`.
+`EXIT` trap) as the command exits. The supervisor's drain decision keys off an
+in-process `arrived` shell variable (set to `1` the moment any command ever registers),
+the active-command count `n`, and — for one-shot containers only — a 10 s orphan
+reaper that starts after `bootstrap-status` is written. The rules are: if `stopping`
+exists and `n == 0`, exit (drain); if one-shot, `arrived == 1`, and `n == 0`, exit
+(normal one-shot teardown); if one-shot, `arrived == 0`, and 10 s have elapsed since
+`bootstrap-status`, exit (orphan reaper — covers the host being killed before
+registering); durable containers without `stopping` stay alive. There is no time-based
+startup grace: `STARTUP_GRACE_SECS`, `PRIMED`, the `started` variable, and the grace
+branch are gone — the 10 s window starts only after bootstrap completes, so a long
+`postStartCommand` never brings it closer. Durable containers never reap, so `dcc
+start` (which runs no command) and the build-preparation container are unaffected.
+Docker's `--rm` removes the container once the supervisor exits. The host does not
+manage teardown state — it only waits for the container to disappear so port
+listeners are cleanly gone. Durable containers remain running until `dcc stop`.
 
 `dcc run` command resolution is owned by `run.rs`: project commands are addressed as
 `:<name>`, Feature commands as `<feature-id>:<name>`, and unqualified names are accepted
