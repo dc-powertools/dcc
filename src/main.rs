@@ -12,6 +12,7 @@ mod lifecycle;
 mod profile;
 mod run;
 mod runtime;
+mod seed;
 mod stop;
 mod version;
 mod workspace;
@@ -46,6 +47,7 @@ async fn run() -> anyhow::Result<()> {
             update,
             refresh_only,
             allow_unsafe_runtime,
+            reseed_state,
         } => {
             build::build(
                 &workspace,
@@ -57,6 +59,7 @@ async fn run() -> anyhow::Result<()> {
                     refresh_only,
                     strict: cli.strict,
                     allow_unsafe_runtime,
+                    reseed_state,
                     dry_run: cli.dry_run,
                     debug: cli.debug,
                     format: cli.format,

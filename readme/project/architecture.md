@@ -32,6 +32,7 @@ src/
   feature.rs          dcc feature profile config edit command
   run.rs              dcc run command
   runtime.rs          Host-side runtime mode and active-command bookkeeping
+  seed.rs             State seeding from the image (hydration, dcc.seed label, ledger)
   stop.rs             dcc stop command
   forward.rs          Host-side TCP relay for forwardPorts
   config/
@@ -378,6 +379,59 @@ post-`${containerEnv:VAR}` resolution:
 The guards are textual; a state path that is a symlink in the image resolving
 outside itself is not detected in `normalize_state_path`.
 
+### State seeding
+
+Bind mounts mask image content with an empty host source, so data a Feature
+`install.sh`, a `Dockerfile` layer, or an official `build` source placed at a
+declared state path is invisible at runtime. `dcc build` seeds declared state
+from the image (`src/seed.rs`): it runs one short-lived container on the
+finished image with the state mounts **not** applied and the host state root
+mounted at `/dcc-seed`, then copies each declared path's image content into the
+host state directory with `tar` inside the container (preserving uid, gid, mode,
+and symlinks). A host-side `docker cp` is deliberately avoided because it would
+land every file owned by the invoking host user.
+
+A `dcc.seed` image label (alongside `devcontainer.metadata` and `dcc.version`)
+carries the resolved seed manifest — per entry the container path, kind, and
+content digest — read back with the same `docker::inspect_image_label_value`
+idiom. The label lets `dcc build --dry-run` report planned seeding and lets the
+runtime guard compare `build_id`s without re-digesting content.
+
+Hydration decisions are driven by a host-side ledger at
+`.dcc/<profile>.seed.json` (a sibling of the profile cache directory, outside the
+`/cache` mount so container-side code cannot reach it). Each entry records
+`seed_digest` (digest of what `dcc` wrote) and `build_id` (image identity). The
+ledger is authoritative: `dcc` never infers intent from directory emptiness, so
+an empty seeded directory and an unseeded one are distinguishable, and empty file
+state remains legitimate.
+
+Build ordering:
+
+```
+build image
+  -> resolve state paths (inspect_image_env / probe_user_env / resolve_runtime_state)
+  -> hydrate unseeded or safely-refreshable entries   [seed.rs]
+  -> prepare_state_mounts
+  -> start build-prep container
+  -> onCreateCommand / updateContentCommand / postCreateCommand
+```
+
+Hydrating before build-prep is what fixes the hook blind spot: `onCreateCommand`
+observes install-time content. Hydration needs its own container because
+build-prep runs *with* state mounts attached and therefore cannot see the image
+content.
+
+Re-seed policy (`dcc build`): if the host state digest matches the recorded
+`seed_digest`, skip re-hydration; if it differs, preserve the user's data and
+warn (naming the path, the recorded digest, and `--reseed-state`); `dcc build
+--reseed-state` overwrites differing host state. The policy is all-or-nothing
+across every declared state path.
+
+Runtime guard (`dcc start`/`run`/`exec`/`attach`): compare the ledger `build_id`
+against the image `dcc.seed` label and warn on mismatch; hydrate only entries
+with no ledger record (wiped-`.dcc` recovery). Content re-digesting is off the
+hot path. The guard is best-effort — a stale ledger never blocks the runtime.
+
 Each accepted state path is planned as a bind mount rooted below
 `<workspace>/.dcc/<profile>/state/` using the normalized container path. Directory
 state creates the host directory; file state creates the host parent directory and
@@ -453,15 +507,18 @@ unsafe runtime settings), `dcc build` passes
 JSON array with one entry per contributing feature and is stored inside the
 image. `dcc run` and build preparation read it back via `docker image inspect`
 rather than relying on any local file, making the image self-describing and
-portable across machines.
+portable across machines. When the merged Feature + project state is non-empty,
+`dcc build` additionally passes `--label dcc.seed=<json>` carrying the resolved
+seed manifest (see State Seeding above).
 
-After the image exists, `dcc build` starts a temporary build-preparation
-container with workspace, cache, and declared state mounts attached. It runs
-`onCreateCommand`, `updateContentCommand`, and `postCreateCommand` in order;
-Feature hooks run before the project hook for each phase. `dcc build
---refresh-only` skips the image rebuild and `onCreateCommand`, requires the
-profile image to exist, and runs only `updateContentCommand` and
-`postCreateCommand`.
+After the image exists, `dcc build` resolves declared state paths against the
+image environment, **hydrates** them from the image (see State Seeding), then
+starts a temporary build-preparation container with workspace, cache, and
+declared state mounts attached. It runs `onCreateCommand`,
+`updateContentCommand`, and `postCreateCommand` in order; Feature hooks run
+before the project hook for each phase. `dcc build --refresh-only` skips the
+image rebuild and `onCreateCommand`, requires the profile image to exist, and
+runs only `updateContentCommand` and `postCreateCommand`.
 
 ### Runtime Commands
 
@@ -864,7 +921,7 @@ must include the full command that was attempted.
 dcc [--strict] [--dry-run] [--debug] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
 
 Commands:
-  build  [--no-cache] [--update] [--refresh-only]
+  build  [--no-cache] [--update] [--refresh-only] [--reseed-state]
   run    [--memory <size>] [--cpus <n>] [command-name]
   exec   [--memory <size>] [--cpus <n>] <command...>
   start  [--memory <size>] [--cpus <n>]

@@ -469,6 +469,15 @@ impl RuntimePlan {
 
         let state = resolve_runtime_state(&config, &feature_runtime, &container_env)
             .context("invalid customizations.dcc.state after resolving containerEnv")?;
+
+        // Runtime seed guard: when state is declared, check the ledger against the
+        // image's dcc.seed label. Warn on build_id mismatch (e.g. cloned repo with a
+        // stale .dcc); hydrate only entries with no ledger record at all (the wiped-
+        // .dcc recovery case). Content re-digesting is deliberately off the hot path.
+        if !state.is_empty() {
+            runtime_seed_guard(&cache_dir, image_tag.as_str(), &state).await;
+        }
+
         let state_mounts = cache_dir.plan_state_mounts(&state);
         cache_dir.prepare_state_mounts(&state_mounts)?;
         let state_mount_args: Vec<String> = state_mounts
@@ -869,6 +878,100 @@ fn resolve_runtime_state(
         .chain(config.state.iter().cloned())
         .collect();
     config::resolve::resolve_state_entries_container_env(&state, container_env)
+}
+
+/// Best-effort runtime seed guard (start/run/exec/attach). Compares the host-side
+/// ledger's `build_id` against the image's `dcc.seed` label and warns on mismatch;
+/// hydrates only entries with no ledger record at all (the wiped-`.dcc` recovery
+/// case). Content re-digesting is off the hot path by design. Failures are
+/// warnings, not hard errors, so a stale ledger never blocks the runtime.
+async fn runtime_seed_guard(cache_dir: &CacheDir, image: &str, state: &[config::StateEntry]) {
+    let ledger_path = crate::seed::SeedLedger::path(cache_dir);
+    let ledger = match crate::seed::SeedLedger::read(&ledger_path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "warning: could not read seed ledger (`{}`): {e:#}",
+                ledger_path.display()
+            );
+            return;
+        }
+    };
+
+    let image_manifest = match crate::seed::read_manifest_from_image(image, image).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("warning: could not read dcc.seed label from image `{image}`: {e:#}");
+            return;
+        }
+    };
+
+    // Warn on build_id mismatch (image rebuilt but ledger is stale).
+    if !image_manifest.is_empty() && image_manifest.build_id != image {
+        // build_id in the label should equal the image tag; mismatch means the
+        // image was rebuilt under the same tag with different state.
+        eprintln!(
+            "warning: seed ledger build_id `{}` does not match image `{}` dcc.seed build_id `{}`; \
+             declared state may be stale. Run `dcc build` to re-seed.",
+            ledger
+                .entries
+                .first()
+                .map(|e| e.build_id.as_str())
+                .unwrap_or("(none)"),
+            image,
+            image_manifest.build_id
+        );
+    }
+
+    // Hydrate only entries with no ledger record at all (wiped-.dcc recovery).
+    let unseeded: Vec<config::StateEntry> = state
+        .iter()
+        .filter(|entry| ledger.get(&entry.path).is_none())
+        .cloned()
+        .collect();
+    if unseeded.is_empty() {
+        return;
+    }
+
+    eprintln!(
+        "dcc: {} declared state path(s) have no seed record; hydrating from image `{image}`",
+        unseeded.len()
+    );
+    let manifest = crate::seed::manifest_from_state(&unseeded, image);
+    let state_root = crate::seed::state_root(cache_dir);
+    if std::fs::create_dir_all(&state_root).is_err() {
+        eprintln!(
+            "warning: could not create state root `{}` for hydration",
+            state_root.display()
+        );
+        return;
+    }
+    let state_root_str = state_root.to_string_lossy().into_owned();
+    let entries: Vec<crate::seed::SeedManifestEntry> = manifest.entries.clone();
+    let args = crate::seed::hydration_container_args(image, &state_root_str, &entries);
+    if let Err(e) = crate::docker::run_to_completion(&args).await {
+        eprintln!("warning: state hydration from image `{image}` failed: {e:#}");
+        return;
+    }
+    // Record ledger entries for the newly hydrated paths.
+    let mut new_entries = ledger.entries.clone();
+    for entry in &manifest.entries {
+        let host_path = crate::seed::state_host_path(cache_dir, &entry.path);
+        let digest = crate::seed::host_state_digest(&host_path).ok().flatten();
+        new_entries.push(crate::seed::LedgerEntry {
+            path: entry.path.clone(),
+            kind: entry.kind,
+            seed_digest: digest,
+            build_id: manifest.build_id.clone(),
+        });
+    }
+    if let Err(e) = (crate::seed::SeedLedger {
+        entries: new_entries,
+    })
+    .write(&ledger_path)
+    {
+        eprintln!("warning: failed to update seed ledger: {e:#}");
+    }
 }
 
 fn ensure_unsafe_runtime_allowed(

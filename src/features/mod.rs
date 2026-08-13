@@ -209,6 +209,10 @@ pub(crate) struct FeatureBuildOutput {
     pub(crate) metadata_label: Option<String>,
     /// Lockfile entries in topological installation order.
     pub(crate) lock_entries: Vec<LockEntry>,
+    /// Feature-contributed state entries (validated, deferred containerEnv left
+    /// intact), in feature installation order. Used to build the `dcc.seed`
+    /// label so seeding covers Feature- and project-declared state alike.
+    pub(crate) feature_state: Vec<StateEntry>,
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────
@@ -371,7 +375,7 @@ pub(crate) async fn build_context_from_base_image(
     }
 
     crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
-        feature_state_entries,
+        feature_state_entries.clone(),
     )
     .context("invalid customizations.dcc.state across Feature metadata")?;
 
@@ -405,6 +409,7 @@ pub(crate) async fn build_context_from_base_image(
         context_tar,
         metadata_label,
         lock_entries,
+        feature_state: feature_state_entries,
     })
 }
 

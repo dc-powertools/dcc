@@ -11,6 +11,7 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct CacheDir {
     pub(crate) host_path: PathBuf,
+    pub(crate) profile_name: crate::profile::ProfileName,
 }
 
 impl CacheDir {
@@ -18,7 +19,13 @@ impl CacheDir {
     pub(crate) fn new(workspace: &Workspace, profile: &ProfileName) -> Self {
         Self {
             host_path: workspace.root.join(".dcc").join(profile.as_str()),
+            profile_name: profile.clone(),
         }
+    }
+
+    /// The profile name this cache directory belongs to.
+    pub(crate) fn profile_name(&self) -> &ProfileName {
+        &self.profile_name
     }
 
     /// Creates the cache directory (and any missing intermediate dirs).
@@ -202,6 +209,7 @@ mod tests {
     fn state_mount_plan_is_rooted_below_profile_cache() {
         let cache = CacheDir {
             host_path: PathBuf::from("/workspace/.dcc/dev"),
+            profile_name: ProfileName::new("dev"),
         };
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.cache".to_string(),
@@ -226,6 +234,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheDir {
             host_path: dir.path().join(".dcc/dev"),
+            profile_name: ProfileName::new("dev"),
         };
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.cargo".to_string(),
@@ -240,6 +249,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheDir {
             host_path: dir.path().join(".dcc/dev"),
+            profile_name: ProfileName::new("dev"),
         };
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.npmrc".to_string(),
@@ -255,6 +265,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheDir {
             host_path: dir.path().join(".dcc/dev"),
+            profile_name: ProfileName::new("dev"),
         };
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.npmrc".to_string(),

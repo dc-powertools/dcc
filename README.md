@@ -170,6 +170,48 @@ config load and after `${containerEnv:VAR}` resolution:
 These guards are textual; a state path that is a symlink in the image resolving
 outside itself (e.g. `/home/dev/.cache` -> `/etc`) is not detected here.
 
+### Seeding state from the image
+
+Bind mounts never copy image content into an empty host source, so data a
+Feature `install.sh`, a `Dockerfile` layer, or an official `build` source places
+at a declared state path would be silently masked by an empty directory (or, for
+file state, an empty file). `dcc build` therefore **seeds** declared state from
+the image: it runs one short-lived container on the finished image with the
+state mounts *not* applied and the host state root mounted at `/dcc-seed`, then
+copies each declared path's image content into the host state directory with
+`tar` (inside the container, so uid, gid, mode, and symlinks are preserved).
+
+Seeding runs **before** build-preparation hooks (`onCreateCommand`,
+`updateContentCommand`, `postCreateCommand`), so those hooks observe
+install-time content instead of empty directories. It is skipped entirely when a
+profile declares no state.
+
+`dcc build` records what it seeded in a host-side ledger at
+`.dcc/<profile>.seed.json` (outside the `/cache` mount), with per-entry
+`seed_digest` and `build_id`. The ledger is authoritative: an empty seeded
+directory and an unseeded one stay distinguishable, and `dcc build` never infers
+intent from directory emptiness.
+
+Re-seed policy on `dcc build`:
+
+- If the host state digest matches the recorded `seed_digest`, the state is
+  unchanged and `dcc` skips re-hydration (no duplicate work beyond the digest
+  check).
+- If the host state digest differs, the user has modified it, so `dcc`
+  **preserves your data** and warns, naming the path, the recorded seed digest,
+  and the `--reseed-state` escape hatch. The image content is *not* overwritten.
+- `dcc build --reseed-state` overrides the digest check: differing host state is
+  overwritten with the image seed. It is all-or-nothing across every declared
+  state path.
+
+`dcc start`, `run`, `exec`, and `attach` compare the ledger's `build_id` against
+the image's `dcc.seed` label and warn on mismatch (e.g. a cloned repo with a
+stale `.dcc`). They hydrate only entries with no ledger record at all, so a
+wiped `.dcc` recovers from the image without a rebuild. Content re-digesting is
+deliberately off the runtime hot path.
+
+`dcc build --dry-run` reports planned seeding without invoking Docker.
+
 You can also preserve state within `/cache` by injecting an environment variable
 that specifies where to store state. For example:
 ```
@@ -219,6 +261,7 @@ Common workflows:
 dcc build                    # build the default profile image and run build-prep hooks
 dcc build -p ci              # build .devcontainer/ci.json
 dcc build --refresh-only     # rerun update/post-create prep hooks; image must exist
+dcc build --reseed-state     # overwrite modified declared state with the image seed
 
 dcc run                      # list named project and Feature commands
 dcc run test                 # run a named command from customizations.dcc.commands

@@ -39,11 +39,13 @@ pub(crate) async fn build(
     no_cache: bool,
     context: Vec<u8>,
     metadata_label: Option<&str>,
+    seed_label: Option<&str>,
 ) -> anyhow::Result<()> {
     let opts = DockerBuildOptions {
         tag: tag.to_string(),
         no_cache,
         metadata_label: metadata_label.map(str::to_string),
+        seed_label: seed_label.map(str::to_string),
         file: None,
         context_dir: None,
         build_args: Vec::new(),
@@ -57,6 +59,8 @@ pub(crate) struct DockerBuildOptions {
     pub(crate) tag: String,
     pub(crate) no_cache: bool,
     pub(crate) metadata_label: Option<String>,
+    /// Optional `dcc.seed` label value (resolved seed manifest JSON).
+    pub(crate) seed_label: Option<String>,
     pub(crate) file: Option<PathBuf>,
     pub(crate) context_dir: Option<PathBuf>,
     pub(crate) build_args: Vec<(String, String)>,
@@ -73,6 +77,9 @@ pub(crate) fn build_args(opts: &DockerBuildOptions) -> Vec<String> {
             "--label".to_string(),
             format!("devcontainer.metadata={label}"),
         ]);
+    }
+    if let Some(seed) = &opts.seed_label {
+        args.extend(["--label".to_string(), format!("dcc.seed={seed}")]);
     }
     let mut build_args = opts.build_args.clone();
     build_args.sort_by(|a, b| a.0.cmp(&b.0));
@@ -166,6 +173,24 @@ pub(crate) async fn image_exists(image: &str) -> anyhow::Result<bool> {
         code,
         &output.stderr,
     ))
+}
+
+/// Runs a short-lived container to completion (`docker run --rm …`) with stdio
+/// inherited, returning the exit status. Used for the state hydration container,
+/// which copies image content to the mounted host state root and exits.
+pub(crate) async fn run_to_completion(args: &[String]) -> anyhow::Result<()> {
+    let status = Command::new("docker")
+        .arg("run")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| "failed to spawn `docker run`")?
+        .wait()
+        .await
+        .with_context(|| "failed to wait for `docker run`")?;
+    check_status(status, "docker run")
 }
 
 /// Starts a container detached (`docker run -d …`) and returns once Docker
@@ -358,7 +383,10 @@ pub(crate) async fn inspect_image_dcc_version(image: &str) -> anyhow::Result<Opt
     inspect_image_label_value(image, "dcc.version").await
 }
 
-async fn inspect_image_label_value(image: &str, label: &str) -> anyhow::Result<Option<String>> {
+pub(crate) async fn inspect_image_label_value(
+    image: &str,
+    label: &str,
+) -> anyhow::Result<Option<String>> {
     let template = format!(r#"{{{{index .Config.Labels "{label}"}}}}"#);
     let output = Command::new("docker")
         .args(["image", "inspect", "--format", &template, image])
@@ -621,6 +649,7 @@ mod tests {
             tag: "dcc-img".to_string(),
             no_cache: true,
             metadata_label: Some("[{}]".to_string()),
+            seed_label: None,
             file: None,
             context_dir: None,
             build_args: vec![
@@ -650,11 +679,39 @@ mod tests {
     }
 
     #[test]
+    fn build_args_include_seed_label_when_present() {
+        let args = build_args(&DockerBuildOptions {
+            tag: "dcc-img".to_string(),
+            no_cache: false,
+            metadata_label: Some("[{}]".to_string()),
+            seed_label: Some(r#"{"build_id":"x","entries":[]}"#.to_string()),
+            file: None,
+            context_dir: None,
+            build_args: Vec::new(),
+            target: None,
+        });
+        assert!(
+            args.contains(&"--label".to_string()),
+            "expected --label, got: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| a == "dcc.seed={\"build_id\":\"x\",\"entries\":[]}"),
+            "expected dcc.seed label, got: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "devcontainer.metadata=[{}]"),
+            "expected metadata label too, got: {args:?}"
+        );
+    }
+
+    #[test]
     fn build_args_for_path_context_include_file_and_context() {
         let args = build_args(&DockerBuildOptions {
             tag: "dcc-img".to_string(),
             no_cache: false,
             metadata_label: None,
+            seed_label: None,
             file: Some(std::path::Path::new("/workspace/.devcontainer/Dockerfile").to_path_buf()),
             context_dir: Some(std::path::Path::new("/workspace").to_path_buf()),
             build_args: Vec::new(),
