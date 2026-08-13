@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0025
+- Next task ID: T-0026
 - Primary task: T-0021
 - Scheduling: Running
 - Global pause source or reason: None
@@ -43,6 +43,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0024-B1 | Update the build-preparation container (`src/build.rs`) and generated controller/command assets (`src/features/mod.rs`) to use the supervisor as PID 1. | Parent T-0024 / r1 | Done | T-0024-S1 | Quick change / Medium | None | Stop; outcome complete. | None | Updated build_prep_container_args; removed dead dcc-controller/dcc-command assets. |
 | T-0024-T1 | Add tests: supervisor state-machine unit tests, entrypoint mediation tests, `stop` variant behavior, and ignored Docker smoke tests asserting no host-side bookkeeping exists and teardown/reuse/stop behave correctly. | Parent T-0024 / r1 | Done | T-0024-H1, T-0024-B1 | Quick change / Medium | None | Stop; outcome complete. | None | 8 supervisor unit tests; 3 CLI tests; 5 ignored Docker smoke tests. |
 | T-0024-D1 | Update `readme/threat-models/0004-dcc-runtime.md`, README, and `readme/project/architecture.md` to reflect supervisor ownership and the removed trust boundary; close T-0023 as superseded. | Parent T-0024 / r1 | Done | T-0024-H1 | Quick change / Low | None | Stop; outcome complete. | None | Updated architecture.md, README, threat model; T-0023 marked superseded. |
+| T-0025 | Move startup sequencing and runtime lifecycle hooks into the supervisor: `--mode`/`--expect-command` entrypoint args, supervisor-run `postStartCommand`, a `dcc-ctl wait-ready` readiness probe the command harness blocks on after registering, and deletion of the time-based startup grace. | User direction 2026-08-13 / r1 | Ready | T-0024 | Initiative / High | None | Design pass on the readiness probe, hook manifest delivery, and in-container `${containerEnv:...}` substitution, then implement. | `readme/tasks/0025-supervisor-startup-handshake-brief.md` | Pending. |
 
 ## Operating Contract
 
