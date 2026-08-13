@@ -464,7 +464,9 @@ fn wiped_dcc_rehydrates_from_image_without_rebuild() {
     // Wipe the profile cache (simulating a cloned repo with no .dcc). Seeded
     // state may contain root-owned directories (the hydration container runs as
     // root and tar preserves uid/gid), so wipe via a root container rather than
-    // std::fs::remove_dir_all, which would get EACCES on root-owned dirs.
+    // std::fs::remove_dir_all, which would get EACCES on root-owned dirs. Use
+    // `find -mindepth 1 -delete` to remove the contents without removing the
+    // bind-mount point itself (rm -rf /wipe fails with "Device or resource busy").
     let cache = fx.fx.dir.path().join(".dcc");
     let wipe = std::process::Command::new("docker")
         .args([
@@ -475,9 +477,11 @@ fn wiped_dcc_rehydrates_from_image_without_rebuild() {
             "-v",
             &format!("{}:/wipe", cache.display()),
             "debian:bookworm-slim",
-            "rm",
-            "-rf",
+            "find",
             "/wipe",
+            "-mindepth",
+            "1",
+            "-delete",
         ])
         .output()
         .expect("failed to run docker wipe");
@@ -542,7 +546,11 @@ fn reseed_state_flag_clobbers_modified_state() {
 fn seeded_directory_is_writable_by_container_user() {
     let fx = DockerFixture::new();
     write_seeding_dockerfile(&fx);
-    // Non-root user to confirm ownership preservation allows the dev user to write.
+    // Non-root user to confirm ownership preservation allows the dev user to
+    // write to the seeded directory. The command writes within /seeded-dir
+    // (which dev owns via the Dockerfile chown + tar uid preservation) rather
+    // than /workspace, because the workspace bind mount is owned by the host
+    // runner user whose uid may differ from dev's.
     fx.write_config(&format!(
         r#"{{
             "build": {{ "dockerfile": "Dockerfile" }},
@@ -551,7 +559,7 @@ fn seeded_directory_is_writable_by_container_user() {
                 "dcc": {{
                     "state": ["/seeded-dir"],
                     "commands": {{
-                        "write": "printf writable > /seeded-dir/after && cat /seeded-dir/after > /workspace/writable.txt"
+                        "write": "printf writable > /seeded-dir/after"
                     }}
                 }}
             }}
@@ -570,7 +578,23 @@ RUN mkdir -p /seeded-dir && chown dev:dev /seeded-dir && printf 'from-image' > /
 
     assert_success(&fx.dcc(&["build"]));
     assert_success(&fx.dcc(&["run", "write"]));
-    assert_eq!(fx.read_file("writable.txt"), "writable");
+    // Read the written file from the host-side state directory (the bind-mount
+    // source for /seeded-dir).
+    let state_file = fx
+        .fx
+        .dir
+        .path()
+        .join(".dcc")
+        .join("devcontainer")
+        .join("state")
+        .join("seeded-dir")
+        .join("after");
+    assert_eq!(
+        std::fs::read_to_string(&state_file).unwrap_or_else(|_| {
+            panic!("expected writable state file at `{}`", state_file.display())
+        }),
+        "writable"
+    );
 }
 
 #[test]
@@ -640,6 +664,29 @@ fn stop_now_force_terminates_durable_container() {
     assert_running_container(&container_id);
 
     assert_success(&fx.dcc(&["stop", "--now"]));
+    assert_no_running_container(&container_id);
+}
+
+#[test]
+#[ignore]
+fn stop_graceful_drains_durable_started_with_no_command() {
+    // `dcc start` creates a durable container with no command registered, so the
+    // supervisor's PRIMED flag is never set. A graceful `dcc stop` must still
+    // tear it down (the stopping flag overrides the startup grace period).
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+    let container_id = fx.container_id();
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["start"]));
+    assert_running_container(&container_id);
+
+    assert_success(&fx.dcc(&["stop"]));
     assert_no_running_container(&container_id);
 }
 

@@ -158,21 +158,29 @@ active_count() {
 }
 
 should_exit() {
-    count=$(active_count)
-    # Rule 2: never drain-exit before the first command registers or the startup
-    # grace period elapses, whichever comes first.
-    if [ ! -f "$PRIMED" ]; then
-        now=$(date +%s)
-        if [ $((now - started)) -lt __STARTUP_GRACE_SECS__ ]; then
-            return 1
+    # A graceful stop request overrides the startup grace: if the user asked to
+    # stop, honor it immediately even if no command ever registered (e.g. after
+    # `dcc start` with no subsequent command).
+    if [ ! -f "$STOPPING" ]; then
+        count=$(active_count)
+        # Rule 2: never drain-exit before the first command registers or the
+        # startup grace period elapses, whichever comes first.
+        if [ ! -f "$PRIMED" ]; then
+            now=$(date +%s)
+            if [ $((now - started)) -lt __STARTUP_GRACE_SECS__ ]; then
+                return 1
+            fi
         fi
+        # Rule 1: active set must be empty.
+        [ "$count" -eq 0 ] || return 1
+        # Rule 3: exit if one-shot. Durable without stopping stays alive.
+        cur=$(cat "$MODE_FILE" 2>/dev/null || echo oneshot)
+        [ "$cur" = "oneshot" ] && return 0
+        return 1
     fi
-    # Rule 1: active set must be empty.
-    [ "$count" -eq 0 ] || return 1
-    # Rule 3: exit if one-shot, or if a graceful stop has been requested.
-    cur=$(cat "$MODE_FILE" 2>/dev/null || echo oneshot)
-    [ "$cur" = "oneshot" ] && return 0
-    [ -f "$STOPPING" ] && return 0
+    # STOPPING is set: exit once the active set is empty (drain in-flight work).
+    count=$(active_count)
+    [ "$count" -eq 0 ] && return 0
     return 1
 }
 
