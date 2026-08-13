@@ -12,8 +12,8 @@ pub(crate) struct DryRunReport {
     profile: String,
     config: String,
     docker_invoked: bool,
-    checks: Vec<&'static str>,
-    skipped: Vec<&'static str>,
+    checks: Vec<String>,
+    skipped: Vec<String>,
 }
 
 impl DryRunReport {
@@ -21,8 +21,8 @@ impl DryRunReport {
         command: impl Into<String>,
         profile: &ProfileName,
         config_path: &Path,
-        checks: Vec<&'static str>,
-        skipped: Vec<&'static str>,
+        checks: impl IntoIterator<Item = impl Into<String>>,
+        skipped: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         Self {
             status: "ok",
@@ -30,8 +30,8 @@ impl DryRunReport {
             profile: profile.as_str().to_string(),
             config: config_path.display().to_string(),
             docker_invoked: false,
-            checks,
-            skipped,
+            checks: checks.into_iter().map(Into::into).collect(),
+            skipped: skipped.into_iter().map(Into::into).collect(),
         }
     }
 

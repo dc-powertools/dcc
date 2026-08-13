@@ -31,6 +31,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-13 | Implemented `updateRemoteUserUID` (default `true`, Linux-only) so a non-root `containerUser` can write bind-mounted workspace/cache/state regardless of host uid; restored `seeded_directory_is_writable_by_container_user` to its workspace-writing form. | `readme/tasks/README.md#tasks` |
 | 2026-07-21 | Seeded declared `customizations.dcc.state` from the image on build (hydration container, `dcc.seed` label, `.dcc/<profile>.seed.json` ledger, `--reseed-state`, runtime guard). | `readme/tasks/README.md#tasks` |
 | 2026-07-21 | Guarded `customizations.dcc.state` against critical container paths (two-tier subtree/exact reserved-path guards at load and post-`containerEnv` resolution). | `readme/tasks/README.md#tasks` |
 | 2026-07-21 | Added `dcc feature --add`/`--remove` for profile Feature edits. | `readme/tasks/README.md#tasks` |
@@ -58,7 +59,9 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - Reusable framework: `readme/meta/README.md`
 - Task catalog: `readme/tasks/README.md`
 - State seeding decision: `readme/decisions/0001-state-seeding-from-image.md`
+- UID remap decision: `readme/decisions/0002-update-remote-user-uid-in-build-stage.md`
 - Rewrite quality record: `readme/quality/0004-dcc-rewrite-quality.md`
+- UID remap quality record: `readme/quality/0026-update-remote-user-uid-quality.md`
 - Runtime threat model: `readme/threat-models/0004-dcc-runtime.md`
 - Product brief: `readme/project/brief.md`
 - Implementation context: `readme/project/context.md`
@@ -72,6 +75,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 20
+- Completed repository-changing tasks since that pass: 21
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first

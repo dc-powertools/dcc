@@ -262,6 +262,7 @@ Out of scope:
 | Revision | Date | Source | Change | Reason | Scope Or Acceptance Impact |
 | --- | --- | --- | --- | --- | --- |
 | r1 | 2026-08-13 | User direction | Initial intake | — | — |
+| r1 | 2026-08-13 | Implementer design (`readme/tasks/0026-r1-uid-remap-design.md`, `readme/decisions/0002-…`) | Resolved the open implementer decisions: fold the remap into dcc's generated build stage (no derived `-uid` image); drive the remap from `containerUser` (no `remoteUser`); pass `NEW_UID`/`NEW_GID` as `docker build --build-arg` from host `id -u`/`id -g`; seeding needs no reordering because the remap is baked at image build time so T-0022 hydration already sees the remapped `/etc/passwd`; keep the reference's silent collision no-op (with a recognizable echo). | Avoids a wide, risky change threading a second image tag through version/seed/runtime lookups; preserves T-0022/T-0024 invariants. | No acceptance-criteria change; all criteria met. |
 
 ## Done When
 

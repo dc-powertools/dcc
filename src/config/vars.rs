@@ -53,6 +53,7 @@ pub(crate) fn apply_substitutions(
         ports_attributes: config.ports_attributes,
         other_ports_attributes: config.other_ports_attributes,
         override_command: config.override_command,
+        update_remote_user_uid: config.update_remote_user_uid,
         workspace_folder: apply_substitution(
             &config.workspace_folder,
             &local_workspace,

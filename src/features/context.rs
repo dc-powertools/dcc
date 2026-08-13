@@ -26,6 +26,7 @@ pub(crate) fn build_context(
     container_user: &str,
     install_nc: bool,
     generated_assets: &[ContextFile],
+    remap: Option<&crate::uid::RemapPlan>,
 ) -> anyhow::Result<Vec<u8>> {
     let dockerfile = generate_dockerfile_inner(
         image,
@@ -34,6 +35,7 @@ pub(crate) fn build_context(
         container_user,
         install_nc,
         !generated_assets.is_empty(),
+        remap,
     );
     let mut builder = tar::Builder::new(Vec::new());
 
@@ -89,6 +91,7 @@ fn generate_dockerfile(
         container_user,
         install_nc,
         false,
+        None,
     )
 }
 
@@ -99,6 +102,7 @@ fn generate_dockerfile_inner(
     container_user: &str,
     install_nc: bool,
     install_generated_assets: bool,
+    remap: Option<&crate::uid::RemapPlan>,
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("FROM {image}"));
@@ -132,6 +136,14 @@ fn generate_dockerfile_inner(
         lines.push(format!(
             "RUN id {u} >/dev/null 2>&1 \\\n || useradd -m -s /bin/sh {u} \\\n || adduser -D -s /bin/sh {u}"
         ));
+    }
+    // updateRemoteUserUID remap (Linux only, non-root named user, enabled by
+    // default). Baked into the image as a root RUN that rewrites the user's
+    // uid/gid to the host's so bind mounts are writable. See `src/uid.rs` and
+    // `readme/tasks/0026-r1-uid-remap-design.md`. Runs immediately after user
+    // creation so features install into the already-remapped home ownership.
+    if let Some(crate::uid::RemapPlan::Remap { uid, gid, user }) = remap {
+        lines.push(crate::uid::remap_dockerfile_block(*uid, *gid, user));
     }
     if !features.is_empty() {
         lines.push("COPY .dcc-features/ /tmp/.dcc-features/".to_string());
@@ -204,7 +216,7 @@ fn generate_dockerfile_inner(
     lines.join("\n") + "\n"
 }
 
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     // Wrap in single quotes, escape embedded single quotes as '\''
     let inner = value.replace('\'', r"'\''");
     format!("'{inner}'")
@@ -346,6 +358,7 @@ mod tests {
                 b"#!/bin/sh\n".to_vec(),
                 0o755,
             )],
+            None,
         )
         .unwrap();
         let mut archive = tar::Archive::new(std::io::Cursor::new(&context));
@@ -399,6 +412,55 @@ mod tests {
                 env!("CARGO_PKG_VERSION")
             )
         );
+    }
+
+    fn remap_plan(uid: u32, gid: u32, user: &str) -> crate::uid::RemapPlan {
+        crate::uid::RemapPlan::Remap {
+            uid,
+            gid,
+            user: user.to_string(),
+        }
+    }
+
+    #[test]
+    fn dockerfile_emits_remap_block_when_planned() {
+        let df = generate_dockerfile_inner(
+            "rust:1",
+            &[],
+            &[],
+            "dev",
+            false,
+            false,
+            Some(&remap_plan(1001, 999, "dev")),
+        );
+        assert!(df.contains("ARG REMOTE_USER='dev'"), "got: {df}");
+        assert!(df.contains("ARG NEW_UID=1001"), "got: {df}");
+        assert!(df.contains("ARG NEW_GID=999"), "got: {df}");
+        assert!(df.contains("updateRemoteUserUID"), "got: {df}");
+        // Remap runs immediately after user creation, before any feature COPY.
+        let user_pos = df.find("id 'dev'").unwrap();
+        let remap_pos = df.find("ARG REMOTE_USER=").unwrap();
+        assert!(
+            remap_pos > user_pos,
+            "remap must follow user creation, got: {df}"
+        );
+    }
+
+    #[test]
+    fn dockerfile_omits_remap_block_when_none() {
+        let df = generate_dockerfile_inner("rust:1", &[], &[], "dev", false, false, None);
+        assert!(!df.contains("ARG REMOTE_USER="), "got: {df}");
+        assert!(!df.contains("updateRemoteUserUID"), "got: {df}");
+    }
+
+    #[test]
+    fn dockerfile_omits_remap_block_for_root_even_with_plan() {
+        // The caller never plans a remap for root, but the generator must not
+        // emit a root remap even if handed one defensively. We assert the
+        // generator relies on the caller's plan and does not second-guess root
+        // here: a None plan for root produces no remap.
+        let df = generate_dockerfile_inner("rust:1", &[], &[], "root", false, false, None);
+        assert!(!df.contains("ARG REMOTE_USER="), "got: {df}");
     }
 
     #[test]
@@ -678,7 +740,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[]).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[], None).unwrap();
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut install_content = String::new();
         for entry in archive.entries().unwrap() {
@@ -710,7 +772,7 @@ mod tests {
             container_env: IndexMap::new(),
             extra_files: vec![],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[]).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[], None).unwrap();
         assert!(!tar_bytes.is_empty());
 
         // Extract and verify
@@ -747,7 +809,7 @@ mod tests {
                 0o755,
             )],
         };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[]).unwrap();
+        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[], None).unwrap();
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
         let mut found_helper = false;

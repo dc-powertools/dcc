@@ -1702,6 +1702,7 @@ mod tests {
             ports_attributes: HashMap::new(),
             other_ports_attributes: None,
             override_command: None,
+            update_remote_user_uid: true,
             workspace_folder: CONTAINER_WORKSPACE.to_string(),
             workspace_mount: None,
             initialize_command: None,

@@ -51,38 +51,75 @@ pub(crate) async fn build(
         }
         eprintln!("dcc debug: refresh-only `{}`", opts.refresh_only);
         eprintln!("dcc debug: fast path `{}`", uses_fast_path(&config));
+        let remap = crate::uid::plan_uid_remap(
+            &config.container_user,
+            config.update_remote_user_uid,
+            crate::uid::host_ids(),
+        );
+        match &remap {
+            crate::uid::RemapPlan::Remap { uid, gid, user } => eprintln!(
+                "dcc debug: updateRemoteUserUID remap user `{user}` to uid {uid} gid {gid}"
+            ),
+            crate::uid::RemapPlan::None { reason } => {
+                eprintln!("dcc debug: updateRemoteUserUID remap skipped ({reason})")
+            }
+        }
     }
 
     if opts.dry_run {
-        let mut skipped = vec![
+        let mut skipped: Vec<String> = vec![
             "docker image build/pull/tag",
             "docker image label inspection",
             "build-preparation container start",
             "build-preparation lifecycle hooks",
-        ];
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         if opts.refresh_only {
-            skipped.push("profile image existence check");
+            skipped.push("profile image existence check".to_string());
         }
-        let mut checks = vec![
+        let mut checks: Vec<String> = vec![
             "workspace resolved",
             "profile resolved",
             "config loaded",
             "devcontainer unsafe runtime checked",
-        ];
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         // Dry-run seeding reporting: planned seeding is knowable from the
         // declared project state without Docker. Feature-contributed state
         // requires the image label and is reported as skipped in dry-run.
         let has_project_state = !config.state.is_empty();
         if has_project_state {
-            checks.push("state seeding planned from declared customizations.dcc.state");
+            checks.push("state seeding planned from declared customizations.dcc.state".to_string());
             if opts.reseed_state {
-                checks.push("reseed-state: host state would be overwritten where digests differ");
+                checks.push(
+                    "reseed-state: host state would be overwritten where digests differ"
+                        .to_string(),
+                );
             }
         } else {
-            checks.push("no declared state: no hydration container run planned");
+            checks.push("no declared state: no hydration container run planned".to_string());
         }
-        skipped.push("dcc.seed label inspection (Feature state)");
-        skipped.push("state hydration container run");
+        // Dry-run remap reporting: the plan is knowable from the config and
+        // the host uid/gid without Docker.
+        let dry_remap = crate::uid::plan_uid_remap(
+            &config.container_user,
+            config.update_remote_user_uid,
+            crate::uid::host_ids(),
+        );
+        match &dry_remap {
+            crate::uid::RemapPlan::Remap { uid, gid, user } => checks.push(format!(
+                "updateRemoteUserUID remap planned: user `{user}` -> uid {uid} gid {gid}"
+            )),
+            crate::uid::RemapPlan::None { reason } => {
+                checks.push(format!("updateRemoteUserUID remap skipped ({reason})"))
+            }
+        }
+        skipped.push("dcc.seed label inspection (Feature state)".to_string());
+        skipped.push("state hydration container run".to_string());
         return dry_run::DryRunReport::new(
             if opts.refresh_only {
                 "build --refresh-only"
@@ -228,9 +265,29 @@ async fn build_dcc_stage(
     } else {
         load_locked_digests(config_path)
     };
+    // Plan the updateRemoteUserUID remap from the host's uid/gid. The remap is
+    // baked into the generated build stage; its --build-arg values are passed
+    // to `docker build` below. See `src/uid.rs`.
+    let remap = crate::uid::plan_uid_remap(
+        &config.container_user,
+        config.update_remote_user_uid,
+        crate::uid::host_ids(),
+    );
+    let build_args = match &remap {
+        crate::uid::RemapPlan::Remap { uid, gid, user } => {
+            crate::uid::remap_build_args(*uid, *gid, user)
+        }
+        crate::uid::RemapPlan::None { .. } => Vec::new(),
+    };
     let output = if config.image.as_deref() == Some(base_image) {
-        crate::features::build_context(config, config_dir, &locked_digests, allow_unsafe_runtime)
-            .await
+        crate::features::build_context(
+            config,
+            config_dir,
+            &locked_digests,
+            allow_unsafe_runtime,
+            Some(&remap),
+        )
+        .await
     } else {
         crate::features::build_context_from_base_image(
             config,
@@ -238,6 +295,7 @@ async fn build_dcc_stage(
             config_dir,
             &locked_digests,
             allow_unsafe_runtime,
+            Some(&remap),
         )
         .await
     }
@@ -269,6 +327,7 @@ async fn build_dcc_stage(
         output.context_tar,
         output.metadata_label.as_deref(),
         seed_label.as_deref(),
+        build_args,
     )
     .await
     .with_context(|| format!("failed to build image `{image_tag}`"))?;
@@ -849,6 +908,7 @@ mod tests {
             ports_attributes: HashMap::new(),
             other_ports_attributes: None,
             override_command: None,
+            update_remote_user_uid: true,
             workspace_folder: CONTAINER_WORKSPACE.to_string(),
             workspace_mount: None,
             initialize_command: None,

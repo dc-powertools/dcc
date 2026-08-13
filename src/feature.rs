@@ -71,7 +71,7 @@ pub(crate) fn update_features(
             profile,
             config_path,
             vec!["profile config parsed", "feature edits planned"],
-            Vec::new(),
+            Vec::<String>::new(),
         )
         .print(opts.format)?;
         return Ok(());
