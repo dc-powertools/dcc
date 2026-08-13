@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `readme/tasks/README.md`
-- Primary task: T-0021
-- Primary details: `readme/tasks/0021-state-path-guards-brief.md`
+- Primary task: None
+- Primary details: None
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -31,6 +31,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-07-21 | Seeded declared `customizations.dcc.state` from the image on build (hydration container, `dcc.seed` label, `.dcc/<profile>.seed.json` ledger, `--reseed-state`, runtime guard). | `readme/tasks/README.md#tasks` |
+| 2026-07-21 | Guarded `customizations.dcc.state` against critical container paths (two-tier subtree/exact reserved-path guards at load and post-`containerEnv` resolution). | `readme/tasks/README.md#tasks` |
 | 2026-07-21 | Added `dcc feature --add`/`--remove` for profile Feature edits. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Made `--debug` a global CLI flag and added debug output for build, stop, and id. | `readme/tasks/README.md#tasks` |
 | 2026-07-20 | Moved README command flag guidance into a dedicated `Global flags` subsection. | `readme/tasks/README.md#tasks` |
@@ -70,6 +72,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 18
+- Completed repository-changing tasks since that pass: 20
 - Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
   comes first
