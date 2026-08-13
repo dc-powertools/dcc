@@ -35,8 +35,9 @@ pub(crate) const MODE_ENV: &str = "DCC_MODE";
 /// register.
 const STARTUP_GRACE_SECS: u32 = 60;
 
-/// Drain poll interval in milliseconds.
-const POLL_MS: u32 = 200;
+/// Drain poll interval in seconds. POSIX `sleep` does not reliably support
+/// fractional seconds, so this is a whole-second value.
+const POLL_SECS: u32 = 1;
 
 /// Host-side runtime assets directory: `<workspace>/.dcc/<profile>.rt/`.
 #[derive(Debug)]
@@ -188,13 +189,13 @@ while true; do
         run_shutdown
         exit 0
     fi
-    sleep __POLL_MS__
+    sleep __POLL_SECS__
 done
 "#
     .replace("__STATE_DIR__", STATE_DIR)
     .replace("__RT_MOUNT__", RT_MOUNT)
     .replace("__STARTUP_GRACE_SECS__", &STARTUP_GRACE_SECS.to_string())
-    .replace("__POLL_MS__", &POLL_MS.to_string())
+    .replace("__POLL_SECS__", &POLL_SECS.to_string())
 }
 
 /// Control script. Invoked by the host CLI via `docker exec dcc-ctl <verb>`.
@@ -270,11 +271,15 @@ printf '%s' "$$" > "$record"
 # Deregister on any exit, then propagate the child's status.
 status=0
 trap 'rm -f "$record"; exit "$status"' EXIT
-trap 'rm -f "$record"; exit 130' INT
-trap 'rm -f "$record"; exit 143' TERM
+trap 'rm -f "$record"; status=130; exit 130' INT
+trap 'rm -f "$record"; status=143; exit 143' TERM
 
+# Run the command with set -e disabled so a non-zero exit is captured rather than
+# aborting the wrapper before status=$? runs.
+set +e
 "$@"
 status=$?
+set -e
 exit "$status"
 "#
     .replace("__STATE_DIR__", STATE_DIR)
