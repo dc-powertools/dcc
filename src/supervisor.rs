@@ -69,9 +69,13 @@ impl RtDir {
         Ok(())
     }
 
-    /// Bind-mount argument (`<host_path>:<RT_MOUNT>:ro`) for `docker run`.
+    /// `--mount` argument for `docker run` (read-only bind mount of the supervisor
+    /// scripts).
     pub(crate) fn mount_arg(&self) -> String {
-        format!("{}:{RT_MOUNT}:ro", self.host_path.display())
+        format!(
+            "type=bind,source={},target={RT_MOUNT},readonly",
+            self.host_path.display()
+        )
     }
 }
 
@@ -371,7 +375,8 @@ mod tests {
         let profile = ProfileName::new("dev");
         let rt = RtDir::new(&ws, &profile);
         let arg = rt.mount_arg();
-        assert!(arg.ends_with(":ro"));
+        assert!(arg.contains("readonly"));
+        assert!(arg.contains("type=bind"));
         assert!(arg.contains(RT_MOUNT));
     }
 }

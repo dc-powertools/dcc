@@ -1001,7 +1001,8 @@ mod tests {
                 "type=bind,src=/workspace/.dcc/dev/state/home/dev/.cargo,dst=/home/dev/.cargo"
                     .to_string(),
             ],
-            rt_mount: "/workspace/.dcc/dev.rt:/usr/local/share/dcc/rt:ro",
+            rt_mount:
+                "type=bind,source=/workspace/.dcc/dev.rt,target=/usr/local/share/dcc/rt,readonly",
             user: "dev",
             workdir: "/workspace/service",
         });
