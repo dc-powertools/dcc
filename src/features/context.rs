@@ -198,9 +198,7 @@ fn generate_dockerfile_inner(
     if install_generated_assets {
         lines.push("COPY .dcc-generated/ /usr/local/share/dcc/".to_string());
         lines.push(
-            "RUN find /usr/local/share/dcc -type f -name '*.sh' -exec chmod +x {} \\; \
-             && find /usr/local/share/dcc/bin -type f -exec chmod +x {} \\;"
-                .to_string(),
+            "RUN find /usr/local/share/dcc -type f -name '*.sh' -exec chmod +x {} \\;".to_string(),
         );
     }
     lines.join("\n") + "\n"

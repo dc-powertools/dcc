@@ -574,3 +574,110 @@ fn build_dry_run_reports_planned_seeding_without_docker() {
         "expected dry-run report to mention seeding, got: {stdout}"
     );
 }
+
+#[test]
+#[ignore]
+fn one_shot_container_leaves_no_host_side_bookkeeping() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+    let container_id = fx.container_id();
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["exec", "/bin/true"]));
+    assert_no_running_container(&container_id);
+
+    // The old <workspace>/.dcc/<profile>/runtime/ directory must not exist.
+    let runtime_dir = fx
+        .fx
+        .dir
+        .path()
+        .join(".dcc")
+        .join("devcontainer")
+        .join("runtime");
+    assert!(
+        !runtime_dir.exists(),
+        "host-side runtime bookkeeping should not exist after one-shot teardown"
+    );
+}
+
+#[test]
+#[ignore]
+fn stop_now_force_terminates_durable_container() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+    let container_id = fx.container_id();
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["start"]));
+    assert_running_container(&container_id);
+
+    assert_success(&fx.dcc(&["stop", "--now"]));
+    assert_no_running_container(&container_id);
+}
+
+#[test]
+#[ignore]
+fn stop_kill_force_removes_wedged_container() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+    let container_id = fx.container_id();
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["start"]));
+    assert_running_container(&container_id);
+
+    assert_success(&fx.dcc(&["stop", "--kill"]));
+    assert_no_running_container(&container_id);
+}
+
+#[test]
+#[ignore]
+fn stop_is_idempotent_when_no_container_running() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    // No container is running; all stop variants should succeed.
+    assert_success(&fx.dcc(&["stop"]));
+    assert_success(&fx.dcc(&["stop", "--now"]));
+    assert_success(&fx.dcc(&["stop", "--kill"]));
+}
+
+#[test]
+#[ignore]
+fn command_exit_code_propagates_through_dcc_exec_wrapper() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+
+    // A failing command should propagate its exit code through the dcc-exec wrapper.
+    let output = fx.dcc(&["exec", "/bin/sh", "-lc", "exit 42"]);
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(42));
+}

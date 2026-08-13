@@ -332,6 +332,30 @@ pub(crate) async fn stop_container(container: &str) -> anyhow::Result<()> {
     anyhow::bail!("`docker stop {container}` failed: {}", stderr.trim())
 }
 
+/// Unconditionally kill a container (`docker kill`). Emergency path for wedged or
+/// corrupted containers. Idempotent: a missing container is treated as success.
+pub(crate) async fn kill_container(container: &str) -> anyhow::Result<()> {
+    let output = Command::new("docker")
+        .args(["kill", container])
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("failed to spawn `docker kill {container}`"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if is_not_running_error(&stderr) {
+        return Ok(());
+    }
+
+    anyhow::bail!("`docker kill {container}` failed: {}", stderr.trim())
+}
+
 pub(crate) async fn running_container_name_by_id(
     container_id: &str,
 ) -> anyhow::Result<Option<String>> {
