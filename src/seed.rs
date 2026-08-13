@@ -249,8 +249,6 @@ pub(crate) fn hydration_container_args(
     image: &str,
     state_root: &str,
     entries: &[SeedManifestEntry],
-    host_uid: u32,
-    host_gid: u32,
 ) -> Vec<String> {
     let mut args = vec![
         "--rm".to_string(),
@@ -261,7 +259,7 @@ pub(crate) fn hydration_container_args(
         image.to_string(),
         "sh".to_string(),
         "-c".to_string(),
-        hydration_copy_script(entries, host_uid, host_gid),
+        hydration_copy_script(entries),
     ];
     // Ensure the top-level /dcc-seed exists even when there are no entries.
     let _ = &mut args;
@@ -269,33 +267,28 @@ pub(crate) fn hydration_container_args(
 }
 
 /// Renders the shell copy script run inside the hydration container. Each entry
-/// is copied with `tar` so mode and symlinks are preserved. After extraction,
-/// ownership is reset to the host user's uid/gid so the host user can manage
-/// (and delete) the seeded content — without this, `tar -xf` as root leaves
-/// root-owned directories on the host that the non-root host user cannot remove.
-fn hydration_copy_script(entries: &[SeedManifestEntry], host_uid: u32, host_gid: u32) -> String {
+/// is copied with `tar` so ownership, mode, and symlinks are preserved. The
+/// destination is `/dcc-seed/<normalized>`, where `<normalized>` is the
+/// container path with the leading `/` stripped.
+fn hydration_copy_script(entries: &[SeedManifestEntry]) -> String {
     let mut lines = vec!["set -eu".to_string()];
     for entry in entries {
         let container_path = &entry.path;
         let rel = container_path.trim_start_matches('/');
         let dst_dir = format!("{SEED_MOUNT_DST}/{rel}");
         // For directory state, copy the whole tree. For file state, copy the
-        // single file (preserving its parent layout under /dcc-seed). After
-        // extraction, reset ownership to the host user so the non-root host
-        // user can manage and delete the seeded content.
+        // single file (preserving its parent layout under /dcc-seed).
         match entry.kind {
             SeedKind::Directory => {
                 lines.push(format!(
                     "if [ -e '{container_path}' ]; then mkdir -p '{dst_dir}' && \
-                     tar -C / -cf - -- '{rel}' | tar -C '{SEED_MOUNT_DST}' -xf - \
-                     && chown -R {host_uid}:{host_gid} '{dst_dir}'; fi"
+                     tar -C / -cf - -- '{rel}' | tar -C '{SEED_MOUNT_DST}' -xf -; fi"
                 ));
             }
             SeedKind::File => {
                 lines.push(format!(
                     "if [ -e '{container_path}' ]; then mkdir -p '{dst_dir}' && \
-                     tar -C / -cf - -- '{rel}' | tar -C '{SEED_MOUNT_DST}' -xf - \
-                     && chown -R {host_uid}:{host_gid} '{dst_dir}'; fi"
+                     tar -C / -cf - -- '{rel}' | tar -C '{SEED_MOUNT_DST}' -xf -; fi"
                 ));
             }
         }
@@ -724,7 +717,7 @@ mod tests {
                 digest: None,
             },
         ];
-        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &entries, 1000, 1000);
+        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &entries);
         assert!(args.contains(&"--rm".to_string()));
         assert!(args.contains(&"-u".to_string()));
         assert!(args.contains(&"root".to_string()));
@@ -738,15 +731,11 @@ mod tests {
         assert!(script.contains("tar -C / -cf -"), "got: {script}");
         assert!(script.contains("home/dev/.cargo"), "got: {script}");
         assert!(script.contains("home/dev/.npmrc"), "got: {script}");
-        assert!(
-            script.contains("chown -R 1000:1000"),
-            "expected chown to host uid:gid, got: {script}"
-        );
     }
 
     #[test]
     fn hydration_container_args_no_state_entries_is_just_set_eu() {
-        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &[], 1000, 1000);
+        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &[]);
         let script = args.last().unwrap();
         assert_eq!(script, "set -eu");
     }
