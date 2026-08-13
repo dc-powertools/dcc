@@ -461,9 +461,27 @@ fn wiped_dcc_rehydrates_from_image_without_rebuild() {
     assert_success(&fx.dcc(&["run", "read"]));
     assert_eq!(fx.read_file("seeded.txt"), "from-image");
 
-    // Wipe the profile cache (simulating a cloned repo with no .dcc).
+    // Wipe the profile cache (simulating a cloned repo with no .dcc). Seeded
+    // state may contain root-owned directories (the hydration container runs as
+    // root and tar preserves uid/gid), so wipe via a root container rather than
+    // std::fs::remove_dir_all, which would get EACCES on root-owned dirs.
     let cache = fx.fx.dir.path().join(".dcc");
-    std::fs::remove_dir_all(&cache).expect("failed to wipe .dcc");
+    let wipe = std::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-u",
+            "root",
+            "-v",
+            &format!("{}:/wipe", cache.display()),
+            "debian:bookworm-slim",
+            "rm",
+            "-rf",
+            "/wipe",
+        ])
+        .output()
+        .expect("failed to run docker wipe");
+    assert_success(&wipe);
 
     assert_success(&fx.dcc(&["run", "read"]));
     assert_eq!(fx.read_file("seeded.txt"), "from-image");
