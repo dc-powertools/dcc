@@ -403,6 +403,7 @@ mod tests {
     fn stub_cache_dir() -> CacheDir {
         CacheDir {
             host_path: PathBuf::from("/tmp/.dcc/test"),
+            profile_name: crate::profile::ProfileName::new("test"),
         }
     }
 

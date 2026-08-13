@@ -356,3 +356,221 @@ fn local_feature_commands_and_state_are_available_at_runtime() {
     ]));
     assert_eq!(fx.read_file("feature-state-copy.txt"), "feature");
 }
+
+// ── T-0022: state seeding from the image ──────────────────────────────────────
+
+/// A config whose Dockerfile installs content at a declared directory state path,
+/// so the bind mount would mask it without seeding.
+fn seeding_dir_config() -> String {
+    // Use a build source so the image actually contains /seeded-dir/value.
+    format!(
+        r#"{{
+            "build": {{ "dockerfile": "Dockerfile" }},
+            "containerUser": "root",
+            "customizations": {{
+                "dcc": {{
+                    "state": ["/seeded-dir"],
+                    "commands": {{
+                        "read": "cat /seeded-dir/value > /workspace/seeded.txt"
+                    }}
+                }}
+            }}
+        }}"#
+    )
+}
+
+fn write_seeding_dockerfile(fx: &DockerFixture) {
+    fx.write_file(
+        ".devcontainer/Dockerfile",
+        &format!(
+            r#"FROM {IMAGE}
+RUN mkdir -p /seeded-dir && printf 'from-image' > /seeded-dir/value
+RUN mkdir -p /seeded-file-dir && printf 'file-from-image' > /seeded-file-dir/.npmrc
+"#,
+        ),
+    );
+}
+
+#[test]
+#[ignore]
+fn directory_state_seeded_from_image_on_build() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&seeding_dir_config());
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["run", "read"]));
+    assert_eq!(fx.read_file("seeded.txt"), "from-image");
+}
+
+#[test]
+#[ignore]
+fn file_state_seeded_from_image_on_build() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&format!(
+        r#"{{
+            "build": {{ "dockerfile": "Dockerfile" }},
+            "containerUser": "root",
+            "customizations": {{
+                "dcc": {{
+                    "state": [{{ "path": "/seeded-file-dir/.npmrc", "type": "file" }}],
+                    "commands": {{
+                        "read": "cat /seeded-file-dir/.npmrc > /workspace/seeded-file.txt"
+                    }}
+                }}
+            }}
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["run", "read"]));
+    assert_eq!(fx.read_file("seeded-file.txt"), "file-from-image");
+}
+
+#[test]
+#[ignore]
+fn build_prep_hook_observes_seeded_content() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&format!(
+        r#"{{
+            "build": {{ "dockerfile": "Dockerfile" }},
+            "containerUser": "root",
+            "onCreateCommand": "cat /seeded-dir/value > /workspace/hook-seed.txt",
+            "customizations": {{
+                "dcc": {{
+                    "state": ["/seeded-dir"]
+                }}
+            }}
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_eq!(fx.read_file("hook-seed.txt"), "from-image");
+}
+
+#[test]
+#[ignore]
+fn wiped_dcc_rehydrates_from_image_without_rebuild() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&seeding_dir_config());
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["run", "read"]));
+    assert_eq!(fx.read_file("seeded.txt"), "from-image");
+
+    // Wipe the profile cache (simulating a cloned repo with no .dcc).
+    let cache = fx.fx.dir.path().join(".dcc");
+    std::fs::remove_dir_all(&cache).expect("failed to wipe .dcc");
+
+    assert_success(&fx.dcc(&["run", "read"]));
+    assert_eq!(fx.read_file("seeded.txt"), "from-image");
+}
+
+#[test]
+#[ignore]
+fn modified_state_is_not_clobbered_on_rebuild() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&seeding_dir_config());
+
+    assert_success(&fx.dcc(&["build"]));
+    // Modify the seeded state from inside the container.
+    assert_success(&fx.dcc(&[
+        "exec",
+        "/bin/sh",
+        "-lc",
+        "printf 'user-modified' > /seeded-dir/value",
+    ]));
+
+    let rebuild = fx.dcc(&["build"]);
+    assert_success(&rebuild);
+    // A warning must name the path and the digest/build-id divergence.
+    let stderr = String::from_utf8_lossy(&rebuild.stderr);
+    assert!(
+        stderr.contains("/seeded-dir") && stderr.contains("reseed-state"),
+        "expected no-clobber warning naming /seeded-dir and --reseed-state, got stderr: {stderr}"
+    );
+
+    // The user's modification survives the rebuild.
+    assert_success(&fx.dcc(&["run", "read"]));
+    assert_eq!(fx.read_file("seeded.txt"), "user-modified");
+}
+
+#[test]
+#[ignore]
+fn reseed_state_flag_clobbers_modified_state() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&seeding_dir_config());
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&[
+        "exec",
+        "/bin/sh",
+        "-lc",
+        "printf 'user-modified' > /seeded-dir/value",
+    ]));
+
+    assert_success(&fx.dcc(&["build", "--reseed-state"]));
+    assert_success(&fx.dcc(&["run", "read"]));
+    assert_eq!(fx.read_file("seeded.txt"), "from-image");
+}
+
+#[test]
+#[ignore]
+fn seeded_directory_is_writable_by_container_user() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    // Non-root user to confirm ownership preservation allows the dev user to write.
+    fx.write_config(&format!(
+        r#"{{
+            "build": {{ "dockerfile": "Dockerfile" }},
+            "containerUser": "dev",
+            "customizations": {{
+                "dcc": {{
+                    "state": ["/seeded-dir"],
+                    "commands": {{
+                        "write": "printf writable > /seeded-dir/after && cat /seeded-dir/after > /workspace/writable.txt"
+                    }}
+                }}
+            }}
+        }}"#
+    ));
+    // Ensure the dev user exists in the image.
+    fx.write_file(
+        ".devcontainer/Dockerfile",
+        &format!(
+            r#"FROM {IMAGE}
+RUN id dev >/dev/null 2>&1 || useradd -m -s /bin/sh dev
+RUN mkdir -p /seeded-dir && chown dev:dev /seeded-dir && printf 'from-image' > /seeded-dir/value
+"#,
+        ),
+    );
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["run", "write"]));
+    assert_eq!(fx.read_file("writable.txt"), "writable");
+}
+
+#[test]
+#[ignore]
+fn build_dry_run_reports_planned_seeding_without_docker() {
+    let fx = DockerFixture::new();
+    write_seeding_dockerfile(&fx);
+    fx.write_config(&seeding_dir_config());
+
+    let out = fx.dcc(&["build", "--dry-run", "--format", "json"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("dry-run JSON parseable");
+    assert_eq!(v["docker_invoked"], false);
+    // The report lists seeding among the planned/skipped considerations.
+    let joined = stdout.to_lowercase();
+    assert!(
+        joined.contains("seed"),
+        "expected dry-run report to mention seeding, got: {stdout}"
+    );
+}

@@ -62,6 +62,26 @@ pub(crate) async fn build(
         if opts.refresh_only {
             skipped.push("profile image existence check");
         }
+        let mut checks = vec![
+            "workspace resolved",
+            "profile resolved",
+            "config loaded",
+            "devcontainer unsafe runtime checked",
+        ];
+        // Dry-run seeding reporting: planned seeding is knowable from the
+        // declared project state without Docker. Feature-contributed state
+        // requires the image label and is reported as skipped in dry-run.
+        let has_project_state = !config.state.is_empty();
+        if has_project_state {
+            checks.push("state seeding planned from declared customizations.dcc.state");
+            if opts.reseed_state {
+                checks.push("reseed-state: host state would be overwritten where digests differ");
+            }
+        } else {
+            checks.push("no declared state: no hydration container run planned");
+        }
+        skipped.push("dcc.seed label inspection (Feature state)");
+        skipped.push("state hydration container run");
         return dry_run::DryRunReport::new(
             if opts.refresh_only {
                 "build --refresh-only"
@@ -70,12 +90,7 @@ pub(crate) async fn build(
             },
             profile,
             config_path,
-            vec![
-                "workspace resolved",
-                "profile resolved",
-                "config loaded",
-                "devcontainer unsafe runtime checked",
-            ],
+            checks,
             skipped,
         )
         .print(opts.format);
@@ -116,8 +131,13 @@ pub(crate) async fn build(
         profile,
         config_path,
         &config,
-        opts.refresh_only,
-        opts.allow_unsafe_runtime,
+        BuildPrepOptions {
+            refresh_only: opts.refresh_only,
+            allow_unsafe_runtime: opts.allow_unsafe_runtime,
+            reseed_state: opts.reseed_state,
+            dry_run: opts.dry_run,
+            format: opts.format,
+        },
     )
     .await
 }
@@ -129,6 +149,7 @@ pub(crate) struct BuildOptions {
     pub(crate) refresh_only: bool,
     pub(crate) strict: bool,
     pub(crate) allow_unsafe_runtime: bool,
+    pub(crate) reseed_state: bool,
     pub(crate) dry_run: bool,
     pub(crate) debug: bool,
     pub(crate) format: crate::cli::OutputFormat,
@@ -175,6 +196,7 @@ async fn build_base_image(
         tag: base_tag.clone(),
         no_cache,
         metadata_label: None,
+        seed_label: None,
         file: Some(plan.dockerfile),
         context_dir: Some(plan.context_dir),
         build_args: plan.build_args,
@@ -219,11 +241,33 @@ async fn build_dcc_stage(
         .await
     }
     .context("failed to build feature context")?;
+
+    // Build the dcc.seed manifest from the merged Feature + project state.
+    // Paths may still contain ${containerEnv:...}; they are resolved after the
+    // image exists, at hydration time, the same way build-prep resolves them.
+    let merged_state: Vec<config::StateEntry> = output
+        .feature_state
+        .iter()
+        .cloned()
+        .chain(config.state.iter().cloned())
+        .collect();
+    let seed_label = if merged_state.is_empty() {
+        None
+    } else {
+        let manifest = crate::seed::manifest_from_state(&merged_state, image_tag);
+        Some(
+            manifest
+                .to_label()
+                .context("failed to serialize dcc.seed label")?,
+        )
+    };
+
     docker::build(
         image_tag,
         no_cache,
         output.context_tar,
         output.metadata_label.as_deref(),
+        seed_label.as_deref(),
     )
     .await
     .with_context(|| format!("failed to build image `{image_tag}`"))?;
@@ -265,30 +309,52 @@ fn generated_base_tag(image_tag: &str) -> String {
     format!("{image_tag}-base")
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BuildPrepOptions {
+    pub(crate) refresh_only: bool,
+    pub(crate) allow_unsafe_runtime: bool,
+    pub(crate) reseed_state: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) format: crate::cli::OutputFormat,
+}
+
 async fn run_build_preparation(
     workspace: &Workspace,
     profile: &ProfileName,
     config_path: &Path,
     config: &config::DevcontainerConfig,
-    refresh_only: bool,
-    allow_unsafe_runtime: bool,
+    opts: BuildPrepOptions,
 ) -> anyhow::Result<()> {
+    let refresh_only = opts.refresh_only;
+    let allow_unsafe_runtime = opts.allow_unsafe_runtime;
+    let reseed_state = opts.reseed_state;
+    let _ = opts.dry_run;
+    let _ = opts.format;
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
     let feature_runtime = read_feature_runtime(image_tag.as_str()).await?;
     ensure_unsafe_runtime_allowed(&feature_runtime, allow_unsafe_runtime)?;
 
     let plan = BuildPrepPlan::new(config, &feature_runtime, refresh_only);
-    if plan.hooks.is_empty() {
-        return Ok(());
-    }
 
     let cache_dir = CacheDir::new(workspace, profile);
     cache_dir.ensure_exists()?;
     let mut container_env = docker::inspect_image_env(image_tag.as_str())
         .await
         .with_context(|| format!("failed to inspect image env `{image_tag}`"))?;
-    if plan.references_container_env(config, &feature_runtime) {
+    // containerEnv probing is needed for state resolution (e.g.
+    // ${containerEnv:HOME}) even when there are no build-prep hooks, because
+    // hydration resolves state paths the same way.
+    if plan.references_container_env(config, &feature_runtime)
+        || config
+            .state
+            .iter()
+            .any(|e| e.path.contains("${containerEnv:"))
+        || feature_runtime
+            .state
+            .iter()
+            .any(|e| e.path.contains("${containerEnv:"))
+    {
         match docker::probe_user_env(image_tag.as_str(), &config.container_user).await {
             Ok(probed) => container_env.extend(probed),
             Err(e) => eprintln!(
@@ -302,8 +368,22 @@ async fn run_build_preparation(
 
     let state = resolve_runtime_state(config, &feature_runtime, &container_env)
         .context("invalid customizations.dcc.state after resolving containerEnv")?;
+
+    // Hydrate declared state from the image before preparing the (empty) bind
+    // sources, so build-prep hooks observe install-time content. Skipped
+    // entirely when there is no declared state.
+    if !state.is_empty() {
+        hydrate_state(&cache_dir, image_tag.as_str(), &state, reseed_state)
+            .await
+            .context("failed to seed declared state from image")?;
+    }
+
     let state_mounts = cache_dir.plan_state_mounts(&state);
     cache_dir.prepare_state_mounts(&state_mounts)?;
+
+    if plan.hooks.is_empty() {
+        return Ok(());
+    }
 
     let local_workspace = workspace.root.to_string_lossy().into_owned();
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
@@ -342,6 +422,112 @@ async fn run_build_preparation(
     hook_result?;
     stop_result
         .with_context(|| format!("failed to stop build-preparation container `{container_name}`"))
+}
+
+/// Hydrates declared state from the image: builds the seed manifest from the
+/// already-resolved state paths, compares against the host-side ledger and
+/// current host digests, runs a one-shot container to copy image content where
+/// needed, then updates the ledger.
+///
+/// The `dcc.seed` image label carries deferred (unresolved) paths for
+/// cross-machine runtime use; here the paths are already resolved against this
+/// image's env, so the manifest is reconstructed from `state`. The `build_id`
+/// is the image tag, matching what the label stores.
+async fn hydrate_state(
+    cache_dir: &CacheDir,
+    image: &str,
+    state: &[config::StateEntry],
+    reseed_state: bool,
+) -> anyhow::Result<()> {
+    let manifest = crate::seed::manifest_from_state(state, image);
+    if manifest.is_empty() {
+        return Ok(());
+    }
+
+    let ledger_path = crate::seed::SeedLedger::path(cache_dir);
+    let ledger = crate::seed::SeedLedger::read(&ledger_path)?;
+
+    // Compute current host digests for each manifest entry.
+    let mut host_digests: HashMap<String, Option<String>> = HashMap::new();
+    for entry in &manifest.entries {
+        let host_path = crate::seed::state_host_path(cache_dir, &entry.path);
+        let digest = crate::seed::host_state_digest(&host_path)
+            .with_context(|| format!("failed to digest state path `{}`", entry.path))?;
+        host_digests.insert(entry.path.clone(), digest);
+    }
+
+    let plan = crate::seed::plan_hydration(&manifest, &ledger, &host_digests, reseed_state);
+
+    // Warn about preserved (user-modified) entries so the user can act.
+    for decision in &plan {
+        if let crate::seed::HydrationDecision::Preserve { path, .. } = decision {
+            let recorded = ledger
+                .get(path)
+                .and_then(|r| r.seed_digest.clone())
+                .unwrap_or_else(|| "(none)".to_string());
+            eprintln!(
+                "warning: customizations.dcc.state path `{path}` has been modified \
+                 (seed digest {recorded}, current host content differs); preserving your data. \
+                 To overwrite with the image seed, rerun `dcc build --reseed-state`."
+            );
+        }
+    }
+
+    if !crate::seed::needs_hydration(&plan) {
+        return Ok(());
+    }
+
+    // Only hydrate entries that need it (Seed or Refresh).
+    let to_hydrate: Vec<crate::seed::SeedManifestEntry> = plan
+        .iter()
+        .filter_map(|d| match d {
+            crate::seed::HydrationDecision::Seed { path, kind }
+            | crate::seed::HydrationDecision::Refresh { path, kind } => {
+                manifest.entries.iter().find(|e| e.path == *path).map(|e| {
+                    crate::seed::SeedManifestEntry {
+                        path: e.path.clone(),
+                        kind: *kind,
+                        digest: e.digest.clone(),
+                    }
+                })
+            }
+            _ => None,
+        })
+        .collect();
+
+    let state_root = crate::seed::state_root(cache_dir);
+    std::fs::create_dir_all(&state_root)
+        .with_context(|| format!("failed to create state root `{}`", state_root.display()))?;
+    let state_root_str = state_root.to_string_lossy().into_owned();
+    let args = crate::seed::hydration_container_args(image, &state_root_str, &to_hydrate);
+    eprintln!(
+        "dcc: seeding {} declared state path(s) from image `{image}`",
+        to_hydrate.len()
+    );
+    docker::run_to_completion(&args)
+        .await
+        .with_context(|| format!("failed to run hydration container for image `{image}`"))?;
+
+    // Recompute digests of what we just wrote and update the ledger.
+    let mut new_entries: Vec<crate::seed::LedgerEntry> = Vec::new();
+    for entry in &manifest.entries {
+        let host_path = crate::seed::state_host_path(cache_dir, &entry.path);
+        let digest = crate::seed::host_state_digest(&host_path)
+            .with_context(|| format!("failed to digest seeded path `{}`", entry.path))?;
+        new_entries.push(crate::seed::LedgerEntry {
+            path: entry.path.clone(),
+            kind: entry.kind,
+            seed_digest: digest,
+            build_id: manifest.build_id.clone(),
+        });
+    }
+    let new_ledger = crate::seed::SeedLedger {
+        entries: new_entries,
+    };
+    new_ledger
+        .write(&ledger_path)
+        .context("failed to write seed ledger after hydration")?;
+    Ok(())
 }
 
 async fn read_feature_runtime(image: &str) -> anyhow::Result<FeatureRuntimeConfig> {

@@ -39,6 +39,10 @@ pub(crate) enum Command {
         refresh_only: bool,
         #[arg(long)]
         allow_unsafe_runtime: bool,
+        /// Overwrite developer-modified declared state during seeding instead of
+        /// preserving it. All-or-nothing across every declared state path.
+        #[arg(long = "reseed-state")]
+        reseed_state: bool,
     },
     #[command(trailing_var_arg = true)]
     Exec {
