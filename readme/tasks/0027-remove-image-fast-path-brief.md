@@ -84,44 +84,48 @@ match image_version {
 The existing `Some(false)` message text is reused verbatim, so the warning a user sees
 is unchanged in wording.
 
-### Three consequences that need a deliberate decision
+### Three settled consequences
 
 These are the reason this task is `Initiative / Medium` rather than a quick change.
+All three were reviewed and accepted on 2026-08-13; they are decisions, not options.
 
-**C1 — `docker pull` stops happening (behavior change).** The fast path explicitly
-pulled the image on every build. `docker build` does **not** pass `--pull`, so a
-`FROM <image>` over an already-present local image will reuse the local copy rather
-than re-resolving the tag upstream. A user who runs `dcc build` expecting to pick up a
-moved tag (e.g. `debian:bookworm-slim` republished) would silently keep the stale local
-image.
+**C1 — base-image freshness moves under `--update`. (Decided.)** The fast path
+explicitly pulled the image on every build. `docker build` does **not** pass `--pull`,
+so a `FROM <image>` over an already-present local image would reuse the local copy
+rather than re-resolving the tag upstream, and a user whose upstream tag moved would
+silently keep a stale image.
 
-Decision required. Options:
-  - **(a) Pass `--pull` when the profile has an `image` source and no `build`.** Most
-    faithful to current behavior; costs a registry round trip per build.
-  - **(b) Pass `--pull` only under the existing `--update` flag.** `--update` currently
-    only busts Feature digest locks; extending it to the base image is a coherent
-    reading of "update my inputs", and leaves the default fast.
-  - **(c) Accept the change and document it.** Cheapest, but silently drops a freshness
-    guarantee users have today.
+**Decision: pass `--pull` to `docker build` if and only if `--update` was given.**
+`--update` already means "re-resolve my inputs" for Feature digests (it discards
+`locked_digests`); extending it to the base image is the same promise applied to the
+other input class. The default build stays fast and offline-friendly, and freshness
+becomes explicit and discoverable rather than an invisible per-build round trip.
 
-Recommended: **(b)**, with the `--update` help text updated to say it also re-pulls the
-base image. It keeps the default build fast, makes freshness explicit and
-discoverable, and matches what `--update` already means for the other input class.
-`docker::build` needs a `pull: bool` plumbed into `DockerBuildOptions` and `build_args`.
+Implementation: add `pull: bool` to `DockerBuildOptions`, emit `--pull` in
+`docker::build_args` when set, and plumb `opts.update` through `build_dcc_stage` to the
+`docker::build` call. Update the `--update` help text to say it also re-pulls the base
+image, and note it in the README build section. `build_args_for_stdin_context_are_deterministic`
+in `src/docker.rs` needs the new field.
 
-**C2 — `devcontainer.lock` appears for previously-fast-path profiles.**
-`build_dcc_stage` ends with `write_lockfile`, which the fast path never reached. These
-profiles have no features, so the file is `{"dccVersion": "…", "features": []}` written
-next to `devcontainer.json`. Harmless but user-visible, and it appears in a directory
-the user may have in version control. Options: write it anyway (uniform), or skip the
-write when `lock_entries` is empty **and** the file does not already exist. Recommended:
-skip when empty and absent — no new file appears in anyone's repo, and the uniformity
-argument is weak for an empty list.
+**C2 — suppress the empty lockfile write. (Decided.)** `build_dcc_stage` ends with
+`write_lockfile`, which the fast path never reached, so previously-fast-path profiles
+would gain a `devcontainer.lock` containing `{"dccVersion": "…", "features": []}` next
+to `devcontainer.json` — a new file appearing in a directory users often have in version
+control.
 
-**C3 — `docker::pull` and `docker::tag` become dead code.** Confirmed by grep: the fast
-path is their only caller. Delete both, or keep if C1 option (a)/(b) reuses `pull`.
-Note `--pull` on `docker build` is a build flag, not a call to `docker::pull`, so under
-recommendation (b) both functions still become dead and should be deleted.
+**Decision: skip the write when `lock_entries` is empty and no lockfile already
+exists.** If a lockfile is already present it is still rewritten, so a profile that
+drops its last feature correctly ends up with an empty feature list rather than a stale
+one. No new file appears in anyone's repository. The uniformity argument for always
+writing is weak when the content is an empty list.
+
+**C3 — delete `docker::pull` and `docker::tag`. (Decided.)** Confirmed by grep that the
+fast-path branch is their only caller. Under C1 the freshness behavior is a `--pull`
+*flag on `docker build`*, not a call to `docker::pull`, so both functions become dead
+once the branch is gone.
+
+**Decision: delete both, along with their unit tests.** Keeping an unused Docker wrapper
+"just in case" is the kind of dead surface this task exists to remove.
 
 ### `--no-cache` starts being honored
 
@@ -142,7 +146,8 @@ In scope:
   `current_uses_fast_path` helper).
 - Delete the now-vacuous `fast_path_config_implies_no_remap` test in `src/uid.rs` (a
   strictly weaker duplicate of the existing `plan_skips_root_user`).
-- Resolve C1, C2, C3 as above.
+- Implement C1 (`--pull` under `--update`), C2 (skip the empty lockfile write), and C3
+  (delete `docker::pull`/`tag`) as decided above.
 - Update `README.md` and `readme/project/architecture.md` fast-path documentation
   (architecture.md ~lines 478–483, 500–506, 762–765, 928–930; README.md ~lines 336,
   365–370 — these were deliberately left untouched by T-0025).
@@ -161,7 +166,7 @@ Out of scope:
 | User/Actor | Workflow | Expected Change |
 | --- | --- | --- |
 | Developer with a plain `{"image": …, "containerUser": "root"}` profile | `dcc build` | One extra cached `docker build` of a 2-line Dockerfile instead of pull+tag; image gains a `dcc.version` label |
-| Same developer | `dcc build` after the upstream tag moves | Depends on C1: no re-pull by default under recommendation (b); `dcc build --update` re-pulls |
+| Same developer | `dcc build` after the upstream tag moves | No re-pull by default; `dcc build --update` re-pulls the base image |
 | Same developer | `dcc build --no-cache` | Now actually honored (previously silently ignored) |
 | Any developer | `dcc exec` / `run` / `stop` on an image with no version stamp | Now warns "does not record the dcc version"; previously silent for fast-path profiles |
 | Maintainer | Adding a feature that needs image-side support | No longer has to ask "does this work on the fast path?" |
@@ -173,10 +178,12 @@ Out of scope:
       succeeds and produces an image carrying a `dcc.version` label matching the current
       dcc version.
 - [ ] `version_warning` takes no fast-path parameter and warns on a missing label.
-- [ ] `docker::pull`/`docker::tag` are deleted, or retained with a live caller.
-- [ ] C1 resolved: base-image freshness behavior is decided, implemented, and
-      documented in `--update`'s help text if recommendation (b) is taken.
-- [ ] C2 resolved: no unexpected `devcontainer.lock` appears for a feature-less profile.
+- [ ] C1: `docker build` receives `--pull` when `--update` is given, and does not
+      otherwise; `--update` help text and README say so.
+- [ ] C2: `dcc build` on a feature-less profile creates no `devcontainer.lock`; a
+      profile that already has one still gets it rewritten (empty feature list) when its
+      last feature is removed.
+- [ ] C3: `docker::pull` and `docker::tag` are deleted along with their unit tests.
 - [ ] `--no-cache` reaches `docker build` for a previously-fast-path profile.
 - [ ] `stop.rs`'s local `current_uses_fast_path` helper is gone and no import is
       orphaned (`CacheDir`/`config` remain used by the dry-run branch).
@@ -202,15 +209,16 @@ Out of scope:
   code paths are already proven by every non-fast-path profile, and the generated
   Dockerfile for the affected class is two lines.
 - Upstream artifacts required: `readme/tasks/0025-r1-startup-handshake-design.md` (D0).
-- Escalation trigger: If C1 cannot preserve base-image freshness without a per-build
-  registry round trip, escalate — silently serving a stale base image is a
-  user-visible regression that needs product agreement.
+- Escalation trigger: If `--pull` under `--update` (C1) proves insufficient — for
+  example if a user-visible workflow depends on every `dcc build` re-resolving the base
+  tag — escalate before changing the default, since a per-build registry round trip is
+  a product tradeoff rather than an implementation detail.
 
 ## Risks
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Stale base image after removal of the explicit pull (C1) | User builds against an outdated image without knowing | Resolve C1 explicitly; recommendation (b) makes freshness reachable via `--update` and documents it |
+| Stale base image because the default build no longer pulls (C1) | User builds against an outdated image without knowing | `dcc build --update` re-pulls; documented in help text and README. Escalate if a workflow needs the old per-build pull |
 | `devcontainer.lock` appears unexpectedly in user repos (C2) | Surprise file, possibly committed | Skip the write when entries are empty and no lockfile exists |
 | Slower `dcc build` for the simplest profiles | Perceived regression | Two-line Dockerfile over a local image; Docker caches the layer. Measure once in the smoke test |
 | Missing-label warning now fires where it never did | Warning noise on pre-existing images | Correct by design — those images genuinely lack the stamp. One rebuild clears it |
@@ -243,10 +251,11 @@ Out of scope:
 | Revision | Date | Source | Change | Reason | Scope Or Acceptance Impact |
 | --- | --- | --- | --- | --- | --- |
 | r1 | 2026-08-13 | T-0025 r3 design (D0) | Initial intake | — | — |
+| r2 | 2026-08-13 | User acceptance of the recommended approaches | C1, C2, and C3 settled: `--pull` under `--update`; skip the empty lockfile write; delete `docker::pull`/`tag` | The three open consequences needed product agreement before implementation could start | Acceptance criteria now name the specific required behavior for each; no open decisions remain |
 
 ## Done When
 
 - `uses_fast_path` and its branch are gone, with no residual call sites.
 - Every image dcc builds carries a `dcc.version` stamp.
-- C1, C2, and C3 are resolved and recorded in a decision record.
+- C1, C2, and C3 are implemented as decided and recorded in a decision record.
 - Documentation matches the implementation and required checks pass.
