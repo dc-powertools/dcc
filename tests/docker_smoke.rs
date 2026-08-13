@@ -363,20 +363,19 @@ fn local_feature_commands_and_state_are_available_at_runtime() {
 /// so the bind mount would mask it without seeding.
 fn seeding_dir_config() -> String {
     // Use a build source so the image actually contains /seeded-dir/value.
-    format!(
-        r#"{{
-            "build": {{ "dockerfile": "Dockerfile" }},
+    r#"{
+            "build": { "dockerfile": "Dockerfile" },
             "containerUser": "root",
-            "customizations": {{
-                "dcc": {{
+            "customizations": {
+                "dcc": {
                     "state": ["/seeded-dir"],
-                    "commands": {{
+                    "commands": {
                         "read": "cat /seeded-dir/value > /workspace/seeded.txt"
-                    }}
-                }}
-            }}
-        }}"#
-    )
+                    }
+                }
+            }
+        }"#
+    .to_string()
 }
 
 fn write_seeding_dockerfile(fx: &DockerFixture) {
@@ -408,20 +407,20 @@ fn directory_state_seeded_from_image_on_build() {
 fn file_state_seeded_from_image_on_build() {
     let fx = DockerFixture::new();
     write_seeding_dockerfile(&fx);
-    fx.write_config(&format!(
-        r#"{{
-            "build": {{ "dockerfile": "Dockerfile" }},
+    fx.write_config(
+        r#"{
+            "build": { "dockerfile": "Dockerfile" },
             "containerUser": "root",
-            "customizations": {{
-                "dcc": {{
-                    "state": [{{ "path": "/seeded-file-dir/.npmrc", "type": "file" }}],
-                    "commands": {{
+            "customizations": {
+                "dcc": {
+                    "state": [{ "path": "/seeded-file-dir/.npmrc", "type": "file" }],
+                    "commands": {
                         "read": "cat /seeded-file-dir/.npmrc > /workspace/seeded-file.txt"
-                    }}
-                }}
-            }}
-        }}"#
-    ));
+                    }
+                }
+            }
+        }"#,
+    );
 
     assert_success(&fx.dcc(&["build"]));
     assert_success(&fx.dcc(&["run", "read"]));
@@ -433,18 +432,18 @@ fn file_state_seeded_from_image_on_build() {
 fn build_prep_hook_observes_seeded_content() {
     let fx = DockerFixture::new();
     write_seeding_dockerfile(&fx);
-    fx.write_config(&format!(
-        r#"{{
-            "build": {{ "dockerfile": "Dockerfile" }},
+    fx.write_config(
+        r#"{
+            "build": { "dockerfile": "Dockerfile" },
             "containerUser": "root",
             "onCreateCommand": "cat /seeded-dir/value > /workspace/hook-seed.txt",
-            "customizations": {{
-                "dcc": {{
+            "customizations": {
+                "dcc": {
                     "state": ["/seeded-dir"]
-                }}
-            }}
-        }}"#
-    ));
+                }
+            }
+        }"#,
+    );
 
     assert_success(&fx.dcc(&["build"]));
     assert_eq!(fx.read_file("hook-seed.txt"), "from-image");
@@ -546,25 +545,24 @@ fn reseed_state_flag_clobbers_modified_state() {
 fn seeded_directory_is_writable_by_container_user() {
     let fx = DockerFixture::new();
     write_seeding_dockerfile(&fx);
-    // Non-root user to confirm ownership preservation allows the dev user to
-    // write to the seeded directory. The command writes within /seeded-dir
-    // (which dev owns via the Dockerfile chown + tar uid preservation) rather
-    // than /workspace, because the workspace bind mount is owned by the host
-    // runner user whose uid may differ from dev's.
-    fx.write_config(&format!(
-        r#"{{
-            "build": {{ "dockerfile": "Dockerfile" }},
+    // Non-root user to confirm the seeded directory is writable by the dev
+    // user in its standard bind-mounted location. updateRemoteUserUID (on by
+    // default) remaps dev's uid/gid to the host's at build time, so the
+    // workspace bind mount is writable regardless of the host runner's uid.
+    fx.write_config(
+        r#"{
+            "build": { "dockerfile": "Dockerfile" },
             "containerUser": "dev",
-            "customizations": {{
-                "dcc": {{
+            "customizations": {
+                "dcc": {
                     "state": ["/seeded-dir"],
-                    "commands": {{
-                        "write": "printf writable > /seeded-dir/after"
-                    }}
-                }}
-            }}
-        }}"#
-    ));
+                    "commands": {
+                        "write": "printf writable > /seeded-dir/after && cat /seeded-dir/after > /workspace/writable.txt"
+                    }
+                }
+            }
+        }"#,
+    );
     // Ensure the dev user exists in the image.
     fx.write_file(
         ".devcontainer/Dockerfile",
@@ -578,23 +576,9 @@ RUN mkdir -p /seeded-dir && chown dev:dev /seeded-dir && printf 'from-image' > /
 
     assert_success(&fx.dcc(&["build"]));
     assert_success(&fx.dcc(&["run", "write"]));
-    // Read the written file from the host-side state directory (the bind-mount
-    // source for /seeded-dir).
-    let state_file = fx
-        .fx
-        .dir
-        .path()
-        .join(".dcc")
-        .join("devcontainer")
-        .join("state")
-        .join("seeded-dir")
-        .join("after");
-    assert_eq!(
-        std::fs::read_to_string(&state_file).unwrap_or_else(|_| {
-            panic!("expected writable state file at `{}`", state_file.display())
-        }),
-        "writable"
-    );
+    // The command writes /workspace/writable.txt; read it back from the host
+    // workspace bind-mount source.
+    assert_eq!(fx.read_file("writable.txt"), "writable");
 }
 
 #[test]
@@ -745,4 +729,126 @@ fn command_exit_code_propagates_through_dcc_exec_wrapper() {
     let output = fx.dcc(&["exec", "/bin/sh", "-lc", "exit 42"]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(42));
+}
+
+#[test]
+#[ignore]
+fn non_root_user_writes_workspace_cache_and_state() {
+    // updateRemoteUserUID (default true) remaps the dev user's uid/gid to the
+    // host's at build time, so bind mounts are writable regardless of the host
+    // runner's uid (e.g. GitHub Actions uid 1001 / gid 999).
+    let fx = DockerFixture::new();
+    fx.write_config(
+        r#"{
+            "build": { "dockerfile": "Dockerfile" },
+            "containerUser": "dev",
+            "customizations": {
+                "dcc": {
+                    "state": ["/seeded-dir"],
+                    "commands": {
+                        "wscratch": "printf ws > /workspace/scratch && printf cache > /cache/scratch && printf state > /seeded-dir/scratch"
+                    }
+                }
+            }
+        }"#,
+    );
+    fx.write_file(
+        ".devcontainer/Dockerfile",
+        &format!(
+            r#"FROM {IMAGE}
+RUN id dev >/dev/null 2>&1 || useradd -m -s /bin/sh dev
+RUN mkdir -p /seeded-dir && chown dev:dev /seeded-dir
+"#,
+        ),
+    );
+
+    assert_success(&fx.dcc(&["build"]));
+    assert_success(&fx.dcc(&["run", "wscratch"]));
+    assert_eq!(fx.read_file("scratch"), "ws");
+    assert_eq!(
+        std::fs::read_to_string(
+            fx.fx
+                .dir
+                .path()
+                .join(".dcc")
+                .join("devcontainer")
+                .join("scratch")
+        )
+        .unwrap_or_else(|_| panic!("expected cache scratch file")),
+        "cache"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            fx.fx
+                .dir
+                .path()
+                .join(".dcc")
+                .join("devcontainer")
+                .join("state")
+                .join("seeded-dir")
+                .join("scratch")
+        )
+        .unwrap_or_else(|_| panic!("expected state scratch file")),
+        "state"
+    );
+}
+
+#[test]
+#[ignore]
+fn fast_path_root_profile_unaffected_by_uid_remap() {
+    // A root containerUser fast-path profile must build and run with no remap
+    // step; root is skipped by definition.
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    let build = fx.dcc(&["build"]);
+    assert_success(&build);
+    // No remap ARGs leaked into the build (fast path pulls+tags, no Dockerfile).
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        !stderr.contains("updateRemoteUserUID remap user"),
+        "root fast path must not plan a remap, got stderr: {stderr}"
+    );
+    assert_success(&fx.dcc(&["exec", "/bin/sh", "-lc", "test \"$(id -u)\" -eq 0"]));
+}
+
+#[test]
+#[ignore]
+fn non_root_container_uid_matches_host_after_remap() {
+    // After build with updateRemoteUserUID, the in-container uid of the dev
+    // user matches the host process uid.
+    let fx = DockerFixture::new();
+    fx.write_config(
+        r#"{
+            "build": { "dockerfile": "Dockerfile" },
+            "containerUser": "dev"
+        }"#,
+    );
+    fx.write_file(
+        ".devcontainer/Dockerfile",
+        &format!(
+            r#"FROM {IMAGE}
+RUN id dev >/dev/null 2>&1 || useradd -m -s /bin/sh dev
+"#,
+        ),
+    );
+
+    assert_success(&fx.dcc(&["build"]));
+    let host_uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "0".to_string());
+    let out = fx.dcc(&["exec", "/bin/sh", "-lc", "id -u"]);
+    assert_success(&out);
+    let container_uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(
+        container_uid, host_uid,
+        "container uid `{container_uid}` should match host uid `{host_uid}` after remap"
+    );
 }

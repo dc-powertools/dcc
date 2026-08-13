@@ -34,6 +34,7 @@ src/
   supervisor.rs       In-container PID 1 lifecycle supervisor (scripts + host-side rt dir)
   seed.rs             State seeding from the image (hydration, dcc.seed label, ledger)
   stop.rs             dcc stop command (graceful / --now / --kill variants)
+  uid.rs              updateRemoteUserUID remap planning (host uid/gid, no-op conditions, Dockerfile block)
   forward.rs          Host-side TCP relay for forwardPorts
   config/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
@@ -113,6 +114,7 @@ struct RawConfig {
     ports_attributes: Option<HashMap<String, PortAttributes>>,
     other_ports_attributes: Option<PortAttributes>,
     override_command: Option<bool>,
+    update_remote_user_uid: Option<bool>,
     workspace_folder: Option<String>,
     workspace_mount: Option<serde_json::Value>,
     initialize_command: Option<LifecycleCommand>,
@@ -150,6 +152,7 @@ pub struct DevcontainerConfig {
     pub ports_attributes: HashMap<String, PortAttributes>,
     pub other_ports_attributes: Option<PortAttributes>,
     pub override_command: Option<bool>,
+    pub update_remote_user_uid: bool, // defaults to true
     pub workspace_folder: String,
     pub workspace_mount: Option<serde_json::Value>,
     pub state: Vec<StateEntry>,
@@ -211,7 +214,7 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 | `privileged`, `cap_add`, `security_opt` | Child overwrites scalar `privileged`; arrays union |
 | `forward_ports` | Array union; duplicates removed, parent entries first |
 | `ports_attributes` | Map union; child value wins on key conflict |
-| `other_ports_attributes`, `override_command`, `workspace_folder`, `workspace_mount` | Child overwrites parent |
+| `other_ports_attributes`, `override_command`, `update_remote_user_uid`, `workspace_folder`, `workspace_mount` | Child overwrites parent |
 
 Lifecycle hook fields are not merged as arrays; the child value wins for each hook.
 
@@ -886,6 +889,13 @@ RUN rm -rf /tmp/.dcc-features/
 RUN id '<user>' >/dev/null 2>&1 \
  || useradd -m -s /bin/sh '<user>' \
  || adduser -D -s /bin/sh '<user>'
+# Only present when updateRemoteUserUID is enabled (default) and containerUser
+# is a non-root named user on a Linux host:
+ARG REMOTE_USER='<user>'
+ARG NEW_UID=<host-uid>
+ARG NEW_GID=<host-gid>
+RUN <updateRemoteUserUID remap: sed-rewrite /etc/passwd + /etc/group,
+     chown -R the user's home, with reference no-op conditions>
 # Only present when forwardPorts is non-empty (see Port Forwarding below):
 RUN command -v nc >/dev/null 2>&1 \
  || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends netcat-openbsd) \
@@ -903,6 +913,27 @@ The user-creation step is idempotent (`id` short-circuits when the user already
 exists) and cross-distro compatible: `useradd` covers Debian/Ubuntu/RHEL/Fedora;
 `adduser -D` covers Alpine/BusyBox. It runs after features so a feature that
 already creates the user does not cause a conflict.
+
+The `updateRemoteUserUID` remap (`src/uid.rs`) follows the reference
+`devcontainers/cli` `scripts/updateUID.Dockerfile` logic and runs immediately
+after user creation so features install into the already-remapped home
+ownership. It is planned by `plan_uid_remap` from the resolved `containerUser`,
+the `updateRemoteUserUID` config flag (default `true`), and the host process
+uid/gid (`host_ids`, captured via `id -u`/`id -g`, `None` on non-unix). The
+remap `RUN` and its `ARG`s are emitted by `remap_dockerfile_block`; the
+`--build-arg` values come from `remap_build_args` and are passed to
+`docker build`. It no-ops (and emits a recognizable echo line) when the user is
+not found in `/etc/passwd`, the uid/gid already match, or another user already
+occupies the target uid (collision — it refuses to stomp); when a group already
+occupies the target gid it keeps the old gid and still updates the uid. The fast
+path (`containerUser: root`) is unaffected: `uses_fast_path` requires root and
+the remap skips root, so the two never overlap (asserted by a unit test).
+
+Because the remap is baked into the image at build time, state hydration
+(`src/seed.rs`) — which runs as root in a one-shot container and preserves image
+uids via `tar` — already sees the remapped `/etc/passwd`, so seeded content is
+owned by the remapped user by construction. No extra chown pass or reordering of
+T-0022's hydration is needed.
 
 **`.dcc-features/<id>/install.sh`** and **`.dcc-features/<id>/devcontainer-feature.json`**
 for each feature.

@@ -340,7 +340,14 @@ Otherwise, `dcc` generates a Dockerfile. When `containerUser` is not `root`,
 `dcc` adds a `RUN` step to the Dockerfile that creates the user if it does not
 already exist; this step is cross-distro compatible (`useradd` for
 Debian/Ubuntu/RHEL, `adduser` for Alpine). When `features` are also set, the
-user is created first.
+user is created first. Immediately after user creation, when
+`updateRemoteUserUID` is enabled (the default) and `containerUser` is a non-root
+named user on a Linux host, `dcc` adds a remap `RUN` that rewrites the user's
+uid/gid in `/etc/passwd` and `/etc/group` to the host user's uid/gid and
+`chown`s the user's home folder, so bind-mounted host content (workspace, cache,
+state) is writable regardless of the host user's uid. The remap is skipped for
+`root` and numeric users, when the uid/gid already match, when another user
+already occupies the target uid, and on non-Linux hosts.
 
 Each feature's `install.sh` runs as `root`, matching the containers.dev
 feature spec that most published features assume (e.g. for `apt-get`).
@@ -593,6 +600,7 @@ devcontainer-compatible tools via
 | `remoteEnv` | Environment variables passed as runtime flags to `docker run`. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `containerUser` | User to run as inside the container. Defaults to `dev`. Unless set to `root`, `dcc build` creates the user in the image if it does not already exist. Feature install scripts run as `root`; `_REMOTE_USER`/`_CONTAINER_USER`/`_REMOTE_USER_HOME`/`_CONTAINER_USER_HOME` are exported for scripts that need to `su` into `containerUser`. |
 | `remoteUser` | Not implemented as a top-level field. Default mode warns because it is unrecognised; `--strict` rejects it. Use `containerUser` for the user that runs hooks and foreground commands. |
+| `updateRemoteUserUID` | Boolean, defaults to `true`. On Linux, when `containerUser` is a non-root named user, `dcc build` remaps that user's uid/gid to the host user's uid/gid inside the image so bind mounts (workspace, cache, state) are writable regardless of the host user's uid. The remap safely no-ops when the user is `root` or numeric, the uid/gid already match, another user already occupies the target uid, or the host is not Linux. Set `false` to disable. |
 | `mounts` | Additional bind or volume mounts. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. Sensitive host sources such as `/`, `/etc`, `/var/run`, Docker sockets, and SSH paths require `--allow-unsafe-runtime`. |
 | `runArgs` | Conservative allowlist of extra Docker runtime flags. Safe flags such as `--add-host`, `--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`, `--cap-drop`, and explicit `--env KEY=VALUE` are passed through. Privileged or host-integrating flags such as `--privileged`, `--cap-add`, `--security-opt`, `--pid=host`, `--ipc=host`, `--network=host`, `--device`, and sensitive mounts require `--allow-unsafe-runtime`; unknown flags are rejected. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the current `dcc build`, `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` invocation includes `--allow-unsafe-runtime`. |

@@ -235,6 +235,7 @@ pub(crate) async fn build_context(
     config_dir: &Path,
     locked_digests: &HashMap<String, String>,
     allow_unsafe_runtime: bool,
+    remap: Option<&crate::uid::RemapPlan>,
 ) -> anyhow::Result<FeatureBuildOutput> {
     let base_image = config
         .image
@@ -246,6 +247,7 @@ pub(crate) async fn build_context(
         config_dir,
         locked_digests,
         allow_unsafe_runtime,
+        remap,
     )
     .await
 }
@@ -256,6 +258,7 @@ pub(crate) async fn build_context_from_base_image(
     config_dir: &Path,
     locked_digests: &HashMap<String, String>,
     allow_unsafe_runtime: bool,
+    remap: Option<&crate::uid::RemapPlan>,
 ) -> anyhow::Result<FeatureBuildOutput> {
     let mut client = OciClient::new().context("failed to initialize OCI HTTP client")?;
 
@@ -393,6 +396,7 @@ pub(crate) async fn build_context_from_base_image(
         &config.container_user,
         !config.forward_ports.is_empty(),
         &generated_assets(&feature_build_prep_hooks, &config.lifecycle),
+        remap,
     )
     .context("failed to assemble Docker build context")?;
 
@@ -1323,6 +1327,7 @@ mod tests {
             ports_attributes: HashMap::new(),
             other_ports_attributes: None,
             override_command: None,
+            update_remote_user_uid: true,
             workspace_folder: crate::config::vars::CONTAINER_WORKSPACE.to_string(),
             workspace_mount: None,
             initialize_command: None,
@@ -1339,7 +1344,7 @@ mod tests {
             tmp.path(),
             br#"{"containerEnv":{"PROJECT_ROOT":"${localWorkspaceFolder}/src","CACHE_DIR":"${containerCacheFolder}/data"}}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let dockerfile = extract_dockerfile(&output.context_tar);
@@ -1362,7 +1367,7 @@ mod tests {
         config
             .container_env
             .insert("DC_VAR".to_string(), "dc_value".to_string());
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let dockerfile = extract_dockerfile(&output.context_tar);
@@ -1390,7 +1395,7 @@ mod tests {
             tmp.path(),
             br#"{"remoteEnv":{"TOKEN":"${localCacheFolder}/tok"}}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let label = output.metadata_label.expect("expected metadata label");
@@ -1409,7 +1414,7 @@ mod tests {
             tmp.path(),
             br#"{"postCreateCommand":"echo hello from feature"}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let label = output
@@ -1713,7 +1718,7 @@ mod tests {
             tmp.path(),
             br#"{"id":"my-tool","scripts":{"lint":"cargo clippy"}}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let label = output
@@ -1732,7 +1737,7 @@ mod tests {
     async fn build_context_no_short_id_when_no_scripts() {
         let tmp = tempfile::tempdir().unwrap();
         let config = local_config(tmp.path(), br#"{"postCreateCommand":"echo hello"}"#);
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let label = output
@@ -1758,7 +1763,7 @@ mod tests {
                 }
             }"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .unwrap();
         let label = output.metadata_label.expect("feature should produce label");
@@ -1787,7 +1792,7 @@ mod tests {
     async fn build_context_rejects_feature_user_properties() {
         let tmp = tempfile::tempdir().unwrap();
         let config = local_config(tmp.path(), br#"{"containerUser":"root"}"#);
-        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .err()
             .expect("feature containerUser should be rejected");
@@ -1802,7 +1807,7 @@ mod tests {
             tmp.path(),
             br#"{"customizations":{"dcc":{"state":["relative/cache"]}}}"#,
         );
-        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .err()
             .expect("invalid feature state should be rejected");
@@ -1835,7 +1840,7 @@ mod tests {
         let mut config = local_config(tmp.path(), br#"{}"#);
         config.features = features;
 
-        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .err()
             .expect("overlapping feature state should be rejected");
@@ -1850,7 +1855,7 @@ mod tests {
             tmp.path(),
             br#"{"privileged":true,"capAdd":["SYS_PTRACE"],"securityOpt":["seccomp=unconfined"]}"#,
         );
-        let err = build_context(&config, tmp.path(), &HashMap::new(), false)
+        let err = build_context(&config, tmp.path(), &HashMap::new(), false, None)
             .await
             .err()
             .expect("unsafe runtime settings should be rejected");
@@ -1868,7 +1873,7 @@ mod tests {
             tmp.path(),
             br#"{"privileged":true,"capAdd":["SYS_PTRACE"],"securityOpt":["seccomp=unconfined"]}"#,
         );
-        let output = build_context(&config, tmp.path(), &HashMap::new(), true)
+        let output = build_context(&config, tmp.path(), &HashMap::new(), true, None)
             .await
             .unwrap();
         let label = output.metadata_label.expect("feature should produce label");

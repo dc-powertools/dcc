@@ -14,6 +14,7 @@ mod run;
 mod seed;
 mod stop;
 mod supervisor;
+mod uid;
 mod version;
 mod workspace;
 

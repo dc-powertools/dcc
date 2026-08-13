@@ -95,6 +95,7 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
         ports_attributes: raw.ports_attributes.unwrap_or_default(),
         other_ports_attributes: raw.other_ports_attributes,
         override_command: raw.override_command,
+        update_remote_user_uid: raw.update_remote_user_uid.unwrap_or(true),
         workspace_folder: raw
             .workspace_folder
             .unwrap_or_else(|| vars::CONTAINER_WORKSPACE.to_string()),
@@ -459,6 +460,78 @@ mod tests {
         );
         let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
         assert_eq!(config.container_user, "root");
+    }
+
+    #[test]
+    fn test_update_remote_user_uid_defaults_to_true() {
+        let dir = TempDir::new().unwrap();
+        let path = write(dir.path(), "dev.json", r#"{ "image": "rust:latest" }"#);
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(
+            config.update_remote_user_uid,
+            "updateRemoteUserUID must default to true"
+        );
+    }
+
+    #[test]
+    fn test_update_remote_user_uid_false_respected() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{ "image": "rust:latest", "updateRemoteUserUID": false }"#,
+        );
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(
+            !config.update_remote_user_uid,
+            "explicit updateRemoteUserUID false must be honored"
+        );
+    }
+
+    #[test]
+    fn test_update_remote_user_uid_not_in_extra() {
+        // The property is recognized, so it must not be collected into `extra`
+        // (which would warn/default-reject it).
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{ "image": "rust:latest", "updateRemoteUserUID": true }"#,
+        );
+        // Load in strict mode: an unrecognized field would error here.
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), true).unwrap();
+        assert!(config.update_remote_user_uid);
+    }
+
+    #[test]
+    fn test_update_remote_user_uid_child_overrides_parent() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "base.json",
+            r#"{ "image": "ubuntu:22.04", "updateRemoteUserUID": false }"#,
+        );
+        let child = write(
+            dir.path(),
+            "child.json",
+            r#"{ "extends": "base.json", "updateRemoteUserUID": true }"#,
+        );
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(config.update_remote_user_uid);
+
+        // And the reverse: child false overrides parent true.
+        write(
+            dir.path(),
+            "base2.json",
+            r#"{ "image": "ubuntu:22.04", "updateRemoteUserUID": true }"#,
+        );
+        let child2 = write(
+            dir.path(),
+            "child2.json",
+            r#"{ "extends": "base2.json", "updateRemoteUserUID": false }"#,
+        );
+        let config2 = load_config(&child2, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(!config2.update_remote_user_uid);
     }
 
     #[test]

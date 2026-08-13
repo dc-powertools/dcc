@@ -25,6 +25,9 @@ pub(crate) fn merge(parent: RawConfig, child: RawConfig) -> RawConfig {
             .other_ports_attributes
             .or(parent.other_ports_attributes),
         override_command: child.override_command.or(parent.override_command),
+        update_remote_user_uid: child
+            .update_remote_user_uid
+            .or(parent.update_remote_user_uid),
         workspace_folder: child.workspace_folder.or(parent.workspace_folder),
         workspace_mount: child.workspace_mount.or(parent.workspace_mount),
         initialize_command: child.initialize_command.or(parent.initialize_command),
@@ -158,6 +161,7 @@ mod tests {
             ports_attributes: None,
             other_ports_attributes: None,
             override_command: None,
+            update_remote_user_uid: None,
             workspace_folder: None,
             workspace_mount: None,
             initialize_command: None,

@@ -40,6 +40,7 @@ pub(crate) async fn build(
     context: Vec<u8>,
     metadata_label: Option<&str>,
     seed_label: Option<&str>,
+    build_args: Vec<(String, String)>,
 ) -> anyhow::Result<()> {
     let opts = DockerBuildOptions {
         tag: tag.to_string(),
@@ -48,7 +49,7 @@ pub(crate) async fn build(
         seed_label: seed_label.map(str::to_string),
         file: None,
         context_dir: None,
-        build_args: Vec::new(),
+        build_args,
         target: None,
     };
     build_stdin(opts, context).await
