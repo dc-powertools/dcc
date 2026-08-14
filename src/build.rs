@@ -50,7 +50,6 @@ pub(crate) async fn build(
             _ => {}
         }
         eprintln!("dcc debug: refresh-only `{}`", opts.refresh_only);
-        eprintln!("dcc debug: fast path `{}`", uses_fast_path(&config));
         let remap = crate::uid::plan_uid_remap(
             &config.container_user,
             config.update_remote_user_uid,
@@ -68,7 +67,7 @@ pub(crate) async fn build(
 
     if opts.dry_run {
         let mut skipped: Vec<String> = vec![
-            "docker image build/pull/tag",
+            "docker image build",
             "docker image label inspection",
             "build-preparation container start",
             "build-preparation lifecycle hooks",
@@ -136,22 +135,16 @@ pub(crate) async fn build(
 
     if opts.refresh_only {
         ensure_refresh_image_exists(image_tag.as_str()).await?;
-    } else if uses_fast_path(&config) {
-        let image = config
-            .image
-            .as_deref()
-            .context("image fast path requires an image source")?;
-        let _ = opts.no_cache;
-        docker::pull(image)
-            .await
-            .with_context(|| format!("failed to pull image `{image}`"))?;
-        docker::tag(image, image_tag.as_str())
-            .await
-            .with_context(|| format!("failed to tag `{image}` as `{}`", image_tag.as_str()))?;
     } else {
-        let base_image = build_base_image(&config, config_path, image_tag.as_str(), opts.no_cache)
-            .await
-            .context("failed to build base image")?;
+        let base_image = build_base_image(
+            &config,
+            config_path,
+            image_tag.as_str(),
+            opts.no_cache,
+            opts.update,
+        )
+        .await
+        .context("failed to build base image")?;
         build_dcc_stage(
             &config,
             config_path,
@@ -193,19 +186,6 @@ pub(crate) struct BuildOptions {
     pub(crate) format: crate::cli::OutputFormat,
 }
 
-pub(crate) fn uses_fast_path(config: &config::DevcontainerConfig) -> bool {
-    config.image.is_some()
-        && config.build.is_none()
-        && config.features.is_empty()
-        && config.container_user == "root"
-        && config.container_env.is_empty()
-        && config.forward_ports.is_empty()
-        && config.lifecycle.on_create_command.is_none()
-        && config.lifecycle.update_content_command.is_none()
-        && config.lifecycle.post_create_command.is_none()
-        && config.state.is_empty()
-}
-
 async fn ensure_refresh_image_exists(image: &str) -> anyhow::Result<()> {
     if docker::image_exists(image).await? {
         return Ok(());
@@ -220,6 +200,7 @@ async fn build_base_image(
     config_path: &Path,
     image_tag: &str,
     no_cache: bool,
+    update: bool,
 ) -> anyhow::Result<String> {
     let Some(build) = &config.build else {
         return config
@@ -233,6 +214,7 @@ async fn build_base_image(
     docker::build_path(docker::DockerBuildOptions {
         tag: base_tag.clone(),
         no_cache,
+        pull: update,
         metadata_label: None,
         seed_label: None,
         file: Some(plan.dockerfile),
@@ -324,6 +306,7 @@ async fn build_dcc_stage(
     docker::build(
         image_tag,
         no_cache,
+        update,
         output.context_tar,
         output.metadata_label.as_deref(),
         seed_label.as_deref(),
@@ -877,6 +860,13 @@ fn load_locked_digests(config_path: &Path) -> HashMap<String, String> {
 
 fn write_lockfile(config_path: &Path, lock_entries: &[LockEntry]) -> anyhow::Result<()> {
     let lock_path = config_path.with_extension("lock");
+    // C2: a feature-less profile produces an empty lock list. If no lockfile
+    // exists yet, skip the write so no new file appears in the user's repo.
+    // If a lockfile already exists, still rewrite it (e.g. the last feature
+    // was just dropped) so it does not go stale.
+    if lock_entries.is_empty() && !lock_path.exists() {
+        return Ok(());
+    }
     let lock_json = serde_json::json!({
         "dccVersion": env!("CARGO_PKG_VERSION"),
         "features": lock_entries,
@@ -922,63 +912,6 @@ mod tests {
 
     fn shell(s: &str) -> Option<LifecycleCommand> {
         Some(LifecycleCommand::Shell(s.to_string()))
-    }
-
-    #[test]
-    fn uses_fast_path_for_root_image_without_dcc_changes() {
-        assert!(uses_fast_path(&config()));
-    }
-
-    #[test]
-    fn uses_fast_path_false_for_default_dev_user() {
-        let mut config = config();
-        config.container_user = "dev".to_string();
-        assert!(!uses_fast_path(&config));
-    }
-
-    #[test]
-    fn uses_fast_path_false_when_build_source_present() {
-        let mut config = config();
-        config.image = None;
-        config.build = Some(BuildConfig {
-            context: "..".to_string(),
-            dockerfile: "Dockerfile".to_string(),
-            args: HashMap::new(),
-            target: None,
-        });
-        assert!(!uses_fast_path(&config));
-    }
-
-    #[test]
-    fn uses_fast_path_false_when_features_present() {
-        let mut config = config();
-        config
-            .features
-            .insert("feature".to_string(), serde_json::json!({}));
-        assert!(!uses_fast_path(&config));
-    }
-
-    #[test]
-    fn uses_fast_path_false_when_container_env_present() {
-        let mut config = config();
-        config
-            .container_env
-            .insert("RUST_BACKTRACE".to_string(), "1".to_string());
-        assert!(!uses_fast_path(&config));
-    }
-
-    #[test]
-    fn uses_fast_path_false_when_forward_ports_present() {
-        let mut config = config();
-        config.forward_ports.push(8080);
-        assert!(!uses_fast_path(&config));
-    }
-
-    #[test]
-    fn uses_fast_path_false_when_build_prep_hook_present() {
-        let mut config = config();
-        config.lifecycle.update_content_command = shell("cargo fetch");
-        assert!(!uses_fast_path(&config));
     }
 
     #[test]

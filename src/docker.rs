@@ -6,37 +6,10 @@ use anyhow::Context as _;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 
-pub(crate) async fn pull(image: &str) -> anyhow::Result<()> {
-    let status = Command::new("docker")
-        .args(["pull", image])
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("failed to spawn `docker pull {image}`"))?
-        .wait()
-        .await
-        .with_context(|| format!("failed to wait for `docker pull {image}`"))?;
-    check_status(status, &format!("docker pull {image}"))
-}
-
-pub(crate) async fn tag(source: &str, target: &str) -> anyhow::Result<()> {
-    let status = Command::new("docker")
-        .args(["tag", source, target])
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("failed to spawn `docker tag {source} {target}`"))?
-        .wait()
-        .await
-        .with_context(|| format!("failed to wait for `docker tag {source} {target}`"))?;
-    check_status(status, &format!("docker tag {source} {target}"))
-}
-
 pub(crate) async fn build(
     tag: &str,
     no_cache: bool,
+    pull: bool,
     context: Vec<u8>,
     metadata_label: Option<&str>,
     seed_label: Option<&str>,
@@ -45,6 +18,7 @@ pub(crate) async fn build(
     let opts = DockerBuildOptions {
         tag: tag.to_string(),
         no_cache,
+        pull,
         metadata_label: metadata_label.map(str::to_string),
         seed_label: seed_label.map(str::to_string),
         file: None,
@@ -59,6 +33,9 @@ pub(crate) async fn build(
 pub(crate) struct DockerBuildOptions {
     pub(crate) tag: String,
     pub(crate) no_cache: bool,
+    /// Pass `--pull` to `docker build` so `FROM` re-resolves the base image tag
+    /// upstream rather than reusing a stale local image. Plumbed from `--update`.
+    pub(crate) pull: bool,
     pub(crate) metadata_label: Option<String>,
     /// Optional `dcc.seed` label value (resolved seed manifest JSON).
     pub(crate) seed_label: Option<String>,
@@ -72,6 +49,9 @@ pub(crate) fn build_args(opts: &DockerBuildOptions) -> Vec<String> {
     let mut args = vec!["build".to_string()];
     if opts.no_cache {
         args.push("--no-cache".to_string());
+    }
+    if opts.pull {
+        args.push("--pull".to_string());
     }
     if let Some(label) = &opts.metadata_label {
         args.extend([
@@ -673,6 +653,7 @@ mod tests {
         let args = build_args(&DockerBuildOptions {
             tag: "dcc-img".to_string(),
             no_cache: true,
+            pull: false,
             metadata_label: Some("[{}]".to_string()),
             seed_label: None,
             file: None,
@@ -708,6 +689,7 @@ mod tests {
         let args = build_args(&DockerBuildOptions {
             tag: "dcc-img".to_string(),
             no_cache: false,
+            pull: false,
             metadata_label: Some("[{}]".to_string()),
             seed_label: Some(r#"{"build_id":"x","entries":[]}"#.to_string()),
             file: None,
@@ -735,6 +717,7 @@ mod tests {
         let args = build_args(&DockerBuildOptions {
             tag: "dcc-img".to_string(),
             no_cache: false,
+            pull: false,
             metadata_label: None,
             seed_label: None,
             file: Some(std::path::Path::new("/workspace/.devcontainer/Dockerfile").to_path_buf()),
@@ -752,6 +735,44 @@ mod tests {
                 "/workspace/.devcontainer/Dockerfile",
                 "/workspace"
             ]
+        );
+    }
+
+    #[test]
+    fn build_args_include_pull_flag_when_set() {
+        let args = build_args(&DockerBuildOptions {
+            tag: "dcc-img".to_string(),
+            no_cache: false,
+            pull: true,
+            metadata_label: None,
+            seed_label: None,
+            file: None,
+            context_dir: None,
+            build_args: Vec::new(),
+            target: None,
+        });
+        assert!(
+            args.contains(&"--pull".to_string()),
+            "expected --pull, got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_args_omit_pull_flag_when_unset() {
+        let args = build_args(&DockerBuildOptions {
+            tag: "dcc-img".to_string(),
+            no_cache: false,
+            pull: false,
+            metadata_label: None,
+            seed_label: None,
+            file: None,
+            context_dir: None,
+            build_args: Vec::new(),
+            target: None,
+        });
+        assert!(
+            !args.contains(&"--pull".to_string()),
+            "did not expect --pull, got: {args:?}"
         );
     }
 

@@ -26,7 +26,6 @@ pub(crate) async fn run(
 
     let container_id = ContainerId::new(workspace, profile);
     let image_tag = container_id.as_image_tag();
-    let current_uses_fast_path = crate::build::uses_fast_path(&config);
 
     if opts.dry_run {
         if let Some(arg) = script_arg {
@@ -66,13 +65,8 @@ pub(crate) async fn run(
     };
 
     let Some(arg) = script_arg else {
-        version::warn_if_image_version_mismatch(
-            image_tag.as_str(),
-            Some(current_uses_fast_path),
-            opts.profile_arg,
-            opts.strict,
-        )
-        .await?;
+        version::warn_if_image_version_mismatch(image_tag.as_str(), opts.profile_arg, opts.strict)
+            .await?;
         for line in format_script_list(&config.scripts, &feature_runtime.feature_scripts) {
             println!("{line}");
         }

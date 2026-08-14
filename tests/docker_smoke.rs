@@ -795,9 +795,10 @@ RUN mkdir -p /seeded-dir && chown dev:dev /seeded-dir
 
 #[test]
 #[ignore]
-fn fast_path_root_profile_unaffected_by_uid_remap() {
-    // A root containerUser fast-path profile must build and run with no remap
-    // step; root is skipped by definition.
+fn root_image_profile_builds_with_version_stamp_and_no_remap() {
+    // A root containerUser image-only profile now goes through the dcc build
+    // stage (the fast path was removed): it builds, gains a dcc.version label,
+    // and plans no uid remap because root is skipped by definition.
     let fx = DockerFixture::new();
     fx.write_config(&format!(
         r#"{{
@@ -808,13 +809,26 @@ fn fast_path_root_profile_unaffected_by_uid_remap() {
 
     let build = fx.dcc(&["build"]);
     assert_success(&build);
-    // No remap ARGs leaked into the build (fast path pulls+tags, no Dockerfile).
     let stderr = String::from_utf8_lossy(&build.stderr);
     assert!(
         !stderr.contains("updateRemoteUserUID remap user"),
-        "root fast path must not plan a remap, got stderr: {stderr}"
+        "root profile must not plan a remap, got stderr: {stderr}"
     );
     assert_success(&fx.dcc(&["exec", "/bin/sh", "-lc", "test \"$(id -u)\" -eq 0"]));
+    // The image carries a dcc.version label (stamped by build_dcc_stage).
+    let image = fx.container_id();
+    let out = docker(&[
+        "image",
+        "inspect",
+        &image,
+        "--format",
+        r#"{{index .Config.Labels "dcc.version"}}"#,
+    ]);
+    let label = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !label.trim().is_empty(),
+        "image should carry a dcc.version label, got: {label}"
+    );
 }
 
 #[test]

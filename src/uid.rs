@@ -360,16 +360,6 @@ mod tests {
         );
     }
 
-    // --- fast-path invariant ---
-
-    #[test]
-    fn fast_path_config_implies_no_remap() {
-        // uses_fast_path requires container_user == "root", and root is skipped.
-        // Assert the implication directly against plan_uid_remap.
-        let plan = plan_uid_remap("root", true, ids(1001, 999));
-        assert!(matches!(plan, RemapPlan::None { .. }));
-    }
-
     // --- host_ids is callable on every platform ---
 
     #[test]

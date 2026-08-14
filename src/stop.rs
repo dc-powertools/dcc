@@ -56,11 +56,8 @@ pub(crate) async fn stop(
         )
         .print(opts.format);
     }
-    let current_uses_fast_path =
-        current_uses_fast_path(workspace, profile, config_path, opts.strict);
     version::warn_if_image_version_mismatch_best_effort(
         container_id.as_image_tag().as_str(),
-        current_uses_fast_path,
         opts.profile_arg,
         opts.strict,
     )
@@ -174,17 +171,6 @@ pub(crate) struct StopOptions<'a> {
     pub(crate) format: crate::cli::OutputFormat,
     pub(crate) now: bool,
     pub(crate) kill: bool,
-}
-
-fn current_uses_fast_path(
-    workspace: &Workspace,
-    profile: &ProfileName,
-    config_path: &Path,
-    strict: bool,
-) -> Option<bool> {
-    let cache_dir = CacheDir::new(workspace, profile);
-    let config = config::load_config(config_path, workspace, &cache_dir, strict).ok()?;
-    Some(crate::build::uses_fast_path(&config))
 }
 
 #[cfg(test)]

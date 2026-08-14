@@ -475,35 +475,28 @@ as errors, except where noted below.
 
 ### dcc build
 
-**No features AND no containerUser AND no containerEnv AND no forwardPorts** (fast path): skip image build. Pull and retag:
+Every `dcc build` generates a Dockerfile and runs `docker build` over an
+in-memory tar context, so every dcc-built image carries a `dcc.version` label:
 
 ```
-docker pull <image>
-docker tag <image> <image-tag>
+docker build [--no-cache] [--pull] [--label devcontainer.metadata=<json>] [--label dcc.seed=<json>] --tag <image-tag> -
 ```
 
-`docker pull` fails if the image does not exist in a remote registry. Images
-that were built locally and not pushed to a registry must be handled by adding
-features, a `containerUser`, `containerEnv`, or `forwardPorts` to the config,
-which causes the Dockerfile path to be used instead. This limitation should be
-surfaced in user-facing documentation.
+`--pull` is passed only when `--update` is given, so the base image's `FROM` tag
+is re-resolved upstream rather than reusing a stale local image. The `-` argument
+instructs Docker to read the entire build context (including the Dockerfile) from
+stdin as a tar archive. No Dockerfile is written to disk.
 
-**With features OR containerUser OR containerEnv OR forwardPorts OR state OR
-build-preparation hooks**: pipe the in-memory build context to `docker build`:
-
-```
-docker build [--no-cache] [--label devcontainer.metadata=<json>] --tag <image-tag> -
-```
-
-The `-` argument instructs Docker to read the entire build context (including
-the Dockerfile) from stdin as a tar archive. No Dockerfile is written to disk.
+For an image-only profile with `containerUser: root` and no features, env, ports,
+or hooks, the generated Dockerfile is just `FROM <image>` plus the version
+`LABEL` — one cached layer over the base image.
 
 Official `build` sources are built first as a generated base image using their
 Dockerfile, context, build args, and optional target. `dcc` then builds its own
 generated stage from that base image so user creation, Features, hook assets, and
 metadata labels remain consistent. The PID 1 supervisor scripts are not baked into the
 image — they are bind-mounted read-only from the host at runtime (see Runtime Commands),
-so they exist in every container including the fast path.
+so they exist in every container.
 
 When features contribute runtime properties (mounts, commands, state, hooks, or
 unsafe runtime settings), `dcc build` passes
@@ -798,9 +791,9 @@ already present and tries each package manager in turn:
 | `yum` (RHEL/CentOS) | `nmap-ncat` |
 | `dnf` (Fedora/RHEL 8+) | `nmap-ncat` |
 
-The fast-path in `dcc build` (pull + retag, no Dockerfile) is bypassed when
-`forwardPorts` is non-empty, since the nc installation step requires a
-Dockerfile build.
+The `nc` installation step is emitted in the generated Dockerfile only when
+`forwardPorts` is non-empty, since a Dockerfile build is required to install
+packages.
 
 ### Handle lifetime and cleanup
 
@@ -963,9 +956,9 @@ remap `RUN` and its `ARG`s are emitted by `remap_dockerfile_block`; the
 `docker build`. It no-ops (and emits a recognizable echo line) when the user is
 not found in `/etc/passwd`, the uid/gid already match, or another user already
 occupies the target uid (collision — it refuses to stomp); when a group already
-occupies the target gid it keeps the old gid and still updates the uid. The fast
-path (`containerUser: root`) is unaffected: `uses_fast_path` requires root and
-the remap skips root, so the two never overlap (asserted by a unit test).
+occupies the target gid it keeps the old gid and still updates the uid. A
+`containerUser: root` profile is unaffected: the remap skips root, so no remap
+`RUN` is ever emitted for root profiles.
 
 Because the remap is baked into the image at build time, state hydration
 (`src/seed.rs`) — which runs as root in a one-shot container and preserves image
