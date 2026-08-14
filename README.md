@@ -297,7 +297,7 @@ warnings.
 
 Pass `--dry-run` to validate the workspace, profile, config, command line, and
 config-local safety gates without invoking Docker. Dry runs stop before Docker
-image inspection, image build/pull/tag, container lookup/start/exec/stop, port
+image inspection, image build, container lookup/start/exec/stop, port
 forwarding, and lifecycle hook execution.
 
 By default a dry run prints a short text report and exits 0 when validation
@@ -331,18 +331,16 @@ Profiles can specify either `image` or official `build` configuration. `build`
 supports Dockerfile/context builds with `context`, `dockerfile`, `args`, and
 `target`. Setting both `image` and `build` is an error.
 
-`containerUser` defaults to `dev` when not set. When the profile uses only
-`image`, has `containerUser` set to `root`, and has no Features, containerEnv,
-forwarded ports, state, or build-preparation hooks, `dcc` takes a fast path: it
-pulls the base image and retags it locally without a Dockerfile build.
-
-Otherwise, `dcc` generates a Dockerfile. When `containerUser` is not `root`,
-`dcc` adds a `RUN` step to the Dockerfile that creates the user if it does not
-already exist; this step is cross-distro compatible (`useradd` for
-Debian/Ubuntu/RHEL, `adduser` for Alpine). When `features` are also set, the
-user is created first. Immediately after user creation, when
-`updateRemoteUserUID` is enabled (the default) and `containerUser` is a non-root
-named user on a Linux host, `dcc` adds a remap `RUN` that rewrites the user's
+`containerUser` defaults to `dev` when not set. Every `dcc build` generates a
+Dockerfile that stamps the image with a `dcc.version` label, so every image `dcc`
+creates is identifiable as dcc-built and its age can be checked against the running
+`dcc` binary. When `containerUser` is not `root`, `dcc` adds a `RUN` step to the
+Dockerfile that creates the user if it does not already exist; this step is
+cross-distro compatible (`useradd` for Debian/Ubuntu/RHEL, `adduser` for Alpine).
+When `features` are also set, the user is created first. Immediately after user
+creation, when `updateRemoteUserUID` is enabled (the default) and `containerUser`
+is a non-root named user on a Linux host, `dcc` adds a remap `RUN` that rewrites
+the user's
 uid/gid in `/etc/passwd` and `/etc/group` to the host user's uid/gid and
 `chown`s the user's home folder, so bind-mounted host content (workspace, cache,
 state) is writable regardless of the host user's uid. The remap is skipped for
@@ -357,16 +355,18 @@ steps that need to run as `containerUser` (e.g. dotfiles, per-user tool
 installs).
 
 Subsequent builds are incremental via Docker's layer cache; pass `--no-cache`
-to force a full rebuild. Pass `--refresh-only` to skip image rebuild and rerun
-only `updateContentCommand` and `postCreateCommand`; it fails if the profile
-image does not already exist.
+to force a full rebuild. Pass `--update` to re-resolve inputs from upstream: it
+discards locked feature digests and passes `--pull` to `docker build`, so a
+moved `image` tag or a republished base image is picked up. Pass `--refresh-only`
+to skip image rebuild and rerun only `updateContentCommand` and
+`postCreateCommand`; it fails if the profile image does not already exist.
 
 The generated Dockerfile stamps the installed `dcc` version as a `LABEL`
 immediately after `FROM`, so upgrading `dcc` automatically invalidates the cache
 for every dcc-controlled step. `dcc` also installs build-preparation hook assets
 into the image. The PID 1 lifecycle supervisor scripts are not baked into the
 image — they are bind-mounted read-only from the host at runtime, so they exist
-in every container including the fast path. During
+in every container. During
 `dcc build`, build preparation runs `onCreateCommand`, `updateContentCommand`,
 and `postCreateCommand` in order, with Feature hooks before project hooks for
 each phase and state mounts attached.

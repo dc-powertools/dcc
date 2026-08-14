@@ -627,8 +627,7 @@ pub(crate) fn generated_assets(
 ) -> Vec<context::ContextFile> {
     // Build-prep hook assets only. The PID 1 supervisor and command wrapper are
     // shipped as read-only bind mounts from the host rt directory (see
-    // `src/supervisor.rs`), not baked into the image, so they exist on every
-    // container including the fast path.
+    // `src/supervisor.rs`), not baked into the image.
     build_prep_hook_assets(feature_hooks, project_hooks)
 }
 

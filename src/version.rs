@@ -4,7 +4,6 @@ use crate::docker;
 
 pub(crate) async fn warn_if_image_version_mismatch(
     image: &str,
-    current_uses_fast_path: Option<bool>,
     profile_arg: &str,
     strict: bool,
 ) -> anyhow::Result<()> {
@@ -14,7 +13,6 @@ pub(crate) async fn warn_if_image_version_mismatch(
     if let Some(warning) = version_warning(
         image,
         image_version.as_deref(),
-        current_uses_fast_path,
         &rebuild_command(profile_arg, strict),
     ) {
         eprintln!("{warning}");
@@ -24,18 +22,15 @@ pub(crate) async fn warn_if_image_version_mismatch(
 
 pub(crate) async fn warn_if_image_version_mismatch_best_effort(
     image: &str,
-    current_uses_fast_path: Option<bool>,
     profile_arg: &str,
     strict: bool,
 ) {
-    let _ =
-        warn_if_image_version_mismatch(image, current_uses_fast_path, profile_arg, strict).await;
+    let _ = warn_if_image_version_mismatch(image, profile_arg, strict).await;
 }
 
 pub(crate) fn version_warning(
     image: &str,
     image_version: Option<&str>,
-    current_uses_fast_path: Option<bool>,
     rebuild_command: &str,
 ) -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
@@ -45,12 +40,10 @@ pub(crate) fn version_warning(
             "warning: image `{image}` was built with dcc {version}, but current dcc is {current}; \
              rebuild the image with `{rebuild_command}`"
         )),
-        None if current_uses_fast_path == Some(true) => None,
-        None if current_uses_fast_path == Some(false) => Some(format!(
+        None => Some(format!(
             "warning: image `{image}` does not record the dcc version it was built with; \
              rebuild the image with `{rebuild_command}`"
         )),
-        None => None,
     }
 }
 
@@ -87,39 +80,24 @@ mod tests {
     #[test]
     fn version_warning_none_when_versions_match() {
         assert_eq!(
-            version_warning(
-                "img",
-                Some(env!("CARGO_PKG_VERSION")),
-                Some(false),
-                "dcc build"
-            ),
+            version_warning("img", Some(env!("CARGO_PKG_VERSION")), "dcc build"),
             None
         );
     }
 
     #[test]
     fn version_warning_reports_explicit_mismatch() {
-        let warning = version_warning("img", Some("0.0.1"), Some(true), "dcc build").unwrap();
+        let warning = version_warning("img", Some("0.0.1"), "dcc build").unwrap();
         assert!(warning.contains("built with dcc 0.0.1"), "{warning}");
         assert!(warning.contains(env!("CARGO_PKG_VERSION")), "{warning}");
         assert!(warning.contains("dcc build"), "{warning}");
     }
 
     #[test]
-    fn version_warning_reports_missing_label_for_full_build() {
-        let warning = version_warning("img", None, Some(false), "dcc build").unwrap();
+    fn version_warning_reports_missing_label() {
+        let warning = version_warning("img", None, "dcc build").unwrap();
         assert!(warning.contains("does not record"), "{warning}");
         assert!(warning.contains("dcc build"), "{warning}");
-    }
-
-    #[test]
-    fn version_warning_suppresses_missing_label_for_fast_path() {
-        assert_eq!(version_warning("img", None, Some(true), "dcc build"), None);
-    }
-
-    #[test]
-    fn version_warning_suppresses_missing_label_when_current_config_unknown() {
-        assert_eq!(version_warning("img", None, None, "dcc build"), None);
     }
 
     #[test]

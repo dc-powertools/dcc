@@ -430,7 +430,6 @@ impl RuntimePlan {
         let container_id = ContainerId::new(workspace, profile);
         let container = ContainerName::resolve(config.name.as_deref(), &container_id);
         let image_tag = container_id.as_image_tag();
-        let current_uses_fast_path = crate::build::uses_fast_path(&config);
 
         // Ensure cache directory exists, then create any cache subdirectories
         // referenced as bind-mount sources (e.g. ${localCacheFolder}/node_modules).
@@ -438,13 +437,8 @@ impl RuntimePlan {
         cache_dir.ensure_exists()?;
         rt_dir.materialize()?;
 
-        version::warn_if_image_version_mismatch(
-            image_tag.as_str(),
-            Some(current_uses_fast_path),
-            &opts.profile_arg,
-            opts.strict,
-        )
-        .await?;
+        version::warn_if_image_version_mismatch(image_tag.as_str(), &opts.profile_arg, opts.strict)
+            .await?;
 
         // Read runtime contributions from the image's devcontainer.metadata label.
         let feature_runtime = match docker::inspect_image_label(image_tag.as_str())
