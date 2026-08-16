@@ -20,6 +20,12 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 ## Known Global Dead Ends
 
+- Baking startup hook scripts (`postStartCommand`) into the image — blocked because
+  `apply_substitutions` resolves `${localEnv:VAR}` in `lifecycle` from the invoking `dcc`
+  process's environment, so hook text is only fully resolvable at run time. Baking would
+  either freeze the builder's environment into the image or require a second substitution
+  engine inside the container. See
+  `readme/decisions/0004-embed-supervisor-in-image.md` Q3.
 - Baking a seed store into the image (extra build stage staging state tarballs) — rejected
   for image overhead; the image already holds the data at its natural path. See
   `readme/decisions/0001-state-seeding-from-image.md`.
@@ -31,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-13 | Decided the supervisor delivery model (T-0028): **bake the supervisor scripts into the image, keep `postStartCommand` hooks on the `rt` bind mount**, and gate compatibility on `dcc.version` semver (patch compatible; major/minor or missing label refuses). Hooks cannot be baked because `${localEnv:VAR}` in `postStartCommand` is only resolvable at run time. Implementation split to T-0029/T-0030. | `readme/decisions/0004-embed-supervisor-in-image.md` |
 | 2026-08-13 | Moved startup sequencing and runtime lifecycle hooks into the in-container supervisor (T-0025): `--mode`/`--expect-command`/`--start-hooks` entrypoint args, supervisor-run `postStartCommand` from host-generated scripts, single `bootstrap-status` file with per-waiter FIFO readiness handshake (no polling, no package dependency), `dcc-exec` register-then-wait, `arrived` variable + 10 s one-shot orphan reaper replacing the time-based grace; `postAttachCommand` stays host-side with cold-start `wait-ready`. | `readme/tasks/README.md#tasks` |
 | 2026-07-21 | Seeded declared `customizations.dcc.state` from the image on build (hydration container, `dcc.seed` label, `.dcc/<profile>.seed.json` ledger, `--reseed-state`, runtime guard). | `readme/tasks/README.md#tasks` |
 | 2026-07-21 | Guarded `customizations.dcc.state` against critical container paths (two-tier subtree/exact reserved-path guards at load and post-`containerEnv` resolution). | `readme/tasks/README.md#tasks` |
@@ -60,6 +67,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - Task catalog: `readme/tasks/README.md`
 - State seeding decision: `readme/decisions/0001-state-seeding-from-image.md`
 - UID remap decision: `readme/decisions/0002-update-remote-user-uid-in-build-stage.md`
+- Remove image fast path decision: `readme/decisions/0003-remove-image-fast-path.md`
+- Supervisor delivery model decision: `readme/decisions/0004-embed-supervisor-in-image.md`
 - Rewrite quality record: `readme/quality/0004-dcc-rewrite-quality.md`
 - UID remap quality record: `readme/quality/0026-update-remote-user-uid-quality.md`
 - Runtime threat model: `readme/threat-models/0004-dcc-runtime.md`
@@ -75,6 +84,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-07-14
-- Completed repository-changing tasks since that pass: 21
-- Next pass due: 2026-08-13 or after 10 completed repository-changing tasks, whichever
-  comes first
+- Completed repository-changing tasks since that pass: 23
+- Next pass due: **Overdue** (was due 2026-08-13 or after 10 completed repository-changing
+  tasks; both thresholds are passed). Run a consistency and pruning pass before or
+  alongside the next task.

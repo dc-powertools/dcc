@@ -65,6 +65,13 @@ is retained: it keeps supervisor scripts read-only from inside the container and
 constraint that *forbade* installing anything, which is what makes D1's FIFO viable
 without a fallback.
 
+> **Update (T-0028):** this paragraph is superseded by
+> `readme/decisions/0004-embed-supervisor-in-image.md`. The supervisor *is* now baked into
+> the image; both reasons given above were discarded (tamper-resistance is a declared
+> non-goal, and version skew is handled by a semver compatibility gate instead). Startup
+> hook scripts stay on the `rt` mount — not for the reasons above, but because
+> `${localEnv:VAR}` in `postStartCommand` is only resolvable at run time.
+
 ## D1 — Single `bootstrap-status` File, With An Event-Driven Wait
 
 The supervisor's startup phase ends by writing exactly one file:
@@ -172,6 +179,13 @@ runtime hook left by a previous `dcc exec`.
 With the fast path gone (D0), hook scripts could alternatively be baked into the image.
 They are kept in the `rt` mount anyway: hooks change whenever `devcontainer.json` changes,
 and regenerating a directory is far cheaper than an image rebuild per hook edit.
+
+> **Update (T-0028):** the conclusion (hooks stay on the `rt` mount) still holds, but the
+> reason above is not the operative one. T-0028 accepted that a `devcontainer.json` edit
+> may require a rebuild, so hook volatility is no longer a justification. Hooks stay
+> host-delivered because `postStartCommand` may contain `${localEnv:VAR}`, which reads the
+> invoking user's host environment and therefore cannot be resolved at image build time.
+> See `readme/decisions/0004-embed-supervisor-in-image.md` Q3.
 
 ### Object-form (parallel) hooks
 
