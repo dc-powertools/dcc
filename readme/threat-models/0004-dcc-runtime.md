@@ -5,13 +5,13 @@
 - Change: Schema-compatible config, state mounts, in-container lifecycle supervisor,
   unsafe runtime controls, and durable container lifecycle commands.
 - Assets or data: host workspace, `.dcc/<profile>` cache, host environment variables,
-  Docker daemon access, generated build context, container filesystem state, bind-mounted
-  supervisor scripts (read-only).
+  Docker daemon access, generated build context, container filesystem state, image-baked
+  supervisor scripts, bind-mounted startup hook scripts (read-only).
 - Users, systems, or agents involved: local developers, coding agents, Docker CLI,
   devcontainer configs, devcontainer Features.
 - Trust boundaries: repository config to host process, host process to Docker daemon,
   in-container supervisor (PID 1) to container-side code, read-only bind mount of
-  supervisor scripts, bind mounts between host and container.
+  startup hook scripts, bind mounts between host and container.
 
 ## What Can Go Wrong
 
@@ -21,7 +21,8 @@
 | State path points at system/runtime paths or overlaps workspace internals. | Container breakage, data leakage, or cache corruption. | Medium | State validation rejects root, relative, unresolved, duplicate/conflicting, overlapping, system/runtime, and reserved workspace paths. | None known. |
 | Generated supervisor or hook scripts quote user data incorrectly. | Command injection or broken lifecycle behavior. | Medium | Supervisor and hook scripts are small POSIX `sh`; hook execution uses structured lifecycle command handling and unit tests. | Live Docker coverage pending. |
 | Lifecycle hooks run in the wrong phase or user context. | Unexpected code execution or persistent state drift. | Medium | Build-prep, startup, and attach hooks are scoped separately; hooks run as `containerUser` from `workspaceFolder`. | Live Docker coverage pending. |
-| Container-side code corrupts `dcc` lifecycle state to keep a container alive, force premature teardown, or stall peers. | Misbehaving container; broken teardown or reuse. | Medium | Lifecycle state lives in a container-private tmpfs (`/run/dcc`) owned by the PID 1 supervisor, not host-backed. The supervisor scripts are bind-mounted read-only. Failures cannot escape the container; remediation is `dcc stop --kill`. | Live Docker coverage pending. |
+| Container-side code corrupts `dcc` lifecycle state to keep a container alive, force premature teardown, or stall peers. | Misbehaving container; broken teardown or reuse. | Medium | Lifecycle state lives in a container-private tmpfs (`/run/dcc`) owned by the PID 1 supervisor, not host-backed. Failures cannot escape the container; remediation is `dcc stop --kill`. | Live Docker coverage pending. |
+| A root container user overwrites the baked supervisor scripts to subvert its own lifecycle. | Misbehaving container; broken teardown or reuse. | Low | **Explicitly out of scope** (T-0028). Per T-0028 Q2 this is not an attack path dcc defends: a root user inside the container can already subvert its own lifecycle by other means, and the consequences cannot escape the container. Remediation is `dcc stop --kill`. Prior to T-0028 the scripts were bind-mounted read-only; that property was found not to be load-bearing. | Accepted, not mitigated. See `readme/decisions/0004-embed-supervisor-in-image.md`. |
 | Logs expose secrets from env or commands. | Secret disclosure. | Low | Project standards prohibit logging secrets. | Review needed when debug output changes. |
 
 ## Mitigations

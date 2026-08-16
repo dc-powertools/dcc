@@ -7,6 +7,13 @@ Deliverable of sub-task T-0024-R1. Parent brief:
 
 ### D1 — Supervisor is a POSIX shell script, delivered by read-only bind mount
 
+> **Superseded by `readme/decisions/0004-embed-supervisor-in-image.md` (T-0028).** The
+> supervisor scripts are now baked into the image; only `postStartCommand` hook scripts
+> remain on the `rt` bind mount. The deciding constraint below (the image fast path) was
+> removed by T-0027, and the tamper-resistance rationale was explicitly discarded as a
+> non-goal. The POSIX `sh` language choice recorded at the end of this section still
+> stands. Retained for history; do not cite as current rationale.
+
 **Blocker found in research:** `uses_fast_path` (`src/build.rs`) pulls the user's image and
 `docker tag`s it without running `build_dcc_stage`, so `generated_assets()` never reach the
 image. A supervisor baked into the image would be **absent from every fast-path container**.
@@ -15,7 +22,7 @@ image. A supervisor baked into the image would be **absent from every fast-path 
 (`src/supervisor.rs`), write them to a host directory `.dcc/<profile>.rt/`, and bind-mount
 that directory **read-only** into the container at `/usr/local/share/dcc/rt`.
 
-Rationale:
+Rationale (as recorded at the time; first two points no longer hold):
 
 - Works identically on the fast path and the full build path; no image rebuild required.
 - Read-only: container-side code cannot tamper with the supervisor itself. The T-0023
