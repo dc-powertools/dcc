@@ -389,9 +389,12 @@ declared state path is invisible at runtime. `dcc build` seeds declared state
 from the image (`src/seed.rs`): it runs one short-lived container on the
 finished image with the state mounts **not** applied and the host state root
 mounted at `/dcc-seed`, then copies each declared path's image content into the
-host state directory with `tar` inside the container (preserving uid, gid, mode,
-and symlinks). A host-side `docker cp` is deliberately avoided because it would
-land every file owned by the invoking host user.
+host state directory with `tar` inside the container. Modes and symlinks are
+preserved; for non-root `containerUser` profiles, hydration re-owns copied state
+to that user so bind-mounted state remains writable even when Dockerfile layers
+created the content before `updateRemoteUserUID` remapped the user. A host-side
+`docker cp` is deliberately avoided because it would land every file owned by
+the invoking host user.
 
 A `dcc.seed` image label (alongside `devcontainer.metadata` and `dcc.version`)
 carries the resolved seed manifest — per entry the container path, kind, and
@@ -966,10 +969,11 @@ occupies the target gid it keeps the old gid and still updates the uid. A
 `RUN` is ever emitted for root profiles.
 
 Because the remap is baked into the image at build time, state hydration
-(`src/seed.rs`) — which runs as root in a one-shot container and preserves image
-uids via `tar` — already sees the remapped `/etc/passwd`, so seeded content is
-owned by the remapped user by construction. No extra chown pass or reordering of
-T-0022's hydration is needed.
+(`src/seed.rs`) sees the remapped `/etc/passwd`. Hydration still re-owns copied
+state for non-root `containerUser` profiles, because a Dockerfile can create and
+`chown` state paths before the remap step, leaving those files with the user's
+old numeric uid. This keeps declared state writable without reordering T-0022's
+hydration.
 
 **`.dcc-features/<id>/install.sh`** and **`.dcc-features/<id>/devcontainer-feature.json`**
 for each feature.

@@ -249,6 +249,7 @@ pub(crate) fn hydration_container_args(
     image: &str,
     state_root: &str,
     entries: &[SeedManifestEntry],
+    owner: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "--rm".to_string(),
@@ -259,7 +260,7 @@ pub(crate) fn hydration_container_args(
         image.to_string(),
         "sh".to_string(),
         "-c".to_string(),
-        hydration_copy_script(entries),
+        hydration_copy_script(entries, owner),
     ];
     // Ensure the top-level /dcc-seed exists even when there are no entries.
     let _ = &mut args;
@@ -270,30 +271,64 @@ pub(crate) fn hydration_container_args(
 /// is copied with `tar` so ownership, mode, and symlinks are preserved. The
 /// destination is `/dcc-seed/<normalized>`, where `<normalized>` is the
 /// container path with the leading `/` stripped.
-fn hydration_copy_script(entries: &[SeedManifestEntry]) -> String {
+fn hydration_copy_script(entries: &[SeedManifestEntry], owner: Option<&str>) -> String {
     let mut lines = vec!["set -eu".to_string()];
     for entry in entries {
-        let container_path = &entry.path;
-        let rel = container_path.trim_start_matches('/');
-        let dst_dir = format!("{SEED_MOUNT_DST}/{rel}");
+        let container_path_raw = &entry.path;
+        let rel_raw = container_path_raw.trim_start_matches('/');
+        let dst_path_raw = format!("{SEED_MOUNT_DST}/{rel_raw}");
+        let container_path = sh_quote(container_path_raw);
+        let rel = sh_quote(rel_raw);
+        let dst_path = sh_quote(&dst_path_raw);
         // For directory state, copy the whole tree. For file state, copy the
         // single file (preserving its parent layout under /dcc-seed).
         match entry.kind {
             SeedKind::Directory => {
-                lines.push(format!(
-                    "if [ -e '{container_path}' ]; then mkdir -p '{dst_dir}' && \
-                     tar -C / -cf - -- '{rel}' | tar -C '{SEED_MOUNT_DST}' -xf -; fi"
-                ));
+                let mut copy = format!(
+                    "if [ -e {container_path} ]; then mkdir -p {dst_path} && \
+                     tar -C / -cf - -- {rel} | tar -C {seed_mount} -xf -",
+                    seed_mount = sh_quote(SEED_MOUNT_DST),
+                );
+                if let Some(owner) = owner {
+                    copy.push_str(&format!(" && chown -R {} {dst_path}", sh_quote(owner)));
+                }
+                copy.push_str("; fi");
+                lines.push(copy);
             }
             SeedKind::File => {
-                lines.push(format!(
-                    "if [ -e '{container_path}' ]; then mkdir -p '{dst_dir}' && \
-                     tar -C / -cf - -- '{rel}' | tar -C '{SEED_MOUNT_DST}' -xf -; fi"
-                ));
+                let dst_parent = rel_raw
+                    .rsplit_once('/')
+                    .map(|(parent, _)| format!("{SEED_MOUNT_DST}/{parent}"))
+                    .unwrap_or_else(|| SEED_MOUNT_DST.to_string());
+                let dst_parent = sh_quote(&dst_parent);
+                let mut copy = format!(
+                    "if [ -e {container_path} ]; then mkdir -p {dst_parent} && \
+                     tar -C / -cf - -- {rel} | tar -C {seed_mount} -xf -",
+                    seed_mount = sh_quote(SEED_MOUNT_DST),
+                );
+                if let Some(owner) = owner {
+                    copy.push_str(&format!(" && chown {} {dst_path}", sh_quote(owner)));
+                }
+                copy.push_str("; fi");
+                lines.push(copy);
             }
         }
     }
     lines.join("; ")
+}
+
+fn sh_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Computes a SHA-256 hex digest of a host path's content. Directories are
@@ -717,7 +752,7 @@ mod tests {
                 digest: None,
             },
         ];
-        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &entries);
+        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &entries, Some("dev"));
         assert!(args.contains(&"--rm".to_string()));
         assert!(args.contains(&"-u".to_string()));
         assert!(args.contains(&"root".to_string()));
@@ -731,11 +766,13 @@ mod tests {
         assert!(script.contains("tar -C / -cf -"), "got: {script}");
         assert!(script.contains("home/dev/.cargo"), "got: {script}");
         assert!(script.contains("home/dev/.npmrc"), "got: {script}");
+        assert!(script.contains("chown -R 'dev'"), "got: {script}");
+        assert!(script.contains("chown 'dev'"), "got: {script}");
     }
 
     #[test]
     fn hydration_container_args_no_state_entries_is_just_set_eu() {
-        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &[]);
+        let args = hydration_container_args("img", "/ws/.dcc/dev/state", &[], None);
         let script = args.last().unwrap();
         assert_eq!(script, "set -eu");
     }

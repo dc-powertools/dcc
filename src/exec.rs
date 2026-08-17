@@ -501,7 +501,13 @@ impl RuntimePlan {
         // stale .dcc); hydrate only entries with no ledger record at all (the wiped-
         // .dcc recovery case). Content re-digesting is deliberately off the hot path.
         if !state.is_empty() {
-            runtime_seed_guard(&cache_dir, image_tag.as_str(), &state).await;
+            runtime_seed_guard(
+                &cache_dir,
+                image_tag.as_str(),
+                &state,
+                &config.container_user,
+            )
+            .await;
         }
 
         let state_mounts = cache_dir.plan_state_mounts(&state);
@@ -1007,7 +1013,12 @@ fn resolve_runtime_state(
 /// hydrates only entries with no ledger record at all (the wiped-`.dcc` recovery
 /// case). Content re-digesting is off the hot path by design. Failures are
 /// warnings, not hard errors, so a stale ledger never blocks the runtime.
-async fn runtime_seed_guard(cache_dir: &CacheDir, image: &str, state: &[config::StateEntry]) {
+async fn runtime_seed_guard(
+    cache_dir: &CacheDir,
+    image: &str,
+    state: &[config::StateEntry],
+    container_user: &str,
+) {
     let ledger_path = crate::seed::SeedLedger::path(cache_dir);
     let ledger = match crate::seed::SeedLedger::read(&ledger_path) {
         Ok(l) => l,
@@ -1070,7 +1081,8 @@ async fn runtime_seed_guard(cache_dir: &CacheDir, image: &str, state: &[config::
     }
     let state_root_str = state_root.to_string_lossy().into_owned();
     let entries: Vec<crate::seed::SeedManifestEntry> = manifest.entries.clone();
-    let args = crate::seed::hydration_container_args(image, &state_root_str, &entries);
+    let owner = (container_user != "root").then_some(container_user);
+    let args = crate::seed::hydration_container_args(image, &state_root_str, &entries, owner);
     if let Err(e) = crate::docker::run_to_completion(&args).await {
         eprintln!("warning: state hydration from image `{image}` failed: {e:#}");
         return;

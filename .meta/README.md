@@ -39,6 +39,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 | --- | --- | --- |
 | 2026-08-13 | Relocated the framework documentation tree from `readme/` to `.meta/` (T-0033) and updated every internal link and reference, including root `AGENTS.md` and two Rust doc comments. The reusable core is now `.meta/meta/`. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Updated the local commit trailer rule (T-0035) so `Co-Authored-By` names the actual model and coding harness, with Codex GPT-5 as this session's example. | `.meta/tasks/README.md#tasks` |
+| 2026-08-17 | Fixed the remaining Docker smoke regressions from the latest CI run (T-0036): generated startup hooks now preserve failing status under POSIX `sh`, non-root hydrated state is re-owned for writability, and the durable reuse smoke uses `dcc run --keep` for named commands. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Fixed the latest CI Docker smoke failure (T-0034) by placing supervisor entrypoint args after the image in `docker run` argv for runtime and build-prep containers. | `.meta/tasks/README.md#tasks` |
 | 2026-08-13 | Baked the supervisor scripts into the image (T-0029), added a semver compatibility gate on `dcc.version` (T-0030), and removed vestigial build-prep hook assets (T-0031). | `.meta/decisions/0004-embed-supervisor-in-image.md` |
 | 2026-08-13 | Decided the supervisor delivery model (T-0028): **bake the supervisor scripts into the image, keep `postStartCommand` hooks on the `rt` bind mount**, and gate compatibility on `dcc.version` semver (patch compatible; major/minor or missing label refuses). Hooks cannot be baked because `${localEnv:VAR}` in `postStartCommand` is only resolvable at run time. Implementation split to T-0029/T-0030. | `.meta/decisions/0004-embed-supervisor-in-image.md` |
@@ -68,6 +69,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-13
-- Completed repository-changing tasks since that pass: 2
+- Completed repository-changing tasks since that pass: 3
 - Next pass due: 2026-09-12 or after 10 completed repository-changing tasks, whichever
   occurs first.
