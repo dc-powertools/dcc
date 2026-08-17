@@ -140,7 +140,7 @@ fn generate_dockerfile_inner(
     // updateRemoteUserUID remap (Linux only, non-root named user, enabled by
     // default). Baked into the image as a root RUN that rewrites the user's
     // uid/gid to the host's so bind mounts are writable. See `src/uid.rs` and
-    // `readme/tasks/0026-r1-uid-remap-design.md`. Runs immediately after user
+    // `.meta/tasks/0026-r1-uid-remap-design.md`. Runs immediately after user
     // creation so features install into the already-remapped home ownership.
     if let Some(crate::uid::RemapPlan::Remap { uid, gid, user }) = remap {
         lines.push(crate::uid::remap_dockerfile_block(*uid, *gid, user));
