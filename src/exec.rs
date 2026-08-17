@@ -145,7 +145,7 @@ pub(crate) async fn start(
             &plan.config.container_user,
             &plan.config.workspace_folder,
             &[
-                format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+                format!("{}/dcc-ctl", supervisor::DCC_SHARE),
                 "mode".to_string(),
                 "durable".to_string(),
             ],
@@ -252,7 +252,7 @@ async fn execute_foreground(
                     &plan.config.container_user,
                     &plan.config.workspace_folder,
                     &[
-                        format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+                        format!("{}/dcc-ctl", supervisor::DCC_SHARE),
                         "mode".to_string(),
                         "durable".to_string(),
                     ],
@@ -304,7 +304,7 @@ async fn execute_foreground(
         }
         // Run the user command through the dcc-exec wrapper so the supervisor can
         // register/deregister it. The wrapper exits with the command's status.
-        let mut wrapped = vec![format!("{}/dcc-exec", supervisor::RT_MOUNT)];
+        let mut wrapped = vec![format!("{}/dcc-exec", supervisor::DCC_SHARE)];
         wrapped.extend(plan.command_args.iter().cloned());
         docker::exec_foreground(
             &container_name,
@@ -437,8 +437,12 @@ impl RuntimePlan {
         cache_dir.ensure_exists()?;
         rt_dir.materialize()?;
 
-        version::warn_if_image_version_mismatch(image_tag.as_str(), &opts.profile_arg, opts.strict)
-            .await?;
+        version::ensure_image_version_compatible(
+            image_tag.as_str(),
+            &opts.profile_arg,
+            opts.strict,
+        )
+        .await?;
 
         // Read runtime contributions from the image's devcontainer.metadata label.
         let feature_runtime = match docker::inspect_image_label(image_tag.as_str())
@@ -638,9 +642,10 @@ impl RuntimePlan {
             args.push(mount.clone());
         }
 
-        // Read-only bind mount of the supervisor scripts. Lives outside the /cache mount
-        // (a sibling of the cache root) so container-side code can execute but not modify
-        // them.
+        // Read-only bind mount of the startup hook scripts (only `start-hooks/`
+        // lives here; the supervisor scripts are baked into the image). Lives
+        // outside the /cache mount (a sibling of the cache root) so container-side
+        // code can execute but not modify them.
         args.push("--mount".into());
         args.push(rt_dir.mount_arg());
 
@@ -660,7 +665,7 @@ impl RuntimePlan {
         // registers with the supervisor and waits for readiness before running.
         args.extend([
             "--entrypoint".into(),
-            format!("{}/dcc-supervisor", supervisor::RT_MOUNT),
+            format!("{}/dcc-supervisor", supervisor::DCC_SHARE),
         ]);
 
         // Emit postStartCommand hook scripts (feature hooks first in installation
@@ -770,8 +775,8 @@ impl RuntimePlan {
                 dbg.push(format!("  {}", describe_mount(m)));
             }
             dbg.push(format!(
-                "  entry  {} (PID 1 supervisor, mode={mode})",
-                supervisor::RT_MOUNT,
+                "  entry  {}/dcc-supervisor (PID 1 supervisor, mode={mode})",
+                supervisor::DCC_SHARE,
             ));
 
             dbg.push(format!(
@@ -867,7 +872,7 @@ async fn wait_ready(plan: &RuntimePlan, container: &str) -> anyhow::Result<()> {
         &plan.config.container_user,
         &plan.config.workspace_folder,
         &[
-            format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+            format!("{}/dcc-ctl", supervisor::DCC_SHARE),
             "wait-ready".to_string(),
         ],
     )

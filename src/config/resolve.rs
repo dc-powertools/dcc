@@ -854,7 +854,7 @@ mod tests {
         for path in [
             "/usr/local/share/dcc",
             "/usr/local/share/dcc/bin",
-            "/usr/local/share/dcc/hooks/build-prep/010-001-project.sh",
+            "/usr/local/share/dcc/dcc-supervisor",
         ] {
             let err = reject_dir(path);
             assert!(

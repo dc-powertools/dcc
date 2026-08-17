@@ -372,7 +372,7 @@ post-`${containerEnv:VAR}` resolution:
   does not block the other. `/etc` is a subtree block because empty-file state
   corrupts `passwd`/`group`/`nsswitch.conf`; the error names the lifecycle-hook
   alternative. `/cache` is the profile cache mount itself (self-nesting), and
-  `/usr/local/share/dcc` holds `dcc`'s bind-mounted supervisor scripts and build-prep hook assets.
+  `/usr/local/share/dcc` holds `dcc`'s baked supervisor scripts and bind-mounted startup hook assets.
 - **Exact** (bare path only; subdirectories stay valid): `/usr`, `/var`,
   `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`. Legitimate
   cache targets such as `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`,
@@ -539,10 +539,15 @@ automatic teardown until `dcc stop`.
 Lifecycle state — durable/one-shot mode, the active-command set, and the stopping flag —
 is owned by the PID 1 supervisor and held in a container-private tmpfs at `/run/dcc`
 (never host-backed). Docker labels (`dcc.container_id=<container-id>`) are used only for
-stable container lookup. The supervisor scripts are generated from a single Rust source
-of truth (`src/supervisor.rs`), materialized into a host sibling directory
-`<workspace>/.dcc/<profile>.rt/`, and bind-mounted **read-only** at
-`/usr/local/share/dcc/rt`. Container-side code can execute them but cannot modify them.
+stable container lookup. The supervisor scripts (`dcc-supervisor`, `dcc-ctl`,
+`dcc-exec`) are generated from a single Rust source of truth (`src/supervisor.rs`) and
+**baked into the image** at `/usr/local/share/dcc/` via the build context (decision 0004).
+Every dcc-built image carries them, version-stamped by the `dcc.version` label; the CLI
+refuses to drive an image whose major or minor version differs (patch drift is
+compatible). Startup hook scripts are **not** baked — they are host-generated per launch
+into `<workspace>/.dcc/<profile>.rt/start-hooks/`, bind-mounted read-only at
+`/usr/local/share/dcc/rt`, and passed via `--start-hooks`, because `postStartCommand` may
+contain `${localEnv:VAR}` which is only resolvable at run time.
 
 **Phase 1 — pre-flight checks and argument construction**
 
@@ -588,15 +593,15 @@ docker run
   --mount <spec> ...         (mounts after variable substitution)
   -v <workspace-root>:/workspace
   -v <host-cache-path>:/cache
-  --mount <host>/.dcc/<profile>.rt:/usr/local/share/dcc/rt:ro
+  --mount <host>/.dcc/<profile>.rt:/usr/local/share/dcc/rt:ro  (startup hooks only)
   --tmpfs /workspace/.dcc
   --tmpfs /run/dcc:mode=1777  (supervisor lifecycle state; container-private)
-  --entrypoint /usr/local/share/dcc/rt/dcc-supervisor
+  --entrypoint /usr/local/share/dcc/dcc-supervisor  (baked into the image)
   <image-tag> --mode oneshot|durable [--expect-command] [--start-hooks <rt>/start-hooks]
 ```
 
-The container's PID 1 is the `dcc` lifecycle supervisor, a POSIX `sh` script
-bind-mounted read-only from the host. It owns the durable/one-shot mode, startup
+The container's PID 1 is the `dcc` lifecycle supervisor, a POSIX `sh` script baked into
+the image at `/usr/local/share/dcc/dcc-supervisor`. It owns the durable/one-shot mode, startup
 sequencing, `postStartCommand` hook execution, a readiness handshake, the
 active-command set, and the teardown decision. This is deliberate: making a user
 command PID 1 and attaching to it fails for commands that exit quickly (e.g. `ls`)
@@ -654,7 +659,7 @@ container; it does not leave a background host-side port-forwarding process behi
 
 ```
 docker exec -i [-t] -u <containerUser> -w <workspaceFolder> <container-name> \
-  /usr/local/share/dcc/rt/dcc-exec <command...>
+  /usr/local/share/dcc/dcc-exec <command...>
 ```
 
 The foreground command runs via `docker exec` through the `dcc-exec` wrapper, with

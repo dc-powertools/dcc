@@ -65,7 +65,7 @@ pub(crate) async fn run(
     };
 
     let Some(arg) = script_arg else {
-        version::warn_if_image_version_mismatch(image_tag.as_str(), opts.profile_arg, opts.strict)
+        version::ensure_image_version_compatible(image_tag.as_str(), opts.profile_arg, opts.strict)
             .await?;
         for line in format_script_list(&config.scripts, &feature_runtime.feature_scripts) {
             println!("{line}");
