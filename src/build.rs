@@ -660,11 +660,10 @@ fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
         "--entrypoint".to_string(),
         format!("{}/dcc-supervisor", supervisor::DCC_SHARE),
     ]);
-    // Entrypoint arguments: --mode durable (no --expect-command, no
-    // --start-hooks — build-prep hooks run host-side, not via the supervisor).
-    args.push("--mode".to_string());
-    args.push("durable".to_string());
-    args.push(input.image.to_string());
+    // Image tag must come after all Docker flags; supervisor entrypoint
+    // arguments follow the image tag. Build-prep hooks run host-side, so there
+    // is no --expect-command or --start-hooks.
+    supervisor::append_run_image_and_args(&mut args, input.image, "durable", false, None);
     args
 }
 
@@ -1011,6 +1010,12 @@ mod tests {
             &"type=bind,src=/workspace/.dcc/dev/state/home/dev/.cargo,dst=/home/dev/.cargo"
                 .to_string()
         ));
+        let image_pos = args.iter().position(|arg| arg == "dcc-id").unwrap();
+        let mode_pos = args.iter().position(|arg| arg == "--mode").unwrap();
+        assert!(
+            image_pos < mode_pos,
+            "supervisor entrypoint args must come after the image: {args:?}"
+        );
         assert!(!args.contains(&"--no-cache".to_string()));
         assert!(!args.contains(&"--update".to_string()));
     }

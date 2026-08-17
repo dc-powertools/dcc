@@ -693,20 +693,17 @@ impl RuntimePlan {
                 .context("failed to write startup hook scripts")?;
         }
 
-        // Entrypoint arguments after the image tag are passed to the supervisor.
-        args.push("--mode".into());
-        args.push(mode.into());
-        // One-shot containers expect a command; durable (dcc start / --keep) do not.
-        if !opts.keep {
-            args.push("--expect-command".into());
-        }
-        if has_start_hooks {
-            args.push("--start-hooks".into());
-            args.push(rt_dir.start_hooks_container_path());
-        }
-
-        // Image tag (must come after all flags). Entrypoint args follow it.
-        args.push(image_tag.as_str().to_owned());
+        // Image tag must come after all Docker flags; supervisor entrypoint
+        // arguments follow the image tag.
+        let start_hooks_container_path =
+            has_start_hooks.then(|| rt_dir.start_hooks_container_path());
+        supervisor::append_run_image_and_args(
+            &mut args,
+            image_tag.as_str(),
+            mode,
+            !opts.keep,
+            start_hooks_container_path.as_deref(),
+        );
 
         // Allocate a TTY for the foreground command only when our own stdin is a
         // terminal, so non-interactive use (pipes, CI) still works.
