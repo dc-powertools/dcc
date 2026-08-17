@@ -372,7 +372,8 @@ post-`${containerEnv:VAR}` resolution:
   does not block the other. `/etc` is a subtree block because empty-file state
   corrupts `passwd`/`group`/`nsswitch.conf`; the error names the lifecycle-hook
   alternative. `/cache` is the profile cache mount itself (self-nesting), and
-  `/usr/local/share/dcc` holds `dcc`'s baked supervisor scripts and bind-mounted startup hook assets.
+  `/usr/local/share/dcc` holds `dcc`'s baked supervisor scripts; startup hook
+  assets are mounted beneath `/usr/local/share/dcc/rt` for each launch.
 - **Exact** (bare path only; subdirectories stay valid): `/usr`, `/var`,
   `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`. Legitimate
   cache targets such as `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`,
@@ -496,10 +497,8 @@ or hooks, the generated Dockerfile is just `FROM <image>` plus the version
 
 Official `build` sources are built first as a generated base image using their
 Dockerfile, context, build args, and optional target. `dcc` then builds its own
-generated stage from that base image so user creation, Features, hook assets, and
-metadata labels remain consistent. The PID 1 supervisor scripts are not baked into the
-image — they are bind-mounted read-only from the host at runtime (see Runtime Commands),
-so they exist in every container.
+generated stage from that base image so user creation, Features, baked supervisor
+assets, and metadata labels remain consistent.
 
 When features contribute runtime properties (mounts, commands, state, hooks, or
 unsafe runtime settings), `dcc build` passes

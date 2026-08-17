@@ -64,9 +64,14 @@ Record only commands verified by successful execution in this environment.
 
 ## Documentation
 
-- Product-facing behavior belongs in `README.md`.
+- End-user overview and quick-start material belongs in `README.md`.
+- Detailed user-facing feature, configuration, command, lifecycle, and compatibility
+  guidance belongs in `docs/features.md`.
+- Human-facing maintainer setup, verification, and release guidance belongs in
+  `docs/development.md`.
 - Stable architecture notes belong in `.meta/project/architecture.md`.
-- Detailed development workflow belongs in `.meta/project/development.md`.
+- Agent-facing development workflow and commit policy belongs in
+  `.meta/project/development.md`.
 - Detailed Rust style rules belong in `.meta/project/rust-style.md`.
 - Framework-owned project memory belongs under `.meta/project/` and `.meta/tasks/`.
 - Project state must not live in unmanaged sidecar docs. Move durable project guidance

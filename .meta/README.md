@@ -37,16 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
-| 2026-08-13 | Relocated the framework documentation tree from `readme/` to `.meta/` (T-0033) and updated every internal link and reference, including root `AGENTS.md` and two Rust doc comments. The reusable core is now `.meta/meta/`. | `.meta/tasks/README.md#tasks` |
+| 2026-08-17 | Reorganized public docs (T-0039): shortened the main README into an end-user overview, added `docs/features.md` for detailed feature/configuration/runtime guidance, added `docs/development.md` for maintainer and release guidance, linked both from README, and corrected stale baked-supervisor wording. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Updated the local commit trailer rule (T-0035) so `Co-Authored-By` names the actual model and coding harness, with Codex GPT-5 as this session's example. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Fixed the latest CI Docker smoke failure (T-0038): fast one-shot commands now persist a supervisor arrival marker so PID 1 drains immediately even when polling misses the active-record lifetime. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Fixed the latest CI Docker smoke failure (T-0037): one-shot foreground executions now wait for the label-based running-container query to go empty only when the invocation created the container, matching reuse detection and avoiding durable-container delays. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Fixed the remaining Docker smoke regressions from the latest CI run (T-0036): generated startup hooks now preserve failing status under POSIX `sh`, non-root hydrated state is re-owned for writability, and the durable reuse smoke uses `dcc run --keep` for named commands. | `.meta/tasks/README.md#tasks` |
-| 2026-08-17 | Fixed the latest CI Docker smoke failure (T-0034) by placing supervisor entrypoint args after the image in `docker run` argv for runtime and build-prep containers. | `.meta/tasks/README.md#tasks` |
-| 2026-08-13 | Baked the supervisor scripts into the image (T-0029), added a semver compatibility gate on `dcc.version` (T-0030), and removed vestigial build-prep hook assets (T-0031). | `.meta/decisions/0004-embed-supervisor-in-image.md` |
-| 2026-08-13 | Decided the supervisor delivery model (T-0028): **bake the supervisor scripts into the image, keep `postStartCommand` hooks on the `rt` bind mount**, and gate compatibility on `dcc.version` semver (patch compatible; major/minor or missing label refuses). Hooks cannot be baked because `${localEnv:VAR}` in `postStartCommand` is only resolvable at run time. Implementation split to T-0029/T-0030. | `.meta/decisions/0004-embed-supervisor-in-image.md` |
-| 2026-08-13 | Moved startup sequencing and runtime lifecycle hooks into the in-container supervisor (T-0025): `--mode`/`--expect-command`/`--start-hooks` entrypoint args, supervisor-run `postStartCommand` from host-generated scripts, single `bootstrap-status` file with per-waiter FIFO readiness handshake (no polling, no package dependency), `dcc-exec` register-then-wait, `arrived` variable + 10 s one-shot orphan reaper replacing the time-based grace; `postAttachCommand` stays host-side with cold-start `wait-ready`. | `.meta/tasks/README.md#tasks` |
-| 2026-07-21 | Seeded declared `customizations.dcc.state` from the image on build (hydration container, `dcc.seed` label, `.dcc/<profile>.seed.json` ledger, `--reseed-state`, runtime guard). | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -71,6 +66,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-13
-- Completed repository-changing tasks since that pass: 5
+- Completed repository-changing tasks since that pass: 6
 - Next pass due: 2026-09-12 or after 10 completed repository-changing tasks, whichever
   occurs first.
