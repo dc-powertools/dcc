@@ -3,20 +3,20 @@
 //! The container's PID 1 is a POSIX `sh` supervisor (`dcc-supervisor`) that owns the
 //! one-shot/durable mode, startup sequencing, `postStartCommand` hook execution, a
 //! readiness handshake, the active-command set, and the teardown decision. The host
-//! CLI drives it through two helper scripts that also live in the read-only `rt` bind
-//! mount: `dcc-ctl` for control verbs and `dcc-exec` which wraps a single user command,
-//! registers it with the supervisor, waits for readiness, then runs it.
+//! CLI drives it through two helper scripts: `dcc-ctl` for control verbs and `dcc-exec`
+//! which wraps a single user command, registers it with the supervisor, waits for
+//! readiness, then runs it.
 //!
 //! All three scripts are generated from this module so there is a single source of
-//! truth. They are materialized into `<workspace>/.dcc/<profile>.rt/` on the host (a
-//! sibling of the cache root, outside the `/cache` mount) and bind-mounted read-only at
-//! `/usr/local/share/dcc/rt`. Container-side code can execute them but cannot modify
-//! them.
+//! truth. They are **baked into the image** at `/usr/local/share/dcc/` via the build
+//! context (decision 0004), so every dcc-built image carries them and they are
+//! version-stamped alongside the image by the `dcc.version` label.
 //!
 //! Startup hooks are delivered as pre-substituted executable scripts written into
-//! `<rt>/start-hooks/` by the host and passed to the supervisor via `--start-hooks`.
-//! The supervisor runs them at startup, writes a single `bootstrap-status` file, and
-//! signals any waiters blocked on per-waiter FIFOs. See T-0025 r3 design.
+//! `<workspace>/.dcc/<profile>.rt/start-hooks/` on the host, bind-mounted read-only at
+//! `/usr/local/share/dcc/rt`, and passed to the supervisor via `--start-hooks`. They
+//! are NOT baked, because `postStartCommand` may contain `${localEnv:VAR}` which is only
+//! resolvable at run time from the invoking user's environment (T-0028 Q3).
 //!
 //! Lifecycle state lives in a container-private tmpfs at `/run/dcc` (see
 //! [`STATE_DIR`]), which dies with the container and is never host-backed.
@@ -31,7 +31,16 @@ use crate::{
     workspace::Workspace,
 };
 
-/// Container-side mount point for the read-only runtime assets directory.
+/// Container-side directory where dcc bakes its runtime assets (supervisor
+/// scripts) and where the `rt` bind mount delivers startup hook scripts. The
+/// supervisor scripts live at `/usr/local/share/dcc/dcc-supervisor`,
+/// `/usr/local/share/dcc/dcc-ctl`, `/usr/local/share/dcc/dcc-exec` (baked into
+/// the image); startup hooks are bind-mounted at `/usr/local/share/dcc/rt`.
+pub(crate) const DCC_SHARE: &str = "/usr/local/share/dcc";
+
+/// Container-side mount point for the read-only startup hooks directory.
+/// Only `start-hooks/` lives here now; the supervisor scripts are baked into
+/// the image at [`DCC_SHARE`].
 pub(crate) const RT_MOUNT: &str = "/usr/local/share/dcc/rt";
 
 /// Container-side, container-private lifecycle state directory (tmpfs).
@@ -76,10 +85,13 @@ impl RtDir {
         }
     }
 
-    /// Creates the directory and writes the three supervisor scripts, executable.
-    /// Idempotent: safe to call on every launch. Clears any stale `start-hooks/`
+    /// Ensures the `rt` directory exists and clears any stale `start-hooks/`
     /// directory so a previous `dcc exec`'s hooks cannot leak into a build-prep
-    /// container (which calls this but passes no `--start-hooks`).
+    /// container (which calls this but passes no `--start-hooks`). Idempotent.
+    ///
+    /// The supervisor scripts themselves are baked into the image (decision 0004)
+    /// and are no longer written here; this directory now holds only the
+    /// per-launch `start-hooks/` scripts written by [`Self::write_start_hooks`].
     pub(crate) fn materialize(&self) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.host_path).with_context(|| {
             format!(
@@ -87,9 +99,6 @@ impl RtDir {
                 self.host_path.display()
             )
         })?;
-        write_script(&self.host_path, "dcc-supervisor", supervisor_script())?;
-        write_script(&self.host_path, "dcc-ctl", ctl_script())?;
-        write_script(&self.host_path, "dcc-exec", exec_script())?;
         // Remove any stale start-hooks from a prior launch; the host rewrites them
         // fresh on each runtime launch (see [`Self::write_start_hooks`]).
         let start_hooks = self.host_path.join("start-hooks");
@@ -176,6 +185,30 @@ impl RtDir {
             self.host_path.display()
         )
     }
+}
+
+/// Returns the three supervisor scripts as build-context assets to be baked into
+/// the image at `/usr/local/share/dcc/`. Each is `(path, content, mode)`. The
+/// `COPY .dcc-generated/ /usr/local/share/dcc/` step places them, and the
+/// `find … -exec chmod +x` step makes them executable.
+pub(crate) fn baked_supervisor_assets() -> Vec<(String, Vec<u8>, u32)> {
+    vec![
+        (
+            ".dcc-generated/dcc-supervisor".to_string(),
+            supervisor_script().into_bytes(),
+            0o755,
+        ),
+        (
+            ".dcc-generated/dcc-ctl".to_string(),
+            ctl_script().into_bytes(),
+            0o755,
+        ),
+        (
+            ".dcc-generated/dcc-exec".to_string(),
+            exec_script().into_bytes(),
+            0o755,
+        ),
+    ]
 }
 
 fn write_script(dir: &Path, name: &str, content: String) -> anyhow::Result<()> {
@@ -311,7 +344,7 @@ STOPPING="$STATE/stopping"
 STATUS="__STATUS__"
 WAITERS="__WAITERS__"
 HOOK_LOG="__HOOK_LOG__"
-SHUTDOWN="__RT_MOUNT__/dcc-shutdown"
+SHUTDOWN="__DCC_SHARE__/dcc-shutdown"
 
 mkdir -p "$ACTIVE" "$WAITERS"
 
@@ -448,7 +481,7 @@ while true; do
 done
 "#
     .replace("__STATE_DIR__", STATE_DIR)
-    .replace("__RT_MOUNT__", RT_MOUNT)
+    .replace("__DCC_SHARE__", DCC_SHARE)
     .replace("__STATUS__", BOOTSTRAP_STATUS)
     .replace("__WAITERS__", WAITERS_DIR)
     .replace("__HOOK_LOG__", HOOK_LOG)
@@ -535,6 +568,7 @@ case "${1:-}" in
 esac
 "#
     .replace("__STATE_DIR__", STATE_DIR)
+    .replace("__DCC_SHARE__", DCC_SHARE)
     .replace("__STATUS__", BOOTSTRAP_STATUS)
     .replace("__WAITERS__", WAITERS_DIR)
     .replace("__HOOK_LOG__", HOOK_LOG)
@@ -552,7 +586,7 @@ set -eu
 STATE="__STATE_DIR__"
 ACTIVE="$STATE/active"
 STOPPING="$STATE/stopping"
-CTL="__RT_MOUNT__/dcc-ctl"
+CTL="__DCC_SHARE__/dcc-ctl"
 
 if [ "$#" -lt 1 ]; then
     echo "dcc-exec: missing command argument" >&2
@@ -591,7 +625,7 @@ set -e
 exit "$status"
 "#
     .replace("__STATE_DIR__", STATE_DIR)
-    .replace("__RT_MOUNT__", RT_MOUNT)
+    .replace("__DCC_SHARE__", DCC_SHARE)
 }
 
 #[cfg(test)]
@@ -683,6 +717,31 @@ mod tests {
     }
 
     #[test]
+    fn scripts_reference_dcc_share_not_rt_mount() {
+        // The supervisor and helper scripts are baked at DCC_SHARE, not RT_MOUNT.
+        // dcc-exec calls dcc-ctl, and the supervisor calls dcc-shutdown, both at
+        // DCC_SHARE. RT_MOUNT is only for start-hooks.
+        let sup = supervisor_script();
+        let exec = exec_script();
+        assert!(
+            sup.contains(&format!("{DCC_SHARE}/dcc-shutdown")),
+            "supervisor should reference dcc-shutdown at DCC_SHARE"
+        );
+        assert!(
+            !sup.contains(&format!("{RT_MOUNT}/dcc-shutdown")),
+            "supervisor should not reference dcc-shutdown at RT_MOUNT"
+        );
+        assert!(
+            exec.contains(&format!("{DCC_SHARE}/dcc-ctl")),
+            "dcc-exec should reference dcc-ctl at DCC_SHARE"
+        );
+        assert!(
+            !exec.contains(&format!("{RT_MOUNT}/dcc-ctl")),
+            "dcc-exec should not reference dcc-ctl at RT_MOUNT"
+        );
+    }
+
+    #[test]
     fn exec_script_registers_then_waits_then_runs() {
         let s = exec_script();
         assert!(s.contains("ACTIVE"));
@@ -720,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn materialize_writes_three_executable_scripts_and_clears_start_hooks() {
+    fn materialize_creates_dir_and_clears_stale_start_hooks() {
         let tmp = tempfile::tempdir().unwrap();
         let ws = Workspace {
             root: tmp.path().to_path_buf(),
@@ -736,20 +795,34 @@ mod tests {
 
         rt.materialize().unwrap();
 
-        for name in ["dcc-supervisor", "dcc-ctl", "dcc-exec"] {
-            let path = rt.host_path.join(name);
-            assert!(path.is_file(), "{name} should exist");
-            let content = std::fs::read_to_string(&path).unwrap();
-            assert!(content.starts_with("#!/bin/sh\n"), "{name} shebang");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt as _;
-                let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-                assert!(mode & 0o111 != 0, "{name} should be executable");
-            }
-        }
+        // The rt directory exists, but the supervisor scripts are no longer
+        // written here (they are baked into the image).
+        assert!(rt.host_path.is_dir(), "rt directory should exist");
+        assert!(
+            !rt.host_path.join("dcc-supervisor").exists(),
+            "supervisor scripts are baked into the image, not written to rt"
+        );
         // The stale start-hooks directory should be gone.
         assert!(!stale.exists(), "stale start-hooks should be removed");
+    }
+
+    #[test]
+    fn baked_supervisor_assets_emits_three_executable_scripts() {
+        let assets = baked_supervisor_assets();
+        assert_eq!(assets.len(), 3, "expected three supervisor scripts");
+        let names: Vec<&str> = assets.iter().map(|(p, _, _)| p.as_str()).collect();
+        assert!(
+            names.iter().all(|p| p.starts_with(".dcc-generated/dcc-")),
+            "assets should target .dcc-generated/, got: {names:?}"
+        );
+        for (path, content, mode) in &assets {
+            let text = std::str::from_utf8(content).unwrap();
+            assert!(
+                text.starts_with("#!/bin/sh\n"),
+                "{path} should have a shebang"
+            );
+            assert_eq!(*mode, 0o755, "{path} should be executable");
+        }
     }
 
     #[test]

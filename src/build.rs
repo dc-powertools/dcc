@@ -658,7 +658,7 @@ fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
     // supervisor never drain-exits during hook execution.
     args.extend([
         "--entrypoint".to_string(),
-        format!("{}/dcc-supervisor", supervisor::RT_MOUNT),
+        format!("{}/dcc-supervisor", supervisor::DCC_SHARE),
     ]);
     // Entrypoint arguments: --mode durable (no --expect-command, no
     // --start-hooks — build-prep hooks run host-side, not via the supervisor).

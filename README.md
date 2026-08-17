@@ -161,7 +161,7 @@ config load and after `${containerEnv:VAR}` resolution:
   `/etc` is blocked as a subtree because empty-file state corrupts `passwd`,
   `group`, and `nsswitch.conf`; use a lifecycle hook to manage system files.
   `/cache` is blocked because it is the profile cache mount itself (self-nesting),
-  and `/usr/local/share/dcc` holds `dcc`'s bind-mounted supervisor scripts and hook assets.
+  and `/usr/local/share/dcc` holds `dcc`'s baked supervisor scripts and bind-mounted startup hook assets.
 - **Exact path only blocked** (specific subdirectories stay valid): `/usr`,
   `/var`, `/home`, `/root`, `/opt`, `/workspace`, `/srv`, `/mnt`, `/media`.
   For example `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`, and
@@ -333,8 +333,10 @@ supports Dockerfile/context builds with `context`, `dockerfile`, `args`, and
 
 `containerUser` defaults to `dev` when not set. Every `dcc build` generates a
 Dockerfile that stamps the image with a `dcc.version` label, so every image `dcc`
-creates is identifiable as dcc-built and its age can be checked against the running
-`dcc` binary. When `containerUser` is not `root`, `dcc` adds a `RUN` step to the
+creates is identifiable as dcc-built. Runtime commands (`exec`, `run`, `start`,
+`stop`) check this label and refuse to drive an image built by an incompatible dcc
+(major or minor version drift, or a missing label); patch-level drift is
+compatible. `dcc build` is exempt, since it is the command that fixes incompatibility. When `containerUser` is not `root`, `dcc` adds a `RUN` step to the
 Dockerfile that creates the user if it does not already exist; this step is
 cross-distro compatible (`useradd` for Debian/Ubuntu/RHEL, `adduser` for Alpine).
 When `features` are also set, the user is created first. Immediately after user

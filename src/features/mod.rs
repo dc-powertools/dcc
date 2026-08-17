@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 
 use crate::{
     config::{vars::apply_container_env_substitution, DevcontainerConfig, StateEntry},
-    lifecycle::{LifecycleCommand, LifecycleHooks, HOOKS},
+    lifecycle::{LifecycleHooks, HOOKS},
 };
 
 use self::{context::FeatureContext, oci::OciClient};
@@ -275,7 +275,6 @@ pub(crate) async fn build_context_from_base_image(
     let mut label_entries: Vec<serde_json::Value> = Vec::new();
     let mut lock_entries: Vec<LockEntry> = Vec::new();
     let mut feature_state_entries: Vec<StateEntry> = Vec::new();
-    let mut feature_build_prep_hooks: Vec<(String, LifecycleHooks)> = Vec::new();
 
     for reference in &order {
         let entry = &all[reference];
@@ -346,9 +345,6 @@ pub(crate) async fn build_context_from_base_image(
         if label_entry.as_object().is_some_and(|o| o.len() > 1) {
             label_entries.push(label_entry);
         }
-        if !entry.meta.lifecycle.is_empty() {
-            feature_build_prep_hooks.push((reference.clone(), entry.meta.lifecycle.clone()));
-        }
 
         let id = context::unique_feature_id(reference, &mut seen_ids);
 
@@ -395,7 +391,7 @@ pub(crate) async fn build_context_from_base_image(
         &feature_contexts,
         &config.container_user,
         !config.forward_ports.is_empty(),
-        &generated_assets(&feature_build_prep_hooks, &config.lifecycle),
+        &generated_assets(),
         remap,
     )
     .context("failed to assemble Docker build context")?;
@@ -621,115 +617,18 @@ fn feature_dcc_value<'a>(entry: &'a serde_json::Value, key: &str) -> Option<&'a 
         .and_then(|v| v.get(key))
 }
 
-pub(crate) fn generated_assets(
-    feature_hooks: &[(String, LifecycleHooks)],
-    project_hooks: &LifecycleHooks,
-) -> Vec<context::ContextFile> {
-    // Build-prep hook assets only. The PID 1 supervisor and command wrapper are
-    // shipped as read-only bind mounts from the host rt directory (see
-    // `src/supervisor.rs`), not baked into the image.
-    build_prep_hook_assets(feature_hooks, project_hooks)
-}
-
-fn build_prep_hook_assets(
-    feature_hooks: &[(String, LifecycleHooks)],
-    project_hooks: &LifecycleHooks,
-) -> Vec<context::ContextFile> {
-    let mut files = Vec::new();
-    type BuildPrepHookAccessor = fn(&LifecycleHooks) -> &Option<LifecycleCommand>;
-    let phases: [(&str, &str, BuildPrepHookAccessor); 3] = [
-        ("010", "onCreateCommand", |hooks: &LifecycleHooks| {
-            &hooks.on_create_command
-        }),
-        ("020", "updateContentCommand", |hooks: &LifecycleHooks| {
-            &hooks.update_content_command
-        }),
-        ("030", "postCreateCommand", |hooks: &LifecycleHooks| {
-            &hooks.post_create_command
-        }),
-    ];
-
-    for (phase_ord, phase_name, get) in phases {
-        let mut sequence = 1usize;
-        for (feature_id, hooks) in feature_hooks {
-            if let Some(cmd) = get(hooks) {
-                files.push(hook_asset(
-                    phase_ord,
-                    phase_name,
-                    sequence,
-                    &format!("feature-{}", asset_slug(feature_id)),
-                    cmd,
-                ));
-                sequence += 1;
-            }
-        }
-        if let Some(cmd) = get(project_hooks) {
-            files.push(hook_asset(phase_ord, phase_name, sequence, "project", cmd));
-        }
-    }
-
-    files
-}
-
-fn hook_asset(
-    phase_ord: &str,
-    phase_name: &str,
-    sequence: usize,
-    source: &str,
-    cmd: &LifecycleCommand,
-) -> context::ContextFile {
-    let path = format!(".dcc-generated/hooks/build-prep/{phase_ord}-{sequence:03}-{source}.sh");
-    let content = lifecycle_script(phase_name, source, cmd).into_bytes();
-    (path, content, 0o755)
-}
-
-fn lifecycle_script(phase_name: &str, source: &str, cmd: &LifecycleCommand) -> String {
-    let mut lines = vec![
-        "#!/bin/sh".to_string(),
-        "set -eu".to_string(),
-        format!("# {phase_name} from {source}"),
-    ];
-    let argvs = cmd.argvs();
-    if argvs.len() <= 1 {
-        if let Some(argv) = argvs.first() {
-            lines.push(shell_command(argv));
-        }
-    } else {
-        lines.push("pids=\"\"".to_string());
-        for argv in argvs {
-            lines.push(format!("({}) &", shell_command(&argv)));
-            lines.push("pids=\"$pids $!\"".to_string());
-        }
-        lines.push("status=0".to_string());
-        lines.push("for pid in $pids; do wait \"$pid\" || status=$?; done".to_string());
-        lines.push("exit \"$status\"".to_string());
-    }
-    lines.join("\n") + "\n"
-}
-
-fn shell_command(argv: &[String]) -> String {
-    argv.iter()
-        .map(|arg| shell_quote(arg))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn shell_quote(value: &str) -> String {
-    let inner = value.replace('\'', r"'\''");
-    format!("'{inner}'")
-}
-
-fn asset_slug(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect()
+pub(crate) fn generated_assets() -> Vec<context::ContextFile> {
+    // The PID 1 supervisor and command wrapper are baked into the image at
+    // `/usr/local/share/dcc/` (decision 0004). Startup hook scripts are NOT
+    // baked — they are host-generated per launch and bind-mounted, because
+    // `postStartCommand` may contain `${localEnv:VAR}` which is only resolvable
+    // at run time (T-0028 Q3).
+    //
+    // Build-prep hook scripts are deliberately not baked here: the host runs
+    // them via `docker exec` of a freshly substituted argv
+    // (`run_planned_hooks` → `lifecycle::run_in_container`), so baked `.sh`
+    // files would never be executed (T-0031 removed the vestigial copies).
+    crate::supervisor::baked_supervisor_assets()
 }
 
 fn parse_feature_commands_from_label(
@@ -1162,45 +1061,22 @@ mod tests {
     }
 
     #[test]
-    fn generated_assets_materialize_build_prep_hooks_in_phase_order() {
-        let feature_hooks = vec![(
-            "ghcr.io/devcontainers/features/node:1".to_string(),
-            LifecycleHooks {
-                on_create_command: Some(LifecycleCommand::Shell("feature create".to_string())),
-                post_create_command: Some(LifecycleCommand::Exec(vec![
-                    "echo".to_string(),
-                    "feature post".to_string(),
-                ])),
-                ..Default::default()
-            },
-        )];
-        let project_hooks = LifecycleHooks {
-            on_create_command: Some(LifecycleCommand::Shell("project create".to_string())),
-            update_content_command: Some(LifecycleCommand::Shell("project update".to_string())),
-            ..Default::default()
-        };
-        let assets = generated_assets(&feature_hooks, &project_hooks);
-        let hook_paths: Vec<&str> = assets
-            .iter()
-            .map(|(path, _, _)| path.as_str())
-            .filter(|path| path.contains("/hooks/build-prep/"))
-            .collect();
+    fn generated_assets_returns_only_supervisor_scripts() {
+        // T-0031: build-prep hook assets are no longer baked (they were never
+        // executed). generated_assets() returns only the three supervisor
+        // scripts that are baked into the image.
+        let assets = generated_assets();
         assert_eq!(
-            hook_paths,
-            vec![
-                ".dcc-generated/hooks/build-prep/010-001-feature-ghcr-io-devcontainers-features-node-1.sh",
-                ".dcc-generated/hooks/build-prep/010-002-project.sh",
-                ".dcc-generated/hooks/build-prep/020-001-project.sh",
-                ".dcc-generated/hooks/build-prep/030-001-feature-ghcr-io-devcontainers-features-node-1.sh",
-            ]
+            assets.len(),
+            3,
+            "expected only the three supervisor scripts"
         );
-        let project_update = assets
-            .iter()
-            .find(|(path, _, _)| path.ends_with("020-001-project.sh"))
-            .map(|(_, content, _)| String::from_utf8_lossy(content).into_owned())
-            .expect("project update hook should be present");
-        assert!(project_update.contains("# updateContentCommand from project"));
-        assert!(project_update.contains("'/bin/sh' '-c' 'project update'"));
+        for (path, _, _) in &assets {
+            assert!(
+                !path.contains("/hooks/build-prep/"),
+                "no build-prep hook assets should be baked, got: {path}"
+            );
+        }
     }
 
     // --- topological_sort ---

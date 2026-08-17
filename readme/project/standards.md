@@ -80,6 +80,14 @@ Record only commands verified by successful execution in this environment.
   `cargo build`, plus ignored Docker smoke tests on GitHub-hosted Ubuntu runners.
 - Do not push, publish releases, or run release workflows without explicit owner
   direction.
+- **Patch releases must not change the host↔supervisor protocol.** The `dcc.version`
+  image label is interpreted with semver compatibility (decision 0004): a CLI
+  proceeds against an image whose major and minor match, regardless of patch. The
+  protocol — the `dcc-ctl` verbs (`mode`, `stop`, `stop-now`, `wait-ready`), the
+  `dcc-exec` registration contract, and exit codes 252/253 — is therefore part of the
+  patch-stable surface. Any change to it requires at least a minor version bump so the
+  compatibility gate refuses the old image rather than silently driving an
+  incompatible supervisor.
 
 ## Do Not Do
 

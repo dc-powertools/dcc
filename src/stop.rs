@@ -56,7 +56,7 @@ pub(crate) async fn stop(
         )
         .print(opts.format);
     }
-    version::warn_if_image_version_mismatch_best_effort(
+    version::ensure_image_version_compatible_best_effort(
         container_id.as_image_tag().as_str(),
         opts.profile_arg,
         opts.strict,
@@ -94,7 +94,7 @@ pub(crate) async fn stop(
                 "root",
                 "/",
                 &[
-                    format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+                    format!("{}/dcc-ctl", supervisor::DCC_SHARE),
                     "stop-now".to_string(),
                 ],
             )
@@ -115,7 +115,7 @@ pub(crate) async fn stop(
                 "root",
                 "/",
                 &[
-                    format!("{}/dcc-ctl", supervisor::RT_MOUNT),
+                    format!("{}/dcc-ctl", supervisor::DCC_SHARE),
                     "stop".to_string(),
                 ],
             )
