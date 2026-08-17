@@ -367,6 +367,7 @@ set -eu
 
 STATE="__STATE_DIR__"
 ACTIVE="$STATE/active"
+ARRIVED="$STATE/arrived"
 MODE_FILE="$STATE/mode"
 STOPPING="$STATE/stopping"
 STATUS="__STATUS__"
@@ -481,7 +482,9 @@ while true; do
     fi
 
     n=$(active_count)
-    [ "$n" -gt 0 ] && arrived=1
+    if [ "$n" -gt 0 ] || [ -f "$ARRIVED" ]; then
+        arrived=1
+    fi
 
     if [ -f "$STOPPING" ]; then
         if [ "$n" -eq 0 ]; then
@@ -613,6 +616,7 @@ set -eu
 
 STATE="__STATE_DIR__"
 ACTIVE="$STATE/active"
+ARRIVED="$STATE/arrived"
 STOPPING="$STATE/stopping"
 CTL="__DCC_SHARE__/dcc-ctl"
 
@@ -631,6 +635,10 @@ mkdir -p "$ACTIVE"
 id=$(printf 'dcc-%s-%s' "$$" "$(date +%s%N 2>/dev/null || date +%s)")
 record="$ACTIVE/$id"
 printf '%s' "$$" > "$record"
+# Persist that at least one command reached the supervisor. A very short
+# command can register and deregister between PID 1 polling intervals; this
+# marker prevents one-shot containers from waiting for the orphan reaper.
+: > "$ARRIVED"
 
 # Deregister on any exit, then propagate the child's status.
 status=0
@@ -773,7 +781,9 @@ mod tests {
     fn exec_script_registers_then_waits_then_runs() {
         let s = exec_script();
         assert!(s.contains("ACTIVE"));
+        assert!(s.contains("ARRIVED"));
         assert!(s.contains("record"));
+        assert!(s.contains(": > \"$ARRIVED\""));
         assert!(s.contains("rm -f \"$record\""));
         assert!(s.contains("\"$@\""));
         // Must call wait-ready before running the command.
@@ -1111,6 +1121,82 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         assert_eq!(contents, "0");
+    }
+
+    /// A very short command can register and deregister between supervisor poll
+    /// intervals. The persistent arrived marker must still make oneshot drain
+    /// immediately instead of waiting for the orphan reaper.
+    #[cfg(unix)]
+    #[test]
+    fn oneshot_supervisor_drains_after_fast_exec_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state_dir = tmp.path().join("run/dcc");
+        let share_dir = tmp.path().join("share/dcc");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::create_dir_all(&share_dir).unwrap();
+
+        let supervisor = supervisor_script()
+            .replace(STATE_DIR, state_dir.to_string_lossy().as_ref())
+            .replace(DCC_SHARE, share_dir.to_string_lossy().as_ref());
+        let ctl = ctl_script()
+            .replace(STATE_DIR, state_dir.to_string_lossy().as_ref())
+            .replace(DCC_SHARE, share_dir.to_string_lossy().as_ref());
+        let exec = exec_script()
+            .replace(STATE_DIR, state_dir.to_string_lossy().as_ref())
+            .replace(DCC_SHARE, share_dir.to_string_lossy().as_ref());
+
+        let supervisor_path = share_dir.join("dcc-supervisor");
+        let ctl_path = share_dir.join("dcc-ctl");
+        let exec_path = share_dir.join("dcc-exec");
+        std::fs::write(&supervisor_path, supervisor).unwrap();
+        std::fs::write(&ctl_path, ctl).unwrap();
+        std::fs::write(&exec_path, exec).unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        for path in [&supervisor_path, &ctl_path, &exec_path] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let mut supervisor_child = std::process::Command::new("sh")
+            .arg(&supervisor_path)
+            .arg("--mode")
+            .arg("oneshot")
+            .arg("--expect-command")
+            .spawn()
+            .unwrap();
+
+        let status_path = state_dir.join("bootstrap-status");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !status_path.exists() {
+            if std::time::Instant::now() >= deadline {
+                let _ = supervisor_child.kill();
+                let _ = supervisor_child.wait();
+                panic!("bootstrap-status not written within 5s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let status = std::process::Command::new("sh")
+            .arg(&exec_path)
+            .arg("/bin/true")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match supervisor_child.try_wait().unwrap() {
+                Some(status) => {
+                    assert!(status.success(), "supervisor exited with {status}");
+                    break;
+                }
+                None if std::time::Instant::now() >= deadline => {
+                    let _ = supervisor_child.kill();
+                    let _ = supervisor_child.wait();
+                    panic!("supervisor did not drain after fast command");
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        }
     }
 
     /// A failing hook writes a non-zero status with the hook name.
