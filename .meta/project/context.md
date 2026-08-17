@@ -56,6 +56,10 @@ while this file captures technical conventions that prevent inconsistent impleme
 | Workspace/profile/cache identity | `src/workspace.rs`, `src/profile.rs`, `src/cache.rs` | Use domain newtypes and path-aware tests. | Profile names and paths affect container and image identity. |
 | Config resolution | `src/config/` | Preserve cycle detection, merge semantics, variable substitution phases, and strict-mode behavior. | Host-specific variables must not be baked into `containerEnv`. |
 | Docker operations | `src/docker.rs`, `src/build.rs`, `src/run.rs`, `src/exec.rs`, `src/stop.rs` | Wrap Docker CLI calls and keep errors diagnosable. | Real Docker commands can create external state; distinguish tests from runtime workflows. |
+| In-container supervisor | `src/supervisor.rs` | PID 1 owns lifecycle; keep host↔supervisor protocol patch-stable (decision 0004). | Protocol changes require a minor version bump so the semver gate refuses old images. |
+| State seeding | `src/seed.rs` | Hydrate declared state from the image on build; record in `.dcc/<profile>.seed.json`. | Seeding runs without state mounts; never mask Feature- or Dockerfile-installed content. |
+| UID remap | `src/uid.rs` | `updateRemoteUserUID` bakes a root RUN remapping the container user to the host uid/gid. | Remap is baked at image build; seeding already sees the remapped `/etc/passwd`. |
+| Version compatibility | `src/version.rs` | `dcc.version` label interpreted with semver: equal or patch drift proceeds; major/minor or missing label refuses. | `dcc build` is exempt; runtime commands gate on the label. |
 | Devcontainer Features | `src/features/` | Preserve OCI/local feature loading, install order, generated Dockerfile behavior, and metadata labels. | Feature scripts run as root but receive remote-user environment metadata. |
 | Tests | `tests/`, inline `#[cfg(test)]` modules | Unit-test internals near code; use integration tests for CLI behavior. | Avoid tests that only assert parser acceptance without behavior. |
 
