@@ -37,11 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-17 | Reorganized public docs again (T-0040): moved the broad guide to `docs/index.md`, made `docs/features.md` focus on devcontainer Feature packages, linked it to the official Features reference, and updated cross-links/ownership notes. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Reorganized public docs (T-0039): shortened the main README into an end-user overview, added `docs/features.md` for detailed feature/configuration/runtime guidance, added `docs/development.md` for maintainer and release guidance, linked both from README, and corrected stale baked-supervisor wording. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Updated the local commit trailer rule (T-0035) so `Co-Authored-By` names the actual model and coding harness, with Codex GPT-5 as this session's example. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Fixed the latest CI Docker smoke failure (T-0038): fast one-shot commands now persist a supervisor arrival marker so PID 1 drains immediately even when polling misses the active-record lifetime. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Fixed the latest CI Docker smoke failure (T-0037): one-shot foreground executions now wait for the label-based running-container query to go empty only when the invocation created the container, matching reuse detection and avoiding durable-container delays. | `.meta/tasks/README.md#tasks` |
-| 2026-08-17 | Fixed the remaining Docker smoke regressions from the latest CI run (T-0036): generated startup hooks now preserve failing status under POSIX `sh`, non-root hydrated state is re-owned for writability, and the durable reuse smoke uses `dcc run --keep` for named commands. | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -66,6 +66,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-13
-- Completed repository-changing tasks since that pass: 6
+- Completed repository-changing tasks since that pass: 7
 - Next pass due: 2026-09-12 or after 10 completed repository-changing tasks, whichever
   occurs first.

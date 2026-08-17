@@ -6,7 +6,7 @@ This guide is for people maintaining `dcc`.
 
 `dcc` is a Rust 2021 single-binary CLI. Docker integration goes through Docker
 CLI subprocesses, and user-facing behavior should stay documented in the public
-README or [feature guide](features.md).
+README or [user guide](index.md).
 
 Useful entry points:
 
@@ -65,7 +65,8 @@ GitHub-hosted Ubuntu runners with Docker available.
 Keep documentation current with behavior:
 
 - End-user overview and quick start: `README.md`.
-- Detailed user-facing behavior and configuration: `docs/features.md`.
+- Detailed user-facing behavior and configuration: `docs/index.md`.
+- devcontainer Feature package behavior: `docs/features.md`.
 - Local development and release workflow: `docs/development.md`.
 - Stable internal architecture notes: `.meta/project/architecture.md`.
 - Canonical project command catalog: `.meta/project/standards.md`.

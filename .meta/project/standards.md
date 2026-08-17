@@ -65,8 +65,9 @@ Record only commands verified by successful execution in this environment.
 ## Documentation
 
 - End-user overview and quick-start material belongs in `README.md`.
-- Detailed user-facing feature, configuration, command, lifecycle, and compatibility
-  guidance belongs in `docs/features.md`.
+- Detailed user-facing usage, configuration, command, lifecycle, and compatibility
+  guidance belongs in `docs/index.md`.
+- devcontainer Feature package behavior belongs in `docs/features.md`.
 - Human-facing maintainer setup, verification, and release guidance belongs in
   `docs/development.md`.
 - Stable architecture notes belong in `.meta/project/architecture.md`.

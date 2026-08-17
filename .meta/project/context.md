@@ -69,7 +69,8 @@ while this file captures technical conventions that prevent inconsistent impleme
 - Before project coding work, load the product README and framework-owned project
   guidance: `README.md`, `.meta/project/development.md`,
   `.meta/project/rust-style.md`, and `.meta/project/architecture.md`. For
-  user-facing behavior or configuration changes, also load `docs/features.md`.
+  user-facing behavior or configuration changes, also load `docs/index.md`; for
+  devcontainer Feature package behavior, also load `docs/features.md`.
 - Use `.meta/project/standards.md` for exact verified commands.
 - Update this file after architecture changes, major dependency changes, or repeated
   implementation drift.

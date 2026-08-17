@@ -19,7 +19,7 @@ containers without sharing state between profiles.
 - Supports named project commands with `customizations.dcc.commands`.
 - Installs devcontainer Features and reads supported Feature metadata.
 
-For the detailed user guide, see [docs/features.md](docs/features.md).
+For the detailed user guide, see [docs/index.md](docs/index.md).
 
 ## Platforms
 
@@ -133,14 +133,16 @@ opinionated than a general IDE devcontainer implementation:
 - Host-integrating or privilege-escalating runtime options require
   `--allow-unsafe-runtime`.
 
-See [docs/features.md](docs/features.md#what-to-expect-compared-with-normal-devcontainers)
+See [docs/index.md](docs/index.md#what-to-expect-compared-with-normal-devcontainers)
 for the full compatibility notes.
 
 ## Documentation
 
-- [Feature and usage guide](docs/features.md): profiles, cache and state,
+- [User guide](docs/index.md): profiles, cache and state,
   environment variables, commands, lifecycle hooks, configuration reference, and
   devcontainer compatibility.
+- [Devcontainer Features](docs/features.md): Feature packages installed through
+  the top-level `features` field.
 - [Development guide](docs/development.md): local setup, verification, release
   workflow, and maintainer notes.
 
