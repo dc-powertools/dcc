@@ -416,9 +416,15 @@ async fn run_build_preparation(
     // sources, so build-prep hooks observe install-time content. Skipped
     // entirely when there is no declared state.
     if !state.is_empty() {
-        hydrate_state(&cache_dir, image_tag.as_str(), &state, reseed_state)
-            .await
-            .context("failed to seed declared state from image")?;
+        hydrate_state(
+            &cache_dir,
+            image_tag.as_str(),
+            &state,
+            &config.container_user,
+            reseed_state,
+        )
+        .await
+        .context("failed to seed declared state from image")?;
     }
 
     let state_mounts = cache_dir.plan_state_mounts(&state);
@@ -485,6 +491,7 @@ async fn hydrate_state(
     cache_dir: &CacheDir,
     image: &str,
     state: &[config::StateEntry],
+    container_user: &str,
     reseed_state: bool,
 ) -> anyhow::Result<()> {
     let manifest = crate::seed::manifest_from_state(state, image);
@@ -547,7 +554,8 @@ async fn hydrate_state(
     std::fs::create_dir_all(&state_root)
         .with_context(|| format!("failed to create state root `{}`", state_root.display()))?;
     let state_root_str = state_root.to_string_lossy().into_owned();
-    let args = crate::seed::hydration_container_args(image, &state_root_str, &to_hydrate);
+    let owner = (container_user != "root").then_some(container_user);
+    let args = crate::seed::hydration_container_args(image, &state_root_str, &to_hydrate, owner);
     eprintln!(
         "dcc: seeding {} declared state path(s) from image `{image}`",
         to_hydrate.len()

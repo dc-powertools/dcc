@@ -80,13 +80,16 @@ build image (now includes the remap RUN)
   -> build-prep container (runs as containerUser, already remapped)
 ```
 
-Hydration runs as root in a one-shot container with state mounts off and preserves image
-uids via `tar`. Because the remap is baked into the image at **build time**, the image's
-`/etc/passwd` already records the remapped uid before hydration runs, and any content the
-image places at a state path is owned by the remapped uid. So seeded state is owned by
-the remapped user by construction — no extra chown pass and no reordering of T-0022's
-hydration. This resolves the brief's open question ("hydrate after the remap, or chown
-seeded paths?"): the remap precedes hydration by construction.
+Hydration runs as root in a one-shot container with state mounts off and copies image
+content with `tar`. Because the remap is baked into the image at **build time**, the
+image's `/etc/passwd` already records the remapped uid before hydration runs.
+
+Correction recorded 2026-08-17: Dockerfile layers can create and `chown` declared state
+paths before the generated remap step. Those paths then keep the user's old numeric uid
+even though `/etc/passwd` has been updated. Hydration therefore re-owns copied state to
+the non-root `containerUser` after extraction; root profiles still preserve root
+ownership. This keeps T-0022's hydration ordering while satisfying the writability
+requirement.
 
 ## Consequences
 

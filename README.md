@@ -179,7 +179,10 @@ file state, an empty file). `dcc build` therefore **seeds** declared state from
 the image: it runs one short-lived container on the finished image with the
 state mounts *not* applied and the host state root mounted at `/dcc-seed`, then
 copies each declared path's image content into the host state directory with
-`tar` (inside the container, so uid, gid, mode, and symlinks are preserved).
+`tar` inside the container. Modes and symlinks are preserved; for non-root
+`containerUser` profiles, `dcc` re-owns hydrated state to that user so
+bind-mounted state remains writable after `updateRemoteUserUID` remaps the
+user's uid/gid.
 
 Seeding runs **before** build-preparation hooks (`onCreateCommand`,
 `updateContentCommand`, `postCreateCommand`), so those hooks observe

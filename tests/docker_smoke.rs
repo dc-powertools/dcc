@@ -1087,11 +1087,11 @@ fn durable_reuse_and_keep_promotion_work_with_handshake() {
 
     assert_success(&fx.dcc(&["build"]));
     // First command with --keep: cold start, hooks run, command waits.
-    let out = fx.dcc(&["exec", "--keep", "run", "check"]);
+    let out = fx.dcc(&["run", "--keep", "check"]);
     assert_success(&out);
     assert!(String::from_utf8_lossy(&out.stdout).contains("started"));
     // Second command with --keep: reuses the durable container, fast-path readiness.
-    let out2 = fx.dcc(&["exec", "--keep", "run", "check"]);
+    let out2 = fx.dcc(&["run", "--keep", "check"]);
     assert_success(&out2);
     assert!(String::from_utf8_lossy(&out2.stdout).contains("started"));
     // Clean up.

@@ -298,8 +298,8 @@ fn sh_quote(s: &str) -> String {
 }
 
 /// Emits a POSIX `sh` script that runs one hook (possibly parallel) as
-/// `container_user` from `workdir`, teeing output to `hook.log`, and exiting with the
-/// first failing status (after waiting for parallel entries to finish).
+/// `container_user` from `workdir`, appending output to `hook.log`, and exiting with
+/// the first failing status (after waiting for parallel entries to finish).
 fn hook_script(cmd: &LifecycleCommand, user: &str, workdir: &str, source: &str) -> String {
     let argvs = cmd.argvs();
     if argvs.is_empty() {
@@ -317,7 +317,9 @@ fn hook_script(cmd: &LifecycleCommand, user: &str, workdir: &str, source: &str) 
     lines.push(format!("WORKDIR={}", sh_quote(workdir)));
 
     if let [argv] = argvs.as_slice() {
-        // Single command: run it via `su`/`cd`, tee output.
+        // Single command: run it from the configured workdir and preserve its
+        // exit status. Avoid a pipe here: POSIX sh reports the status of the
+        // last pipeline command, and dash has no PIPESTATUS.
         let cmd_str = argv
             .iter()
             .map(|a| sh_quote(a))
@@ -325,8 +327,11 @@ fn hook_script(cmd: &LifecycleCommand, user: &str, workdir: &str, source: &str) 
             .join(" ");
         lines.push(format!(
             "cd \"$WORKDIR\" 2>/dev/null || cd /\n\
-             {cmd_str} 2>&1 | tee -a \"$HOOK_LOG\"\n\
-             exit ${{PIPESTATUS:-$?}}\n"
+             set +e\n\
+             {cmd_str} >> \"$HOOK_LOG\" 2>&1\n\
+             status=$?\n\
+             set -e\n\
+             exit \"$status\"\n"
         ));
     } else {
         // Parallel: background each, wait, return first failure.
@@ -338,7 +343,7 @@ fn hook_script(cmd: &LifecycleCommand, user: &str, workdir: &str, source: &str) 
                 .map(|a| sh_quote(a))
                 .collect::<Vec<_>>()
                 .join(" ");
-            lines.push(format!("({cmd_str} 2>&1 | tee -a \"$HOOK_LOG\") &"));
+            lines.push(format!("({cmd_str} >> \"$HOOK_LOG\" 2>&1) &"));
         }
         lines.push("for job in $(jobs -p); do".to_string());
         lines.push("  wait \"$job\" || first_status=$?".to_string());
@@ -1041,6 +1046,29 @@ mod tests {
         let body = std::fs::read_to_string(script.path()).unwrap();
         assert!(body.contains("echo world"));
         assert!(!body.contains("${HELLO}"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_hook_script_preserves_failing_shell_status_under_sh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hook_log = tmp.path().join("hook.log");
+        let script = hook_script(
+            &LifecycleCommand::Shell("exit 42".to_string()),
+            "root",
+            tmp.path().to_string_lossy().as_ref(),
+            "test",
+        )
+        .replace(HOOK_LOG, hook_log.to_string_lossy().as_ref());
+        assert!(!script.contains("PIPESTATUS"));
+
+        let script_path = tmp.path().join("hook");
+        std::fs::write(&script_path, script).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg(&script_path)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(42));
     }
 
     // --- End-to-end script execution tests (require a real /bin/sh) ---
