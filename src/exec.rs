@@ -242,7 +242,7 @@ async fn execute_foreground(
 ) -> anyhow::Result<ExitStatus> {
     let plan = RuntimePlan::prepare(workspace, profile, config_path, override_args, opts).await?;
 
-    let container_name = async {
+    let (container_name, started) = async {
         let existing =
             running_container_name(plan.container_id.as_str(), plan.container.as_str()).await?;
         let (container_name, started) = if let Some(running) = existing {
@@ -285,7 +285,7 @@ async fn execute_foreground(
             // clear error rather than a hang. On reuse, hooks already ran.
             wait_ready(&plan, &container_name).await?;
         }
-        anyhow::Ok(container_name)
+        anyhow::Ok((container_name, started))
     }
     .await?;
 
@@ -324,14 +324,19 @@ async fn execute_foreground(
 
     let status = command_result?;
 
-    // One-shot containers self-teardown: the supervisor (PID 1) drains and exits when
-    // the active set is empty, and Docker's --rm removes the container. The host does
-    // not manage teardown state. We only wait for the container to disappear so the
-    // relay handles and port listeners are cleanly gone before the next invocation.
-    if !opts.keep {
-        wait_for_removed(&container_name).await;
+    // One-shot containers created by this invocation self-teardown: the supervisor
+    // drains and exits when the active set is empty, and Docker's --rm removes the
+    // container. The host does not manage teardown state. We only wait until Docker's
+    // label-based running-container query goes empty so immediate follow-up commands
+    // and tests observe the same lifecycle boundary that reuse detection uses.
+    if should_wait_for_one_shot_teardown(started, opts.keep) {
+        wait_for_no_running_container(plan.container_id.as_str()).await;
     }
     Ok(status)
+}
+
+fn should_wait_for_one_shot_teardown(started: bool, keep: bool) -> bool {
+    started && !keep
 }
 
 async fn start_container(plan: &RuntimePlan) -> anyhow::Result<()> {
@@ -350,13 +355,13 @@ async fn start_container(plan: &RuntimePlan) -> anyhow::Result<()> {
         .with_context(|| format!("container `{}` failed to start", plan.container.as_str()))
 }
 
-/// Wait for a container to be removed (e.g. after the supervisor drains and exits in
-/// one-shot mode, with --rm). Best-effort: does not error if the container never
-/// disappears (it may have been promoted to durable by another invocation).
-async fn wait_for_removed(container: &str) {
+/// Wait for Docker to stop reporting any running container for this profile label
+/// (e.g. after a one-shot supervisor drains and exits). Best-effort: does not error
+/// if the container never disappears.
+async fn wait_for_no_running_container(container_id: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
-        if let Ok(false) = docker::inspect_running(container).await {
+        if let Ok(None) = docker::running_container_name_by_id(container_id).await {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1669,6 +1674,14 @@ mod tests {
     #[test]
     fn parse_bind_src_tmpfs_returns_none() {
         assert_eq!(parse_bind_src("type=tmpfs,dst=/tmp"), None);
+    }
+
+    #[test]
+    fn teardown_wait_only_applies_to_new_one_shot_containers() {
+        assert!(should_wait_for_one_shot_teardown(true, false));
+        assert!(!should_wait_for_one_shot_teardown(true, true));
+        assert!(!should_wait_for_one_shot_teardown(false, false));
+        assert!(!should_wait_for_one_shot_teardown(false, true));
     }
 
     // --- ensure_cache_mount_sources ---
