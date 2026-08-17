@@ -7,7 +7,7 @@
 //! short-lived container that runs **without** the state mounts applied, then
 //! records what it wrote in a host-side ledger at `.dcc/<profile>.seed.json`.
 //!
-//! See `readme/decisions/0001-state-seeding-from-image.md` for the design and
+//! See `.meta/decisions/0001-state-seeding-from-image.md` for the design and
 //! the rejected alternatives (a baked seed store and `mv`-based relocation).
 
 use std::collections::HashMap;
