@@ -43,11 +43,14 @@ These checks are mandatory: a task is not complete until all three pass. Never r
 
 ## Committing
 
-Always commit your changes once the task is complete and the checks above pass — committing is part of finishing the work, not an optional extra. Commit **directly on the `main` branch**; do not create feature branches. **Never push to a remote** — `git push` is off-limits, and commits stay local for the user to push. End every commit message with the trailer:
+Always commit your changes once the task is complete and the checks above pass — committing is part of finishing the work, not an optional extra. Commit **directly on the `main` branch**; do not create feature branches. **Never push to a remote** — `git push` is off-limits, and commits stay local for the user to push. End every commit message with a `Co-Authored-By` trailer that names the actual model and harness used for the work:
 
 ```
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Co-Authored-By: Codex GPT-5 <noreply@openai.com>
 ```
+
+Do not copy this example when using a different coding harness or model; replace the
+name and address with the correct identity for that session.
 
 Every commit must leave the repository in a passing state. Before creating a commit, run the full check suite and fix any failures:
 

@@ -244,6 +244,29 @@ pub(crate) fn mode_value(keep: bool) -> &'static str {
     }
 }
 
+/// Appends the `docker run` image and supervisor entrypoint argv.
+///
+/// Docker parses every argument before the image as a Docker-run option, so
+/// supervisor flags such as `--mode` must come after the image tag.
+pub(crate) fn append_run_image_and_args(
+    args: &mut Vec<String>,
+    image: &str,
+    mode: &str,
+    expect_command: bool,
+    start_hooks: Option<&str>,
+) {
+    args.push(image.to_string());
+    args.push("--mode".to_string());
+    args.push(mode.to_string());
+    if expect_command {
+        args.push("--expect-command".to_string());
+    }
+    if let Some(start_hooks) = start_hooks {
+        args.push("--start-hooks".to_string());
+        args.push(start_hooks.to_string());
+    }
+}
+
 /// Sanitizes a feature id / source label into a filesystem-safe script name suffix.
 fn sanitize_source(source: &str) -> String {
     source
@@ -761,6 +784,39 @@ mod tests {
     fn mode_value_maps_keep() {
         assert_eq!(mode_value(true), "durable");
         assert_eq!(mode_value(false), "oneshot");
+    }
+
+    #[test]
+    fn append_run_image_and_args_places_supervisor_args_after_image() {
+        let mut args = vec![
+            "--name".to_string(),
+            "dcc-test".to_string(),
+            "--entrypoint".to_string(),
+            format!("{DCC_SHARE}/dcc-supervisor"),
+        ];
+        append_run_image_and_args(
+            &mut args,
+            "dcc-image",
+            "oneshot",
+            true,
+            Some("/usr/local/share/dcc/rt/start-hooks"),
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "--name",
+                "dcc-test",
+                "--entrypoint",
+                "/usr/local/share/dcc/dcc-supervisor",
+                "dcc-image",
+                "--mode",
+                "oneshot",
+                "--expect-command",
+                "--start-hooks",
+                "/usr/local/share/dcc/rt/start-hooks",
+            ]
+        );
     }
 
     #[test]
