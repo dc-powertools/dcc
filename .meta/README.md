@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Designed the `nc -N` port-forwarding correction and Docker-free regression coverage (T-0059), with the accepted netcat-variant limitation made explicit. | `.meta/tasks/0059-nc-half-close-design.md` |
 | 2026-08-24 | Diagnosed the latest CI failure (T-0058): the port-forward connector does not half-close its network socket when host input reaches EOF, so EOF-dependent exchanges hang and the Docker smoke receives bytes but times out before clearing them. | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Restored strict errors for missing `${containerEnv:VAR}` references without explicit defaults (T-0056). | `.meta/decisions/0006-require-missing-container-env-default.md`; `.meta/quality/0056-missing-container-env-error-quality.md` |
 | 2026-08-24 | Restored implicit Docker runtime limits of 4 GiB memory and 2 CPUs (T-0055), with independent explicit overrides. | `.meta/quality/0055-default-docker-limits-quality.md` |
@@ -72,6 +73,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 4
+- Completed repository-changing tasks since that pass: 5
 - Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.
