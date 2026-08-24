@@ -21,8 +21,8 @@ use crate::{
 /// CPU and memory limits forwarded to `docker run`.
 #[derive(Clone, Copy)]
 pub(crate) struct ResourceLimits<'a> {
-    pub(crate) memory: &'a str,
-    pub(crate) cpus: &'a str,
+    pub(crate) memory: Option<&'a str>,
+    pub(crate) cpus: Option<&'a str>,
 }
 
 /// Behavioral options for a container launch, shared by `dcc exec` and `dcc run`.
@@ -391,8 +391,8 @@ struct RuntimePlan {
 
 #[derive(Clone)]
 struct OwnedExecOptions {
-    limits_memory: String,
-    limits_cpus: String,
+    limits_memory: Option<String>,
+    limits_cpus: Option<String>,
     skip_lifecycle: bool,
     debug: bool,
     strict: bool,
@@ -404,8 +404,8 @@ struct OwnedExecOptions {
 impl From<ExecOptions<'_>> for OwnedExecOptions {
     fn from(opts: ExecOptions<'_>) -> Self {
         Self {
-            limits_memory: opts.limits.memory.to_string(),
-            limits_cpus: opts.limits.cpus.to_string(),
+            limits_memory: opts.limits.memory.map(str::to_string),
+            limits_cpus: opts.limits.cpus.map(str::to_string),
             skip_lifecycle: opts.skip_lifecycle,
             debug: opts.debug,
             strict: opts.strict,
@@ -600,8 +600,12 @@ impl RuntimePlan {
         args.push("--rm".into());
         args.push("-dit".into());
         args.extend(["--workdir".into(), config.workspace_folder.clone()]);
-        args.extend(["--memory".into(), opts.limits_memory.clone()]);
-        args.extend(["--cpus".into(), opts.limits_cpus.clone()]);
+        if let Some(memory) = &opts.limits_memory {
+            args.extend(["--memory".into(), memory.clone()]);
+        }
+        if let Some(cpus) = &opts.limits_cpus {
+            args.extend(["--cpus".into(), cpus.clone()]);
+        }
         args.extend(safe_run_args);
 
         append_unsafe_runtime_args(
@@ -734,8 +738,8 @@ impl RuntimePlan {
             dbg.push(format!(
                 "user: {}   memory: {}   cpus: {}   workdir: {}",
                 config.container_user,
-                opts.limits_memory,
-                opts.limits_cpus,
+                opts.limits_memory.as_deref().unwrap_or("(unlimited)"),
+                opts.limits_cpus.as_deref().unwrap_or("(unlimited)"),
                 config.workspace_folder
             ));
             dbg.push(format!("command   : {}", override_args.join(" ")));

@@ -17,7 +17,9 @@
 - Completed slice: T-0049 (successful path-profile identity comparison, genuinely
   Docker-free seeding dry-run, instance-identity reuse checks, and direct bounded
   teardown/removal assertions; retired bookkeeping checks removed).
-- Selected slice: T-0050, followed by the remaining independent children.
+- Completed slice: T-0050 (compiled-CLI fake Docker boundary for version gates,
+  upstream pull policy, image/argument ordering, and optional resource limits).
+- Selected slice: T-0051, followed by the remaining independent children.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this

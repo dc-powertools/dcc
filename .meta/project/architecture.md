@@ -588,8 +588,8 @@ docker run
   --rm
   -dit
   --workdir <workspaceFolder>  (default: /workspace)
-  --memory <memory>            (default: 4g)
-  --cpus <cpus>                (default: 2)
+  --memory <memory>            (omitted from Docker when unspecified)
+  --cpus <cpus>                (omitted from Docker when unspecified)
   <safe runArgs...>
   <allowed unsafe runtime args...>
   -u <containerUser>
@@ -1098,5 +1098,8 @@ All other commands exit 0 on success and 1 on error.
 - `--format json` emits parseable dry-run reports
 - `dcc run --` is accepted syntactically, while direct command execution is tested
   through `dcc exec`
+- `tests/docker_boundary.rs` places an argv-recording fake `docker` first on `PATH`
+  and drives the compiled CLI through version gates, build pull policy, and runtime
+  resource plumbing; this complements, rather than replaces, live Docker smokes
 
 Integration tests that require a live Docker daemon are annotated `#[ignore]`.
