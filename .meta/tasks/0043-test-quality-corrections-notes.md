@@ -1,0 +1,31 @@
+# T-0043 Notes: Test Quality Corrections
+
+## Checkpoint
+
+- Status: Active.
+- Selected slice: T-0044, followed by the security-sensitive T-0048 and then the
+  remaining independent children.
+- Integration owner: Root Orchestrator; one child task is selected and committed at a
+  time.
+- Delegation constraint: the requested fresh-agent sequence cannot start because this
+  Codex session has neither the repository `codex-quota-monitor` skill nor another
+  authoritative five-hour and weekly usage surface. Under the framework usage-capacity
+  guard, capacity is unknown and child spawning is paused. The primary session is
+  executing the same task-isolated sequence instead.
+- Shared-tree baseline: task-catalog intake and T-0043 through T-0053 briefs were
+  present as uncommitted framework state when implementation began; preserve unrelated
+  task intake at every child commit.
+
+## Verification Strategy
+
+- Each child receives focused counterfactual or negative-control evidence where
+  practical, focused tests, format/lint/build gates proportional to its risk, diff
+  review, a task-scoped catalog result, and a local commit.
+- The parent closes only after all children are Done and the aggregate format, clippy,
+  test, build, Docker-smoke availability, consistency, and security reviews are
+  recorded in the quality record.
+
+## Issues To Present At Final Handoff
+
+- None yet. Record only unresolved ambiguity, unexpected complexity, or correctness
+  concerns that remain after a task checkpoint; independent work continues.

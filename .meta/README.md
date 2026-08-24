@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `.meta/tasks/README.md`
-- Primary task: None
-- Primary details: None
+- Primary task: T-0043
+- Primary details: `.meta/tasks/0043-test-quality-corrections-brief.md`; `.meta/tasks/0043-test-quality-corrections-notes.md`; `.meta/quality/0043-test-quality-corrections-quality.md`
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
