@@ -484,10 +484,11 @@ where
     }
 }
 
-fn parse_feature_meta(feature_json: Option<&[u8]>) -> FeatureMeta {
-    feature_json
-        .and_then(|b| serde_json::from_slice(b).ok())
-        .unwrap_or_default()
+fn parse_feature_meta(feature_json: Option<&[u8]>) -> anyhow::Result<FeatureMeta> {
+    match feature_json {
+        Some(bytes) => serde_json::from_slice(bytes).context("invalid devcontainer-feature.json"),
+        None => Ok(FeatureMeta::default()),
+    }
 }
 
 fn warn_ignored_feature_properties(reference: &str, meta: &FeatureMeta) {
@@ -644,7 +645,8 @@ async fn resolve_features(
                 .with_context(|| format!("failed to download feature `{reference}`"))?
         };
 
-        let meta = parse_feature_meta(downloaded.feature_json.as_deref());
+        let meta = parse_feature_meta(downloaded.feature_json.as_deref())
+            .with_context(|| format!("failed to parse metadata for feature `{reference}`"))?;
 
         for (dep_ref, dep_opts) in &meta.depends_on {
             if let Some(existing_opts) = queued.get(dep_ref) {
@@ -771,20 +773,20 @@ fn topological_sort(all: &IndexMap<String, FeatureEntry>) -> anyhow::Result<Vec<
 fn build_env(
     feature_json: Option<&[u8]>,
     user_options: &serde_json::Value,
-) -> IndexMap<String, String> {
+) -> anyhow::Result<IndexMap<String, String>> {
     let mut env = IndexMap::new();
 
     if let Some(bytes) = feature_json {
-        if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(bytes) {
-            if let Some(options) = meta.get("options").and_then(|v| v.as_object()) {
-                for (key, schema) in options {
-                    let env_key = key.to_uppercase();
-                    let default_val = schema
-                        .get("default")
-                        .map(json_value_to_string)
-                        .unwrap_or_default();
-                    env.insert(env_key, default_val);
-                }
+        let meta: serde_json::Value = serde_json::from_slice(bytes)
+            .context("invalid devcontainer-feature.json while reading options")?;
+        if let Some(options) = meta.get("options").and_then(|v| v.as_object()) {
+            for (key, schema) in options {
+                let env_key = key.to_uppercase();
+                let default_val = schema
+                    .get("default")
+                    .map(json_value_to_string)
+                    .unwrap_or_default();
+                env.insert(env_key, default_val);
             }
         }
     }
@@ -795,7 +797,7 @@ fn build_env(
         }
     }
 
-    env
+    Ok(env)
 }
 
 fn json_value_to_string(v: &serde_json::Value) -> String {
@@ -865,7 +867,7 @@ mod tests {
             "options": { "version": { "type": "string", "default": "lts" } }
         });
         let bytes = serde_json::to_vec(&feature_json).unwrap();
-        let env = build_env(Some(&bytes), &serde_json::json!({}));
+        let env = build_env(Some(&bytes), &serde_json::json!({})).unwrap();
         assert_eq!(env.get("VERSION"), Some(&"lts".to_string()));
     }
 
@@ -875,19 +877,19 @@ mod tests {
             "options": { "version": { "default": "lts" } }
         });
         let bytes = serde_json::to_vec(&feature_json).unwrap();
-        let env = build_env(Some(&bytes), &serde_json::json!({"version": "20"}));
+        let env = build_env(Some(&bytes), &serde_json::json!({"version": "20"})).unwrap();
         assert_eq!(env.get("VERSION"), Some(&"20".to_string()));
     }
 
     #[test]
     fn build_env_no_feature_json() {
-        let env = build_env(None, &serde_json::json!({"version": "20"}));
+        let env = build_env(None, &serde_json::json!({"version": "20"})).unwrap();
         assert_eq!(env.get("VERSION"), Some(&"20".to_string()));
     }
 
     #[test]
     fn build_env_key_uppercased() {
-        let env = build_env(None, &serde_json::json!({"nodeVersion": "20"}));
+        let env = build_env(None, &serde_json::json!({"nodeVersion": "20"})).unwrap();
         assert!(env.contains_key("NODEVERSION"));
     }
 
@@ -921,7 +923,7 @@ mod tests {
 
     #[test]
     fn parse_meta_empty_bytes_gives_default() {
-        let meta = parse_feature_meta(None);
+        let meta = parse_feature_meta(None).unwrap();
         assert!(meta.id.is_none());
         assert!(meta.container_env.is_empty());
         assert!(meta.mounts.is_empty());
@@ -945,7 +947,7 @@ mod tests {
             "postAttachCommand": { "a": "echo a", "b": ["echo", "b"] }
         });
         let bytes = serde_json::to_vec(&json).unwrap();
-        let meta = parse_feature_meta(Some(&bytes));
+        let meta = parse_feature_meta(Some(&bytes)).unwrap();
         assert_eq!(meta.id.as_deref(), Some("my-feature"));
         assert_eq!(
             meta.container_env.get("MY_VAR").map(String::as_str),
@@ -986,9 +988,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_meta_invalid_json_gives_default() {
-        let meta = parse_feature_meta(Some(b"not valid json{{{"));
-        assert!(meta.id.is_none());
+    fn parse_meta_invalid_json_is_rejected() {
+        let error = parse_feature_meta(Some(b"not valid json{{{")).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("invalid devcontainer-feature.json"));
+    }
+
+    #[test]
+    fn parse_meta_schema_invalid_field_is_rejected() {
+        let error =
+            parse_feature_meta(Some(br#"{"containerEnv": ["not", "a", "map"]}"#)).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("invalid devcontainer-feature.json"));
     }
 
     // --- FeatureMount::to_mount_string ---
@@ -1359,7 +1372,7 @@ mod tests {
             "scripts": { "build": "cargo build", "test": "cargo test" }
         });
         let bytes = serde_json::to_vec(&json).unwrap();
-        let meta = parse_feature_meta(Some(&bytes));
+        let meta = parse_feature_meta(Some(&bytes)).unwrap();
         assert_eq!(
             meta.scripts.get("build").map(String::as_str),
             Some("cargo build")
@@ -1383,7 +1396,7 @@ mod tests {
             }
         });
         let bytes = serde_json::to_vec(&json).unwrap();
-        let meta = parse_feature_meta(Some(&bytes));
+        let meta = parse_feature_meta(Some(&bytes)).unwrap();
         let commands = meta.commands();
         assert_eq!(commands.get("build").map(String::as_str), Some("nested"));
         assert_eq!(

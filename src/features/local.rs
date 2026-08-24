@@ -90,7 +90,12 @@ pub(super) fn load_local_feature(
 
     let feature_json = std::fs::read(feature_dir.join("devcontainer-feature.json")).ok();
 
-    let env = super::build_env(feature_json.as_deref(), user_options);
+    let env = super::build_env(feature_json.as_deref(), user_options).with_context(|| {
+        format!(
+            "failed to parse Feature metadata options from `{}`",
+            feature_dir.display()
+        )
+    })?;
     let extra_files = collect_extra_files(&feature_dir).with_context(|| {
         format!(
             "failed to collect files from local feature `{}`",

@@ -62,6 +62,12 @@ Feature option values come from the selected profile's `features` object. Option
 keys are uppercased and passed to `install.sh` as environment variables; values
 from the profile override defaults declared by the Feature.
 
+For compatibility, a Feature containing only `install.sh` and no
+`devcontainer-feature.json` is accepted as an install-only Feature: explicit profile
+options are still passed through, but there are no metadata defaults or runtime
+contributions. When metadata is present, it must be valid JSON with valid field types;
+malformed supplied metadata is a build error.
+
 `dcc` preserves the declaration order of independent Features. `dependsOn` adds
 missing hard dependencies recursively, while `installsAfter` acts as a soft
 ordering hint for Features that are already in the installation set. Circular
