@@ -22,6 +22,8 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+    with:
+      ref: ${{ inputs.ref || github.ref_name }}
 
   build:
     name: Build ${{ matrix.target }}

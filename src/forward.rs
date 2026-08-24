@@ -338,12 +338,17 @@ where
 mod tests {
     use std::{
         ffi::OsStr,
-        io::ErrorKind,
+        io::{ErrorKind, Write as _},
         net::SocketAddr,
         os::unix::fs::PermissionsExt as _,
         path::Path,
-        process::{Command, Output},
-        sync::mpsc::{self, Receiver},
+        process::{Command, Output, Stdio},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc::{self, Receiver},
+            Arc,
+        },
+        thread,
         time::Duration,
     };
 
@@ -383,7 +388,24 @@ mod tests {
     }
 
     fn write_executable(path: &Path, contents: &str) {
-        std::fs::write(path, contents).unwrap();
+        // Open and write the executable from a single-threaded child. If this
+        // multithreaded test process opens it itself, a concurrent fork can inherit
+        // the writable descriptor briefly and make the following exec fail with
+        // ETXTBSY before CLOEXEC takes effect.
+        let mut writer = Command::new("/bin/sh")
+            .args(["-c", "/bin/cat >\"$1\"", "dcc-test-writer"])
+            .arg(path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        writer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(contents.as_bytes())
+            .unwrap();
+        assert!(writer.wait().unwrap().success());
+
         let mut permissions = std::fs::metadata(path).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).unwrap();
@@ -416,6 +438,32 @@ mod tests {
     const BUSYBOX_NC: &str = "#!/bin/sh\nif [ \"${1-}\" = -h ]; then printf '%s\\n' 'BusyBox nc: usage: nc [-iNw] HOST PORT'; exit 0; fi\nexit 9\n";
     const TRADITIONAL_NC: &str = "#!/bin/sh\nif [ \"${1-}\" = -h ]; then printf '%s\\n' 'nc [options] hostname port[s] [ports]'; exit 0; fi\nexit 9\n";
     const IMPOSTOR_NCAT: &str = "#!/bin/sh\nif [ \"${1-}\" = --version ]; then printf '%s\\n' 'unrelated connector 1.0'; exit 0; fi\nexit 9\n";
+
+    #[test]
+    fn executable_fixture_is_safe_during_parallel_process_spawns() {
+        let running = Arc::new(AtomicBool::new(true));
+        let churn_running = Arc::clone(&running);
+        let churn = thread::spawn(move || {
+            while churn_running.load(Ordering::Relaxed) {
+                Command::new("/bin/true").status().unwrap();
+            }
+        });
+
+        let failure = (0..64).find_map(|_| {
+            let temp = tempfile::tempdir().unwrap();
+            let executable = temp.path().join("fixture");
+            write_executable(&executable, "#!/bin/sh\nexit 0\n");
+            match Command::new(executable).status() {
+                Ok(status) if status.success() => None,
+                Ok(status) => Some(format!("fixture exited with {status}")),
+                Err(error) => Some(format!("fixture failed to spawn: {error}")),
+            }
+        });
+
+        running.store(false, Ordering::Relaxed);
+        churn.join().unwrap();
+        assert!(failure.is_none(), "{}", failure.unwrap_or_default());
+    }
 
     #[test]
     fn docker_connector_command_uses_fixed_baked_boundary() {

@@ -8,6 +8,11 @@ on:
     branches:
       - main
   workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out; callers use this to pin CI to a release tag'
+        required: false
+        type: string
 
 jobs:
   fmt:
@@ -15,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -25,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -35,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -45,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -67,6 +80,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: dtolnay/rust-toolchain@stable
 
