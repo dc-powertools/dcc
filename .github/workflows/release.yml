@@ -73,7 +73,7 @@ jobs:
       - name: Package
         run: tar -czf dcc-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release dcc
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: dcc-${{ matrix.target }}
           path: dcc-${{ matrix.target }}.tar.gz
@@ -89,7 +89,7 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref_name }}
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts/
 
