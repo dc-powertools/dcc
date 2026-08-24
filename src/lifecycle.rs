@@ -83,8 +83,9 @@ impl LifecycleCommand {
     }
 
     /// Fallible mirror of [`substitute`](Self::substitute): maps `f` over every
-    /// string leaf, returning the first error. Used for run-time
-    /// `${containerEnv:…}` resolution, which can fail on an undefined/empty variable.
+    /// string leaf, returning the first consumer-specific validation error. Runtime
+    /// `${containerEnv:…}` resolution itself follows empty/default compatibility
+    /// semantics, while callers may combine it with additional validation.
     pub(crate) fn try_substitute(
         &self,
         f: &impl Fn(&str) -> anyhow::Result<String>,
@@ -395,6 +396,20 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.to_string().contains("bad leaf: boom"), "got: {err}");
+    }
+
+    #[test]
+    fn lifecycle_consumer_can_validate_after_empty_container_env_substitution() {
+        let cmd = LifecycleCommand::Exec(vec!["${containerEnv:MISSING}".to_string()]);
+        let env = std::collections::HashMap::new();
+        let err = cmd
+            .try_substitute(&|s: &str| {
+                let resolved = crate::config::vars::resolve_container_env(s, &env);
+                anyhow::ensure!(!resolved.is_empty(), "empty lifecycle argument");
+                Ok(resolved)
+            })
+            .unwrap_err();
+        assert_eq!(err.to_string(), "empty lifecycle argument");
     }
 
     // --- LifecycleHooks ---

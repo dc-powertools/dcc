@@ -258,17 +258,19 @@ container config env and is inherited uniformly (PID 1, its children, and
 once (`docker::probe_user_env` — a throwaway `docker run … sh -c 'echo $HOME; id -un'`)
 and merges them into the resolution map. The probe is gated on actual use
 (`exec::references_container_env`) so configs that don't use containerEnv pay nothing;
-a probe failure is a warning, leaving them unresolved (which then errors below).
+a probe failure is a warning, leaving the keys absent so the empty/default contract
+applies.
 
-A `${containerEnv:VAR}` that is **undefined or empty** with no `:default` is a hard
-error (`resolve_container_env` returns `Result`), so a typo or an unsupported variable
-(e.g. `${containerEnv:HOSTNAME}`) fails loudly instead of silently becoming empty. An
-explicit empty default (`${containerEnv:VAR:}`) opts back into an empty value. An
-undefined `${localEnv:…}` still resolves to its `:default` or the empty string. Local
-and env-namespace variables are not substituted inside a `containerEnv` value (it is
-build-time). Any other unknown `${…}` is left as-is and triggers a warning; the run
-path additionally prints a user-facing warning for unresolved references left in a
-mount or `remoteEnv`.
+An absent `${containerEnv:VAR}` resolves to its `:default` or the empty string, matching
+the Dev Container reference implementation. A present-but-empty value remains empty and
+does not use a default, so absence and explicit emptiness are distinguishable. Consumer
+validation runs afterward: notably, state paths still reject empty, relative, root,
+overlapping, and reserved resolved paths. `${localEnv:…}` follows the same absent/default
+distinction. Local and env-namespace variables are not substituted inside a
+`containerEnv` value (it is build-time). Any other unknown `${…}` is left as-is and
+triggers a warning; the run path additionally prints a user-facing warning for
+unresolved references left in a mount or `remoteEnv`. The durable rationale and exact
+matrix are recorded in decision 0005.
 
 ---
 

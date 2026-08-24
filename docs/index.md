@@ -202,8 +202,12 @@ base image set:
 }
 ```
 
-An undefined reference resolves to the empty string. Supply a fallback with
-`${containerEnv:VAR:default}` or `${localEnv:VAR:default}`.
+An absent reference resolves to the empty string unless a fallback is supplied with
+`${containerEnv:VAR:default}`. An explicitly present empty `containerEnv` value remains
+empty and does not use the fallback; defaults apply only when the key is absent. State
+paths are validated after substitution, so an empty result still cannot create a
+relative, root, overlapping, or reserved state mount. `${localEnv:VAR}` follows the
+same absent/default distinction.
 
 ## Commands
 

@@ -51,6 +51,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - UID remap decision: `.meta/decisions/0002-update-remote-user-uid-in-build-stage.md`
 - Remove image fast path decision: `.meta/decisions/0003-remove-image-fast-path.md`
 - Supervisor delivery model decision: `.meta/decisions/0004-embed-supervisor-in-image.md`
+- `containerEnv` substitution decision: `.meta/decisions/0005-container-env-substitution.md`
 - Rewrite quality record: `.meta/quality/0004-dcc-rewrite-quality.md`
 - UID remap quality record: `.meta/quality/0026-update-remote-user-uid-quality.md`
 - Runtime threat model: `.meta/threat-models/0004-dcc-runtime.md`

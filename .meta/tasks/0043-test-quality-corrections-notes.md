@@ -19,7 +19,10 @@
   teardown/removal assertions; retired bookkeeping checks removed).
 - Completed slice: T-0050 (compiled-CLI fake Docker boundary for version gates,
   upstream pull policy, image/argument ordering, and optional resource limits).
-- Selected slice: T-0051, followed by the remaining independent children.
+- Completed slice: T-0051 (upstream-compatible absent/default/present-empty
+  `containerEnv` contract, durable decision 0005, and post-substitution consumer
+  validation coverage).
+- Selected slice: T-0052, followed by T-0053.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this

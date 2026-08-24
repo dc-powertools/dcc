@@ -474,7 +474,8 @@ impl RuntimePlan {
         // (from /etc/passwd + the `-u` user), not baked into the image's Config.Env. When
         // any runtime-applied field references `${containerEnv:…}`, probe the configured
         // user's HOME/USER and merge them in. Best-effort: a probe failure warns and
-        // leaves them unset, so the undefined-variable error below points at the cause.
+        // leaves them absent, so substitution uses the documented empty/default
+        // containerEnv behavior below.
         if references_container_env(override_args, &config, &feature_runtime) {
             match docker::probe_user_env(image_tag.as_str(), &config.container_user).await {
                 Ok(probed) => container_env.extend(probed),
@@ -486,16 +487,12 @@ impl RuntimePlan {
         }
 
         config.workspace_folder =
-            config::vars::resolve_container_env(&config.workspace_folder, &container_env)
-                .with_context(|| format!("in workspaceFolder `{}`", config.workspace_folder))?;
+            config::vars::resolve_container_env(&config.workspace_folder, &container_env);
         config.run_args = config
             .run_args
             .iter()
-            .map(|arg| {
-                config::vars::resolve_container_env(arg, &container_env)
-                    .with_context(|| format!("in runArgs entry `{arg}`"))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|arg| config::vars::resolve_container_env(arg, &container_env))
+            .collect();
 
         let state = resolve_runtime_state(&config, &feature_runtime, &container_env)
             .context("invalid customizations.dcc.state after resolving containerEnv")?;
@@ -529,9 +526,8 @@ impl RuntimePlan {
             .map(|a| {
                 let a = config::vars::apply_substitution(a, &local_workspace, &local_cache);
                 config::vars::resolve_container_env(&a, &container_env)
-                    .with_context(|| format!("in command argument `{a}`"))
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect();
 
         // Mounts: feature contributions first, then devcontainer.json mounts. Feature
         // values get host/localEnv substitution; `${containerEnv:…}` is then resolved
@@ -541,11 +537,8 @@ impl RuntimePlan {
             .iter()
             .map(|m| config::vars::apply_substitution(m, &local_workspace, &local_cache))
             .chain(config.mounts.iter().cloned())
-            .map(|m| {
-                config::vars::resolve_container_env(&m, &container_env)
-                    .with_context(|| format!("in mount `{m}`"))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|m| config::vars::resolve_container_env(&m, &container_env))
+            .collect();
 
         ensure_mounts_safe(&all_mounts, opts.allow_unsafe_runtime)?;
         ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
@@ -564,12 +557,8 @@ impl RuntimePlan {
                     config::vars::apply_substitution(v, &local_workspace, &local_cache),
                 )
             }))
-            .map(|(k, v)| {
-                let resolved = config::vars::resolve_container_env(&v, &container_env)
-                    .with_context(|| format!("in remoteEnv `{k}`"))?;
-                anyhow::Ok((k, resolved))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|(k, v)| (k, config::vars::resolve_container_env(&v, &container_env)))
+            .collect();
 
         // Warn about any ${...} reference still unresolved in a mount or remoteEnv
         // value (e.g. an unsupported ${localEnv:…}); these otherwise make `docker run`
@@ -694,7 +683,7 @@ impl RuntimePlan {
         if has_start_hooks {
             let substitute = |s: &str| -> anyhow::Result<String> {
                 let s = config::vars::apply_substitution(s, &local_workspace, &local_cache);
-                config::vars::resolve_container_env(&s, &container_env)
+                Ok(config::vars::resolve_container_env(&s, &container_env))
             };
             rt_dir
                 .write_start_hooks(
@@ -942,9 +931,10 @@ async fn run_runtime_hooks(
     // hooks were already host-substituted at config-load (containerEnv deferred).
     let substitute = |s: &str| -> anyhow::Result<String> {
         let s = config::vars::apply_substitution(s, &plan.local_workspace, &plan.local_cache);
-        config::vars::resolve_container_env(&s, &plan.container_env)
+        Ok(config::vars::resolve_container_env(&s, &plan.container_env))
     };
-    let resolve_cenv = |s: &str| config::vars::resolve_container_env(s, &plan.container_env);
+    let resolve_cenv =
+        |s: &str| anyhow::Ok(config::vars::resolve_container_env(s, &plan.container_env));
     let name = phase.hook_name();
 
     for (feature_id, hooks) in &plan.feature_runtime.feature_hooks {

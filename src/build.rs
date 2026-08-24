@@ -385,8 +385,7 @@ async fn run_build_preparation(
             ),
         }
     }
-    let workdir = config::vars::resolve_container_env(&config.workspace_folder, &container_env)
-        .with_context(|| format!("in workspaceFolder `{}`", config.workspace_folder))?;
+    let workdir = config::vars::resolve_container_env(&config.workspace_folder, &container_env);
 
     let state = resolve_runtime_state(config, &feature_runtime, &container_env)
         .context("invalid customizations.dcc.state after resolving containerEnv")?;
@@ -747,7 +746,7 @@ async fn run_planned_hooks(
 ) -> anyhow::Result<()> {
     let substitute = |s: &str| -> anyhow::Result<String> {
         let s = config::vars::apply_substitution(s, local_workspace, local_cache);
-        config::vars::resolve_container_env(&s, container_env)
+        Ok(config::vars::resolve_container_env(&s, container_env))
     };
     for hook in &plan.hooks {
         let cmd = hook.command.try_substitute(&substitute).with_context(|| {

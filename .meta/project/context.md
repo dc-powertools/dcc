@@ -60,6 +60,7 @@ while this file captures technical conventions that prevent inconsistent impleme
 | State seeding | `src/seed.rs` | Hydrate declared state from the image on build; record in `.dcc/<profile>.seed.json`. | Seeding runs without state mounts; never mask Feature- or Dockerfile-installed content. |
 | UID remap | `src/uid.rs` | `updateRemoteUserUID` bakes a root RUN remapping the container user to the host uid/gid. | Remap is baked at image build; seeding sees the remapped `/etc/passwd` and re-owns hydrated state for non-root users so pre-remap Dockerfile-owned paths stay writable. |
 | Version compatibility | `src/version.rs` | `dcc.version` label interpreted with semver: equal or patch drift proceeds; major/minor or missing label refuses. | `dcc build` is exempt; runtime commands gate on the label. |
+| `containerEnv` substitution | `src/config/vars.rs`; `.meta/decisions/0005-container-env-substitution.md` | Match the Dev Container absent/default/present-empty matrix; validate structured consumers after substitution. | Empty substitution in paths must still pass absolute/reserved/overlap guards. |
 | Devcontainer Features | `src/features/` | Preserve OCI/local feature loading, install order, generated Dockerfile behavior, and metadata labels. | Feature scripts run as root but receive remote-user environment metadata. |
 | Tests | `tests/`, inline `#[cfg(test)]` modules | Unit-test internals near code; use integration tests for CLI behavior. | Avoid tests that only assert parser acceptance without behavior. |
 

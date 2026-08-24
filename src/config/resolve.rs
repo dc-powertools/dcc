@@ -138,15 +138,11 @@ pub(crate) fn resolve_state_entries_container_env(
 ) -> anyhow::Result<Vec<StateEntry>> {
     let resolved = state
         .iter()
-        .map(|entry| {
-            let path = vars::resolve_container_env(&entry.path, env)
-                .with_context(|| format!("in state path `{}`", entry.path))?;
-            anyhow::Ok(StateEntry {
-                path,
-                kind: entry.kind,
-            })
+        .map(|entry| StateEntry {
+            path: vars::resolve_container_env(&entry.path, env),
+            kind: entry.kind,
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect();
     validate_state_entries(resolved)
 }
 
@@ -951,6 +947,49 @@ mod tests {
         let env = std::collections::HashMap::from([("HOME".to_string(), "/home/dev".to_string())]);
         let resolved = resolve_state_entries_container_env(&loaded, &env).unwrap();
         assert_eq!(resolved[0].path, "/home/dev/.cargo");
+    }
+
+    #[test]
+    fn state_rejects_absent_container_env_after_empty_substitution() {
+        let deferred = vec![crate::config::StateEntry {
+            path: "${containerEnv:MISSING}".to_string(),
+            kind: crate::config::StateKind::Directory,
+        }];
+        let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
+        let err = resolve_state_entries_container_env(&loaded, &std::collections::HashMap::new())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("absolute"),
+            "empty resolved state path must still fail path validation: {err:#}"
+        );
+    }
+
+    #[test]
+    fn state_rejects_empty_container_env_that_resolves_into_reserved_path() {
+        let deferred = vec![crate::config::StateEntry {
+            path: "${containerEnv:ROOT}/cache".to_string(),
+            kind: crate::config::StateKind::Directory,
+        }];
+        let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
+        let env = std::collections::HashMap::from([("ROOT".to_string(), String::new())]);
+        let err = resolve_state_entries_container_env(&loaded, &env).unwrap_err();
+        assert!(
+            err.to_string().contains("/cache"),
+            "reserved-path validation must run after empty substitution: {err:#}"
+        );
+    }
+
+    #[test]
+    fn state_uses_absent_container_env_default_before_path_validation() {
+        let deferred = vec![crate::config::StateEntry {
+            path: "${containerEnv:MISSING:/home/dev}/.cache".to_string(),
+            kind: crate::config::StateKind::Directory,
+        }];
+        let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
+        let resolved =
+            resolve_state_entries_container_env(&loaded, &std::collections::HashMap::new())
+                .unwrap();
+        assert_eq!(resolved[0].path, "/home/dev/.cache");
     }
 
     #[test]
