@@ -26,12 +26,8 @@ Agents may do these without asking when they are relevant to the current task:
 - Continue after a clarification window using explicit assumptions.
 - Resume interrupted work from repository state, task notes, plans, and agent rosters without asking the product owner to reconstruct context.
 - Delegate bounded in-scope work under the standing request in root `AGENTS.md` when
-  [the decomposition rules](agent-definitions.md#decomposition-rules) justify it and the
-  [usage capacity guard](agent-definitions.md#usage-capacity-guard) permits it.
+  [the decomposition rules](agent-definitions.md#decomposition-rules) justify it.
 - Re-spawn stale or lost sub-agents only when their work is still needed and their ownership boundaries remain safe.
-- Read authoritative five-hour and weekly usage, suspend or resume child workers, and
-  set reset-aligned waits or polls under the
-  [usage capacity guard](agent-definitions.md#usage-capacity-guard).
 
 ## Task Intake Persistence
 

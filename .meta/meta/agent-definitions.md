@@ -203,7 +203,7 @@ separate decision with no minimum worker count. Keep work primary when it is sma
 tightly coupled, shares mutable canonical files, or costs more to coordinate than to
 complete. Keep at most one primary implementation task active by default. Delegate only
 an independently useful, non-overlapping result; a separate delegated task also requires
-isolated worktree, integration, and capacity safety. Task count is not a delegation
+isolated worktree and safe integration. Task count is not a delegation
 trigger. Decompose only when it improves speed, quality, or focus:
 
 - Split by independent files, components, or research questions.
@@ -214,35 +214,6 @@ trigger. Decompose only when it improves speed, quality, or focus:
 - Integrate through the root orchestrator.
 - Keep at most three child workers active by default. Integrate or close work before
   adding more unless project policy sets a different evidence-based cap.
-
-## Usage Capacity Guard
-
-The Root Orchestrator owns capacity monitoring whenever any child worker is planned,
-running, or quota-suspended. Use only the harness or provider's authoritative usage
-surface; never infer safety from elapsed time or token estimates.
-On Codex, use the repo's `codex-quota-monitor` skill when installed; it owns only
-telemetry acquisition and normalization, not capacity policy.
-
-- Read both the five-hour and weekly consumption before every spawn or resume, after a
-  worker result, and at least every five minutes while any child is active. When only
-  remaining capacity is reported, consumed percentage is `100 - remaining percentage`.
-- If either window is at least 95% consumed, start or resume no child. Ask active
-  children to checkpoint and suspend at the next safe message or tool boundary, then do
-  only the coordination needed to preserve their state and output.
-- Treat a failed or malformed required reading as unknown capacity and apply the same
-  delegation pause until telemetry returns. A successful authoritative response that
-  explicitly omits a window means that window is not applicable. Do not guess or ask
-  the product owner to monitor it.
-- Before waiting, record the minimal reading time, percentages, reset times, limiting
-  windows, worker states, next safe action, and wake method in the active task note. Do
-  not persist account identifiers or raw billing data.
-- When every limiting window has an authoritative reset time and a reliable wait
-  facility exists, set one wake-up timer for the latest of those times. Otherwise poll
-  the usage surface every five minutes. A wake-up is not proof of reset: re-read both
-  windows and keep waiting while either applicable window is at least 95% or unknown.
-- Resume existing workers when the harness supports it; otherwise use the replacement
-  rules below. A quota wait is an operational pause, not **Blocked**, **Needs
-  verification**, or task completion.
 
 ## Parallel Integration And Recovery
 

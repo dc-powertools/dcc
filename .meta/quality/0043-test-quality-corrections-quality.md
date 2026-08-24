@@ -74,7 +74,6 @@ boundary evidence; live Docker remains an explicit environment-dependent residua
 | Low | Test maintenance | Named tests depended on retired symbols, exact formatting/counts, or duplicate examples. | Classify every candidate and retain stable behavior through stronger positive tests. | Closed in T-0052 |
 | Low | Project command catalog | Aggregate test counts still described the pre-initiative suite. | Refresh the canonical `cargo test` observed result. | Closed during aggregate consistency pass |
 | Info | Live Docker verification | No Docker executable is installed in this environment. | Keep all live cases ignored locally and explicitly serialized in CI; report rather than infer their result. | Accepted residual |
-| Info | Requested child-agent sequence | The session exposed no authoritative five-hour/weekly quota surface required by the framework capacity guard. | Execute the same task-isolated sequence in the primary session and record the constraint. | Accepted process constraint |
 
 ## Consistency
 

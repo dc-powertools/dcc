@@ -30,11 +30,6 @@
   framework hygiene passed; no task remains selected.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
-- Delegation constraint: the requested fresh-agent sequence cannot start because this
-  Codex session has neither the repository `codex-quota-monitor` skill nor another
-  authoritative five-hour and weekly usage surface. Under the framework usage-capacity
-  guard, capacity is unknown and child spawning is paused. The primary session is
-  executing the same task-isolated sequence instead.
 - Shared-tree baseline: task-catalog intake and T-0043 through T-0053 briefs were
   present as uncommitted framework state when implementation began; preserve unrelated
   task intake at every child commit.

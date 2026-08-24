@@ -82,17 +82,6 @@ invalidates it; unrelated task arrival does not stale it. A final response addre
 the current request and relevant catalog state; it never presents pending, parked,
 blocked, or `Needs verification` work as completed.
 
-## Capacity-Wait Recovery
-
-[The usage capacity guard](agent-definitions.md#usage-capacity-guard) owns thresholds,
-meter cadence, suspension, and timer-versus-poll selection. A reset timer merely wakes
-the Root Orchestrator: re-read every applicable window before resuming. If a limiting
-window did not reset or telemetry is unavailable, update the task checkpoint and wait.
-
-Prefer the original suspended handle after a safe reading. If it cannot resume, inspect
-its last output and repository state before replacing it. Keep each affected task
-active or parked; capacity waiting is not a terminal task status.
-
 ## Worker And Worktree Recovery
 
 [agent-definitions.md](agent-definitions.md#parallel-integration-and-recovery) owns WIP

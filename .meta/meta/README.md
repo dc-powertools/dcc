@@ -55,24 +55,17 @@ to its canonical owner instead of copying facts into framework-managed records.
 The portable core is complete with this `.meta/meta/` tree and the merged root
 `AGENTS.md` startup instruction. A root `CLAUDE.md` may import `AGENTS.md` so Claude Code
 loads the same owner. Project files under `.codex/agents/` and `.claude/agents/` may
-expose selected roles through native discovery. A repo skill under
-`.agents/skills/codex-quota-monitor/` may expose the Codex-specific telemetry procedure
-required by the portable usage capacity guard.
+expose selected roles through native discovery.
 
 These files are optional integration surfaces, not additional policy owners. They:
 
 - point to [agent-definitions.md](agent-definitions.md) and other canonical process
   owners instead of copying their rules;
 - keep agent adapters limited to vendor-required discovery metadata and least-privilege
-  capability settings, and the skill limited to its telemetry procedure and UI metadata;
+  capability settings;
 - do not add executable code, dependencies, model pins, MCP servers, hooks, permission
   bypasses, or integration ownership; and
 - can be omitted or removed without changing the core framework workflow.
-
-The quota-monitor skill contains only its required Markdown instructions and UI metadata.
-It uses the already-installed Codex App Server and links
-[agent-definitions.md](agent-definitions.md#usage-capacity-guard) as policy owner; it is
-not part of the three-role adapter pilot.
 
 The current adapter pilot covers Reviewer, QA And Verification Agent, and Security And
 Risk Agent. The source framework's decision and changelog own its promotion or sunset;
@@ -147,9 +140,8 @@ every project artifact only after it has useful content.
 
 A clean core package contains this `.meta/meta/` tree and a merged root AGENTS startup
 instruction. For Claude Code, merge a root `CLAUDE.md` import of `AGENTS.md`. Optionally
-merge the matching `.codex/agents/`, `.claude/agents/`, or Codex quota-monitor skill
-when the destination uses those harnesses. Never overwrite an established instruction,
-same-name agent, or same-name skill.
+merge the matching `.codex/agents/` or `.claude/agents/` when the destination uses those
+harnesses. Never overwrite an established instruction or same-name agent.
 The package excludes `.meta/README.md` and every mutable project-documentation sibling.
 Packaging is the supported reset path; do not delete an existing project's documentation
 to simulate a reset.

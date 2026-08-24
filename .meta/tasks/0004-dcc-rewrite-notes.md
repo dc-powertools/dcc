@@ -68,15 +68,11 @@ Current queue:
 - T-0010: port attributes, safe `runArgs`, docs, fixtures, validation, final review,
   and parent closure.
 
-Worker and usage plan:
+Worker plan:
 
 - Root Orchestrator owns implementation integration and all shared documentation.
 - Sub-agents may do bounded read-only architecture, QA, security, and review work, or
   code edits only with disjoint write ownership.
-- No repo `codex-quota-monitor` skill is installed or discoverable in this session.
-  Required authoritative usage telemetry is unavailable, so child concurrency is kept
-  conservative and should pause if telemetry becomes available and reports either
-  applicable window at or above 95%.
 
 ## 2026-07-14 T-0005 Completion Checkpoint
 

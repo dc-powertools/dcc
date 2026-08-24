@@ -51,16 +51,7 @@ work.
 
 | Worker | Task ID, Revision, And Assignment | Owned Files Or Domains | Status | Last Output | Restart Policy |
 | --- | --- | --- | --- | --- | --- |
-| | | | Planned / Running / Quota-suspended / Complete / Stale / Obsolete / Replace | | |
-
-## Usage Capacity
-
-- Last authoritative meter reading:
-- Five-hour window consumed and reset time:
-- Weekly window consumed and reset time:
-- Limiting or unknown windows:
-- Wake method and time:
-- Resume condition:
+| | | | Planned / Running / Complete / Stale / Obsolete / Replace | | |
 
 ## Attempts And Dead Ends
 
