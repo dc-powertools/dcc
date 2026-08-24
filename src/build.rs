@@ -136,22 +136,15 @@ pub(crate) async fn build(
     if opts.refresh_only {
         ensure_refresh_image_exists(image_tag.as_str()).await?;
     } else {
-        let base_image = build_base_image(
-            &config,
-            config_path,
-            image_tag.as_str(),
-            opts.no_cache,
-            opts.update,
-        )
-        .await
-        .context("failed to build base image")?;
+        let base_image = build_base_image(&config, config_path, image_tag.as_str(), opts.no_cache)
+            .await
+            .context("failed to build base image")?;
         build_dcc_stage(
             &config,
             config_path,
             &base_image,
             image_tag.as_str(),
             opts.no_cache,
-            opts.update,
             opts.allow_unsafe_runtime,
         )
         .await?;
@@ -176,7 +169,6 @@ pub(crate) async fn build(
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BuildOptions {
     pub(crate) no_cache: bool,
-    pub(crate) update: bool,
     pub(crate) refresh_only: bool,
     pub(crate) strict: bool,
     pub(crate) allow_unsafe_runtime: bool,
@@ -200,7 +192,6 @@ async fn build_base_image(
     config_path: &Path,
     image_tag: &str,
     no_cache: bool,
-    update: bool,
 ) -> anyhow::Result<String> {
     let Some(build) = &config.build else {
         return config
@@ -214,7 +205,7 @@ async fn build_base_image(
     docker::build_path(docker::DockerBuildOptions {
         tag: base_tag.clone(),
         no_cache,
-        pull: update,
+        pull: no_cache,
         metadata_label: None,
         seed_label: None,
         file: Some(plan.dockerfile),
@@ -233,7 +224,6 @@ async fn build_dcc_stage(
     base_image: &str,
     image_tag: &str,
     no_cache: bool,
-    update: bool,
     allow_unsafe_runtime: bool,
 ) -> anyhow::Result<()> {
     let config_dir = config_path.parent().with_context(|| {
@@ -290,10 +280,11 @@ async fn build_dcc_stage(
         )
     };
 
+    let pull_base_image = config.image.as_deref() == Some(base_image);
     docker::build(
         image_tag,
         no_cache,
-        update,
+        no_cache && pull_base_image,
         output.context_tar,
         output.metadata_label.as_deref(),
         seed_label.as_deref(),
@@ -968,7 +959,6 @@ mod tests {
             "supervisor entrypoint args must come after the image: {args:?}"
         );
         assert!(!args.contains(&"--no-cache".to_string()));
-        assert!(!args.contains(&"--update".to_string()));
     }
 
     #[test]

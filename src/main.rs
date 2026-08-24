@@ -45,7 +45,6 @@ async fn run() -> anyhow::Result<()> {
     match cli.command {
         cli::Command::Build {
             no_cache,
-            update,
             refresh_only,
             allow_unsafe_runtime,
             reseed_state,
@@ -56,7 +55,6 @@ async fn run() -> anyhow::Result<()> {
                 &config_path,
                 build::BuildOptions {
                     no_cache,
-                    update,
                     refresh_only,
                     strict: cli.strict,
                     allow_unsafe_runtime,

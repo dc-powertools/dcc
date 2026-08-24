@@ -34,7 +34,7 @@ pub(crate) struct DockerBuildOptions {
     pub(crate) tag: String,
     pub(crate) no_cache: bool,
     /// Pass `--pull` to `docker build` so `FROM` re-resolves the base image tag
-    /// upstream rather than reusing a stale local image. Plumbed from `--update`.
+    /// upstream rather than reusing a stale local image.
     pub(crate) pull: bool,
     pub(crate) metadata_label: Option<String>,
     /// Optional `dcc.seed` label value (resolved seed manifest JSON).

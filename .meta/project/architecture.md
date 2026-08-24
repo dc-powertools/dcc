@@ -486,10 +486,13 @@ in-memory tar context, so every dcc-built image carries a `dcc.version` label:
 docker build [--no-cache] [--pull] [--label devcontainer.metadata=<json>] [--label dcc.seed=<json>] --tag <image-tag> -
 ```
 
-`--pull` is passed only when `--update` is given, so the base image's `FROM` tag
-is re-resolved upstream rather than reusing a stale local image. The `-` argument
-instructs Docker to read the entire build context (including the Dockerfile) from
-stdin as a tar archive. No Dockerfile is written to disk.
+`--pull` is passed when `--no-cache` is given and the Dockerfile's `FROM` is an
+upstream base image, so the base image tag is re-resolved upstream rather than
+reusing a stale local image. For official `build` profiles this applies to the
+user Dockerfile build; the generated dcc stage uses the local intermediate base
+tag and does not ask Docker to pull it. The `-` argument instructs Docker to read
+the entire build context (including the Dockerfile) from stdin as a tar archive.
+No Dockerfile is written to disk.
 
 For an image-only profile with `containerUser: root` and no features, env, ports,
 or hooks, the generated Dockerfile is just `FROM <image>` plus the version
@@ -1007,7 +1010,7 @@ must include the full command that was attempted.
 dcc [--strict] [--dry-run] [--debug] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
 
 Commands:
-  build  [--no-cache] [--update] [--refresh-only] [--reseed-state]
+  build  [--no-cache] [--refresh-only] [--reseed-state]
   run    [--memory <size>] [--cpus <n>] [command-name]
   exec   [--memory <size>] [--cpus <n>] <command...>
   start  [--memory <size>] [--cpus <n>]

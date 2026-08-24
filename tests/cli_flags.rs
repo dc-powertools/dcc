@@ -401,6 +401,18 @@ fn refresh_only_flag_accepted_by_build() {
 }
 
 #[test]
+fn update_flag_rejected_by_build() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
+    let output = fx
+        .dcc(&["--dry-run", "build", "--update"])
+        .output()
+        .unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "unexpected argument '--update'");
+}
+
+#[test]
 fn stop_now_and_kill_flags_accepted() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
