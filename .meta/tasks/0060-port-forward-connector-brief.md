@@ -141,15 +141,15 @@ Do not require host netcat in the default suite.
 
 ## Acceptance Criteria
 
-- [ ] Host forwarding invokes only the baked `dcc-connect` boundary.
-- [ ] OpenBSD netcat receives `-N`; Nmap Ncat does not.
-- [ ] Unknown, BusyBox, and traditional variants cannot silently satisfy provisioning.
-- [ ] A compatible pre-existing connector avoids unnecessary package installation.
-- [ ] Package fallbacks end with a successful compatibility check or a clear build error.
-- [ ] Docker-free tests cover selection, exact argv, process EOF, response drain, and
+- [x] Host forwarding invokes only the baked `dcc-connect` boundary.
+- [x] OpenBSD netcat receives `-N`; Nmap Ncat does not.
+- [x] Unknown, BusyBox, and traditional variants cannot silently satisfy provisioning.
+- [x] A compatible pre-existing connector avoids unnecessary package installation.
+- [x] Package fallbacks end with a successful compatibility check or a clear build error.
+- [x] Docker-free tests cover selection, exact argv, process EOF, response drain, and
       unsupported variants with counterfactual confidence.
-- [ ] The unchanged Docker smoke passes in CI.
-- [ ] Architecture documentation matches the wrapper, selection order, provisioning,
+- [x] The unchanged Docker smoke passes in CI.
+- [x] Architecture documentation matches the wrapper, selection order, provisioning,
       and remaining compiled-helper alternative.
 
 ## Constraints And Risks

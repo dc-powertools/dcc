@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `.meta/tasks/README.md`
-- Primary task: T-0060
-- Primary details: `.meta/tasks/0060-port-forward-connector-brief.md`
+- Primary task: T-0057
+- Primary details: None
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -37,6 +37,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Diagnosed the autotag failure (T-0061) as a flaky Linux `ETXTBSY` race in a just-written executable test fixture; tagging succeeded, release CI failed afterward, and its reusable CI also checked a stale pre-bump ref. | `.meta/tasks/README.md#tasks` |
+| 2026-08-24 | Completed the variant-aware port-forward connector (T-0060) after CI passed the EOF-dependent forwarding smoke twice and all 32 Docker smokes in both runs. | `.meta/quality/0060-port-forward-connector-quality.md` |
 | 2026-08-24 | Designed the `nc -N` port-forwarding correction and Docker-free regression coverage (T-0059), with the accepted netcat-variant limitation made explicit. | `.meta/tasks/0059-nc-half-close-design.md` |
 | 2026-08-24 | Diagnosed the latest CI failure (T-0058): the port-forward connector does not half-close its network socket when host input reaches EOF, so EOF-dependent exchanges hang and the Docker smoke receives bytes but times out before clearing them. | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Restored strict errors for missing `${containerEnv:VAR}` references without explicit defaults (T-0056). | `.meta/decisions/0006-require-missing-container-env-default.md`; `.meta/quality/0056-missing-container-env-error-quality.md` |

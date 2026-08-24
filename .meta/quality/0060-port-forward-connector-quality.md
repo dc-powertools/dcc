@@ -25,7 +25,7 @@
 | Request EOF reaches the connector while its response drains. | Real child-process/fake-Docker test plus in-memory relay test. | Dropping owned child stdin after client EOF allows `response-after-eof` to drain; both tests pass. | Pass |
 | Generated wrapper is executable and follows Feature installation. | Tar mode and Dockerfile ordering assertions. | `.dcc-generated/dcc-connect` has mode 0755; Feature install precedes wrapper copy and compatibility checks. | Pass |
 | Architecture matches implementation and fallback direction. | Documentation search and diff review. | Wrapper selection, package matrix, pipe ownership, and compiled-helper fallback are documented. | Pass |
-| Existing Docker smoke passes in CI. | Ignored live-Docker smoke. | The unchanged smoke compiles, but this environment cannot run Docker. | Not run |
+| Existing Docker smoke passes in CI. | Ignored live-Docker smoke. | `forwarded_port_reaches_container_loopback_service` passed in both CI runs captured by `logs_88712697210.zip`; all 32 Docker smokes passed in each run. | Pass |
 
 ## Readiness
 
@@ -51,7 +51,7 @@ Readiness verdict: **Ready**.
 | Yes | `cargo test` | 510 unit, 31 runnable CLI, 9 config, 13 fake-Docker boundary, and 9 Feature CLI tests passed; 3 CLI and 32 Docker tests remained ignored. | Pass | |
 | Yes | `cargo build` | Passed. | Pass | |
 | Yes | `git diff --check` and scoped review | Passed; no unrelated tracked files included. | Pass | |
-| CI-owned | `forwarded_port_reaches_container_loopback_service` | Compiled unchanged; live execution unavailable because Docker cannot run here. | Not run | Run the existing ignored smoke in Docker-capable CI. |
+| CI-owned | `forwarded_port_reaches_container_loopback_service` | Passed twice in Docker-capable CI; both complete 32-test Docker-smoke runs passed. | Pass | |
 
 - Criteria or methods amended after implementation began, with reason and impact: the
   real subprocess test exposed that `ChildStdin::shutdown` does not release the pipe
@@ -78,7 +78,7 @@ Readiness verdict: **Ready**.
 | T-0060 r2 brief | Fixed wrapper, compatible provisioning, Docker-free evidence. | Implementation and focused matrix match. | None |
 | Project standards | Mandatory Rust checks and task-scoped commit. | Runnable checks passed; commit follows after record closure. | None |
 | Tests and docs | Stable boundary and EOF behavior agree. | Exact argv, real subprocess, build context, and architecture align. | None |
-| State and assumptions | Docker remains CI-owned in this environment. | Live smoke is the only remaining verification condition. | Run CI smoke. |
+| State and assumptions | Docker remains CI-owned in this environment. | CI supplied the previously missing live-smoke evidence. | None |
 
 ## Batch And Residual Risk
 
@@ -90,8 +90,6 @@ Readiness verdict: **Ready**.
 ## Completion
 
 - Required runnable checks all passed: Yes
-- Status: Needs verification
-- Exact incomplete condition, if not Done: the existing live Docker port-forward smoke
-  must pass in Docker-capable CI.
-- Next action: run `forwarded_port_reaches_container_loopback_service` in CI, then mark
-  T-0060 Done if it passes.
+- Status: Done
+- Exact incomplete condition, if not Done: None.
+- Next action: Stop; outcome complete.
