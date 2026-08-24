@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0060
+- Next task ID: T-0061
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -78,6 +78,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0057 | Fully design and implement `dcc profile list` so users can discover available profiles, including stable text and JSON output, documentation, and automated verification. | User request 2026-08-24 / r1 | Ready | None | Initiative / Medium | None | Frame profile discovery and output semantics in a task brief, then implement the command with tests and user documentation. | None | Pending. |
 | T-0058 | Diagnose the build issue evidenced by the latest CI logs in `logs_88701649099.zip`. | User request 2026-08-24 / r1 | Done | None | Discover / Medium | None | Stop; diagnosis complete and no product-code change was authorized. | None | CI checkout `24d35e5` passed format, Clippy, ordinary tests, and build; only `forwarded_port_reaches_container_loopback_service` failed because it ended with an empty response after its read deadline. The relay correctly half-closes the connector's stdin, but its `docker exec -i … nc 127.0.0.1 PORT` command omits OpenBSD netcat's `-N`, so stdin EOF is not propagated as a TCP write-half close. A Docker-free reproduction showed the exact connector delivered both directions but timed out, while adding `-N` completed immediately. All six forwarding unit tests passed, confirming their fake upstream does not cover the real netcat process contract. Live Docker reproduction was unavailable because this nested environment denies daemon mount/unshare operations. |
 | T-0059 | Design the `nc -N` port-forwarding correction, assess flag portability, and define Docker-free regression coverage. | User request 2026-08-24 / r1 | Done | T-0058 | Decide / Medium | None | Stop; implementation-ready design complete. | `.meta/tasks/0059-nc-half-close-design.md` | Designed a narrow `nc -N` connector change, a pure argv contract test, a real loopback/subprocess fake-Docker test, retention of the in-memory relay test and Docker smoke, and architecture updates. Confirmed `-N` is OpenBSD-specific: BusyBox and traditional netcat omit it, while Nmap Ncat half-closes by default without that short flag. The accepted short-term design therefore records a real compatibility limitation for preinstalled `nc` and the existing yum/dnf `nmap-ncat` fallback. |
+| T-0060 | Implement reliable port-forward half-close behavior through a baked variant-aware `dcc-connect` wrapper, compatible connector provisioning, Docker-free regression coverage, and aligned architecture documentation. | User request and wrapper-scope follow-up 2026-08-24 / r2 | Ready | T-0059 | Initiative / Medium | None | Implement `.meta/tasks/0060-port-forward-connector-brief.md`, run its focused matrix and full required checks, and leave the existing Docker smoke unchanged for CI verification. | `.meta/tasks/0060-port-forward-connector-brief.md`; `.meta/tasks/0059-nc-half-close-design.md` | Pending. |
 
 ## Operating Contract
 
