@@ -32,7 +32,7 @@ impl FeatureEditSummary {
 }
 
 pub(crate) fn update_features(
-    _workspace: &Workspace,
+    workspace: &Workspace,
     profile: &ProfileName,
     config_path: &Path,
     opts: FeatureOptions,
@@ -68,6 +68,7 @@ pub(crate) fn update_features(
         let command = feature_command_label(&add, &remove);
         DryRunReport::new(
             command,
+            workspace,
             profile,
             config_path,
             vec!["profile config parsed", "feature edits planned"],

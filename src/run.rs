@@ -49,6 +49,7 @@ pub(crate) async fn run(
         }
         return dry_run::DryRunReport::new(
             "run",
+            workspace,
             profile,
             config_path,
             vec!["workspace resolved", "profile resolved", "config loaded"],

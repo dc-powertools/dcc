@@ -17,35 +17,59 @@ fn error_on_path_profile_file_not_found() {
 #[test]
 fn path_profile_inside_workspace_loads_config() {
     let fx = Fixture::new();
-    // Write a config file at a non-standard location inside the workspace.
     fx.write_config("../custom.json", r#"{ "image": "rust:1" }"#);
-    // dcc build will fail (no Docker), but the failure must NOT be about the config path.
-    let output = fx.dcc(&["build", "-p", "./custom.json"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let output = fx
+        .dcc(&[
+            "--dry-run",
+            "--format",
+            "json",
+            "build",
+            "-p",
+            "./custom.json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "ok");
+    assert_eq!(report["profile"], "custom-json");
+    assert_eq!(report["docker_invoked"], false);
     assert!(
-        !stderr.contains("nonexistent") && !stderr.contains("resolve config path"),
-        "config should have been found; stderr: {stderr}"
+        report["config"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/custom.json")),
+        "dry-run did not load the requested config: {report}"
     );
 }
 
 #[test]
 fn path_profile_container_id_consistent_across_commands() {
-    // dcc -p ./X build and dcc -p ./X stop must target the same dcc container id.
-    // We can't run Docker here, but we can verify that stop reaches Docker
-    // (not failing earlier on config resolution) when given a valid path arg.
     let fx = Fixture::new();
     fx.write_config("claude.json", r#"{ "image": "rust:1" }"#);
-    // stop is idempotent (treats "no such container" as success), so success
-    // with a path arg confirms the id was derived and passed to Docker.
-    let output = fx
-        .dcc(&["stop", "-p", "./.devcontainer/claude.json"])
+
+    let profile = "./.devcontainer/claude.json";
+    let id = fx
+        .dcc(&["--format", "json", "id", "-p", profile])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("resolve config path"),
-        "path-based stop should not fail on config resolution; stderr: {stderr}"
-    );
+    let build = fx
+        .dcc(&["--dry-run", "--format", "json", "build", "-p", profile])
+        .output()
+        .unwrap();
+    let stop = fx
+        .dcc(&["--dry-run", "--format", "json", "stop", "-p", profile])
+        .output()
+        .unwrap();
+    assert_success(&id);
+    assert_success(&build);
+    assert_success(&stop);
+
+    let id: serde_json::Value = serde_json::from_slice(&id.stdout).unwrap();
+    let build: serde_json::Value = serde_json::from_slice(&build.stdout).unwrap();
+    let stop: serde_json::Value = serde_json::from_slice(&stop.stdout).unwrap();
+    assert_eq!(id["container_id"], build["container_id"]);
+    assert_eq!(id["container_id"], stop["container_id"]);
+    assert_eq!(id["profile"], "devcontainer-claude-json");
 }
 
 #[test]

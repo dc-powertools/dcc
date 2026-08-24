@@ -4,7 +4,8 @@ use common::*;
 use std::{
     io::{Read as _, Write as _},
     net::{Shutdown, TcpListener, TcpStream},
-    process::{Command, Output, Stdio},
+    path::Path,
+    process::{Child, Command, Output, Stdio},
     time::{Duration, Instant},
 };
 
@@ -74,10 +75,16 @@ impl Drop for DockerFixture {
         if id.is_empty() {
             return;
         }
-        let _ = docker(&["rm", "-f", &id]);
-        let _ = docker(&["rm", "-f", &format!("{id}-build-prep")]);
-        let _ = docker(&["rmi", "-f", &id]);
-        let _ = docker(&["rmi", "-f", &format!("{id}-base")]);
+        // Cleanup must remain harmless for Docker-free tests and hosts. Live tests
+        // still use `docker()` below so a missing executable fails their assertions.
+        let _ = Command::new("docker").args(["rm", "-f", &id]).output();
+        let _ = Command::new("docker")
+            .args(["rm", "-f", &format!("{id}-build-prep")])
+            .output();
+        let _ = Command::new("docker").args(["rmi", "-f", &id]).output();
+        let _ = Command::new("docker")
+            .args(["rmi", "-f", &format!("{id}-base")])
+            .output();
     }
 }
 
@@ -88,35 +95,91 @@ fn docker(args: &[&str]) -> Output {
         .expect("failed to run docker")
 }
 
-fn assert_no_running_container(container_id: &str) {
+fn running_container_instance_ids(container_id: &str) -> Vec<String> {
     let output = docker(&[
         "ps",
         "--filter",
         &format!("label=dcc.container_id={container_id}"),
         "--format",
-        "{{.Names}}",
+        "{{.ID}}",
     ]);
     assert_success(&output);
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn running_container_instance_id(container_id: &str) -> String {
+    let ids = running_container_instance_ids(container_id);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "",
+        ids.len(),
+        1,
+        "expected exactly one running container for {container_id}, got {ids:?}"
+    );
+    ids[0].clone()
+}
+
+fn assert_no_running_container(container_id: &str) {
+    assert_eq!(
+        running_container_instance_ids(container_id),
+        Vec::<String>::new(),
         "expected no running container for {container_id}"
     );
 }
 
 fn assert_running_container(container_id: &str) {
-    let output = docker(&[
-        "ps",
-        "--filter",
-        &format!("label=dcc.container_id={container_id}"),
-        "--format",
-        "{{.Names}}",
-    ]);
-    assert_success(&output);
-    assert!(
-        !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
-        "expected running container for {container_id}"
-    );
+    let _ = running_container_instance_id(container_id);
+}
+
+fn assert_container_removed(instance_id: &str) {
+    let output = docker(&["inspect", instance_id]);
+    assert_failure(&output);
+}
+
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn wait_for_file(&mut self, path: &Path, description: &str) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if path.exists() {
+                return;
+            }
+            if let Some(status) = self.0.try_wait().expect("failed to poll dcc process") {
+                panic!("dcc exited with {status} before {description}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {description}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn wait_for_success(&mut self, description: &str) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = self.0.try_wait().expect("failed to poll dcc process") {
+                assert!(status.success(), "{description} failed with {status}");
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {description}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 #[test]
@@ -316,12 +379,18 @@ fn durable_and_one_shot_container_modes_behave_differently() {
 
     assert_success(&fx.dcc(&["start"]));
     assert_running_container(&container_id);
+    let durable_instance = running_container_instance_id(&container_id);
     assert_success(&fx.dcc(&[
         "exec",
         "/bin/sh",
         "-lc",
         "printf durable > /workspace/durable.txt",
     ]));
+    assert_eq!(
+        running_container_instance_id(&container_id),
+        durable_instance,
+        "dcc exec should reuse the container started by dcc start"
+    );
     assert_eq!(fx.read_file("durable.txt"), "durable");
 
     assert_success(&fx.dcc(&["stop"]));
@@ -662,56 +731,6 @@ RUN mkdir -p /seeded-dir && chown dev:dev /seeded-dir && printf 'from-image' > /
 
 #[test]
 #[ignore]
-fn build_dry_run_reports_planned_seeding_without_docker() {
-    let fx = DockerFixture::new();
-    write_seeding_dockerfile(&fx);
-    fx.write_config(&seeding_dir_config());
-
-    let out = fx.dcc(&["build", "--dry-run", "--format", "json"]);
-    assert_success(&out);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let v: serde_json::Value = serde_json::from_str(&stdout).expect("dry-run JSON parseable");
-    assert_eq!(v["docker_invoked"], false);
-    // The report lists seeding among the planned/skipped considerations.
-    let joined = stdout.to_lowercase();
-    assert!(
-        joined.contains("seed"),
-        "expected dry-run report to mention seeding, got: {stdout}"
-    );
-}
-
-#[test]
-#[ignore]
-fn one_shot_container_leaves_no_host_side_bookkeeping() {
-    let fx = DockerFixture::new();
-    fx.write_config(&format!(
-        r#"{{
-            "image": "{IMAGE}",
-            "containerUser": "root"
-        }}"#
-    ));
-    let container_id = fx.container_id();
-
-    assert_success(&fx.dcc(&["build"]));
-    assert_success(&fx.dcc(&["exec", "/bin/true"]));
-    assert_no_running_container(&container_id);
-
-    // The old <workspace>/.dcc/<profile>/runtime/ directory must not exist.
-    let runtime_dir = fx
-        .fx
-        .dir
-        .path()
-        .join(".dcc")
-        .join("devcontainer")
-        .join("runtime");
-    assert!(
-        !runtime_dir.exists(),
-        "host-side runtime bookkeeping should not exist after one-shot teardown"
-    );
-}
-
-#[test]
-#[ignore]
 fn stop_now_force_terminates_durable_container() {
     let fx = DockerFixture::new();
     fx.write_config(&format!(
@@ -1047,11 +1066,14 @@ fn start_then_immediate_stop_graceful_tears_down() {
             "containerUser": "root"
         }}"#
     ));
+    let container_id = fx.container_id();
 
     assert_success(&fx.dcc(&["build"]));
     assert_success(&fx.dcc(&["start"]));
+    assert_running_container(&container_id);
     // Immediate stop — no grace window dependency.
     assert_success(&fx.dcc(&["stop"]));
+    assert_no_running_container(&container_id);
 }
 
 #[test]
@@ -1064,10 +1086,13 @@ fn start_then_immediate_stop_now_tears_down() {
             "containerUser": "root"
         }}"#
     ));
+    let container_id = fx.container_id();
 
     assert_success(&fx.dcc(&["build"]));
     assert_success(&fx.dcc(&["start"]));
+    assert_running_container(&container_id);
     assert_success(&fx.dcc(&["stop", "--now"]));
+    assert_no_running_container(&container_id);
 }
 
 #[test]
@@ -1080,10 +1105,13 @@ fn start_then_immediate_stop_kill_tears_down() {
             "containerUser": "root"
         }}"#
     ));
+    let container_id = fx.container_id();
 
     assert_success(&fx.dcc(&["build"]));
     assert_success(&fx.dcc(&["start"]));
+    assert_running_container(&container_id);
     assert_success(&fx.dcc(&["stop", "--kill"]));
+    assert_no_running_container(&container_id);
 }
 
 #[test]
@@ -1134,13 +1162,32 @@ fn one_shot_container_drains_after_command_without_grace() {
             "containerUser": "root"
         }}"#
     ));
+    let container_id = fx.container_id();
 
     assert_success(&fx.dcc(&["build"]));
-    assert_success(&fx.dcc(&["exec", "/bin/true"]));
-    // The container should be removed (one-shot + --rm). Give it a moment.
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    // A second exec should start a fresh container and succeed.
-    assert_success(&fx.dcc(&["exec", "/bin/true"]));
+    let ready = fx.fx.dir.path().join("one-shot-ready");
+    let release = fx.fx.dir.path().join("one-shot-release");
+    let mut command = fx.fx.dcc(&[
+        "exec",
+        "/bin/sh",
+        "-lc",
+        "printf ready > /workspace/one-shot-ready; while [ ! -f /workspace/one-shot-release ]; do sleep 0.05; done",
+    ]);
+    let mut process = ChildGuard(
+        command
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to start one-shot dcc command"),
+    );
+    process.wait_for_file(&ready, "one-shot command registration");
+    let original_instance = running_container_instance_id(&container_id);
+
+    std::fs::write(release, b"release").unwrap();
+    process.wait_for_success("one-shot dcc command");
+
+    assert_container_removed(&original_instance);
+    assert_no_running_container(&container_id);
 }
 
 #[test]
@@ -1153,11 +1200,11 @@ fn durable_reuse_and_keep_promotion_work_with_handshake() {
         r#"{{
             "image": "{IMAGE}",
             "containerUser": "root",
-            "postStartCommand": "printf 'started' > /workspace/durable-marker",
+            "postStartCommand": "count=$(cat /workspace/start-count 2>/dev/null || printf 0); printf '%s' $((count + 1)) > /workspace/start-count",
             "customizations": {{
                 "dcc": {{
                     "commands": {{
-                        "check": "cat /workspace/durable-marker"
+                        "check": "cat /workspace/start-count"
                     }}
                 }}
             }}
@@ -1168,11 +1215,17 @@ fn durable_reuse_and_keep_promotion_work_with_handshake() {
     // First command with --keep: cold start, hooks run, command waits.
     let out = fx.dcc(&["run", "--keep", "check"]);
     assert_success(&out);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("started"));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+    let original_instance = running_container_instance_id(&fx.container_id());
     // Second command with --keep: reuses the durable container, fast-path readiness.
     let out2 = fx.dcc(&["run", "--keep", "check"]);
     assert_success(&out2);
-    assert!(String::from_utf8_lossy(&out2.stdout).contains("started"));
+    assert_eq!(String::from_utf8_lossy(&out2.stdout).trim(), "1");
+    assert_eq!(
+        running_container_instance_id(&fx.container_id()),
+        original_instance,
+        "second --keep command recreated the durable container"
+    );
     // Clean up.
     assert_success(&fx.dcc(&["stop", "--now"]));
 }

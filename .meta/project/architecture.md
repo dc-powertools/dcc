@@ -1048,10 +1048,12 @@ from project or Feature metadata; explicit argv execution belongs to `dcc exec`.
 `--dry-run` validates the command to the Docker boundary and exits before Docker
 subprocesses, cache/state preparation, port forwarding, or lifecycle hook execution.
 The text report is intentionally short; `--format json` emits a stable report with
-the command, profile, config path, `docker_invoked: false`, checks performed, and
-Docker-dependent checks skipped. Dry-run cannot validate image-derived data such as
-Feature runtime metadata from `devcontainer.metadata` or `${containerEnv:...}` values
-that require image/user probing.
+the command, profile, resolved container id, config path, `docker_invoked: false`,
+checks performed, and Docker-dependent checks skipped. The explicit container id lets
+callers verify that path-based profiles target the same identity across build, runtime,
+and stop planning without invoking Docker. Dry-run cannot validate image-derived data
+such as Feature runtime metadata from `devcontainer.metadata` or
+`${containerEnv:...}` values that require image/user probing.
 
 `--debug` emits command-specific resolved details to stderr. Runtime commands print
 the launch plan and Docker command. `build`, `stop`, and `id` print the resolved

@@ -199,6 +199,7 @@ pub(crate) fn dry_run_runtime(
     ]);
     dry_run::DryRunReport::new(
         command,
+        workspace,
         profile,
         config_path,
         vec![

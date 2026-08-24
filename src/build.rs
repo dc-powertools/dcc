@@ -125,6 +125,7 @@ pub(crate) async fn build(
             } else {
                 "build"
             },
+            workspace,
             profile,
             config_path,
             checks,

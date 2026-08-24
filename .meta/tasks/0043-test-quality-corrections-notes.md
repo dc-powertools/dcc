@@ -14,7 +14,10 @@
 - Completed slice: T-0047 (two-way relay with half-close response drain, transactional
   listener binds, optional IPv6, retained/cancelled connection tasks, and connector
   cleanup; real Docker/`nc` smoke added but not runnable without Docker).
-- Selected slice: T-0049, followed by the remaining independent children.
+- Completed slice: T-0049 (successful path-profile identity comparison, genuinely
+  Docker-free seeding dry-run, instance-identity reuse checks, and direct bounded
+  teardown/removal assertions; retired bookkeeping checks removed).
+- Selected slice: T-0050, followed by the remaining independent children.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this

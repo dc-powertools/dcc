@@ -45,6 +45,7 @@ pub(crate) async fn stop(
         };
         return dry_run::DryRunReport::new(
             "stop",
+            workspace,
             profile,
             config_path,
             vec!["workspace resolved", "profile resolved", "config loaded"],

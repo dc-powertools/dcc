@@ -68,9 +68,7 @@ fn default_mode_warns_on_unknown_fields_but_does_not_fail_early() {
         "devcontainer.json",
         r#"{ "image": "rust:1", "unknownField": "value" }"#,
     );
-    // Without --strict: should not fail due to the unknown field.
-    // It may still fail (Docker not available), but the failure should
-    // NOT be about strict mode / unknown field being fatal.
+    // Dry-run makes the intended non-strict success observable without Docker.
     // Set RUST_LOG=warn so tracing::warn! output appears in stderr.
     let output = fx
         .dcc(&["--dry-run", "build"])
@@ -280,8 +278,8 @@ fn strict_flag_after_subcommand_accepted() {
 fn skip_lifecycle_flag_accepted_by_exec() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
-    // `--skip-lifecycle` must precede the trailing command. It may still fail (no
-    // Docker daemon), but clap must not reject the flag as unexpected.
+    // `--skip-lifecycle` must precede the trailing command; dry-run proves the
+    // complete pre-Docker validation path accepts it.
     let output = fx
         .dcc(&["--dry-run", "exec", "--skip-lifecycle", "/bin/true"])
         .output()
@@ -465,22 +463,6 @@ fn stop_dry_run_reports_action_for_each_variant() {
 }
 
 #[test]
-fn stop_dry_run_no_longer_reports_runtime_state_clearing() {
-    let fx = Fixture::new();
-    fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
-    let output = fx
-        .dcc(&["--dry-run", "--format", "json", "stop"])
-        .output()
-        .unwrap();
-    assert_success(&output);
-    let json = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !json.contains("runtime state clearing"),
-        "host-side bookkeeping is removed; dry-run should not mention it: {json}"
-    );
-}
-
-#[test]
 fn dry_run_format_json_outputs_stable_report() {
     let fx = Fixture::new();
     fx.write_config("devcontainer.json", r#"{ "image": "rust:1" }"#);
@@ -498,10 +480,52 @@ fn dry_run_format_json_outputs_stable_report() {
     assert_eq!(json["docker_invoked"], false);
     assert_eq!(json["profile"], "devcontainer");
     assert!(
+        json["container_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("dcc-") && id.ends_with("--devcontainer")),
+        "expected resolved container identity in dry-run report: {json}"
+    );
+    assert!(
         json["skipped"].as_array().is_some_and(|items| items
             .iter()
             .any(|item| item == "profile image existence check")),
         "expected skipped image-existence check in dry-run report: {json}"
+    );
+}
+
+#[test]
+fn build_dry_run_reports_planned_seeding_with_no_executables_on_path() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "Dockerfile",
+        "FROM debian:bookworm-slim\nRUN mkdir -p /seeded-dir\n",
+    );
+    fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "build": { "dockerfile": "Dockerfile" },
+            "containerUser": "root",
+            "customizations": { "dcc": { "state": ["/seeded-dir"] } }
+        }"#,
+    );
+
+    let output = fx
+        .dcc(&["--dry-run", "--format", "json", "build"])
+        // This directory contains neither Docker nor ordinary host utilities.
+        .env("PATH", fx.dir.path())
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["docker_invoked"], false);
+    assert!(
+        report["checks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(report["skipped"].as_array().into_iter().flatten())
+            .any(|entry| entry.as_str().is_some_and(|text| text.contains("seed"))),
+        "expected dry-run seeding plan: {report}"
     );
 }
 
