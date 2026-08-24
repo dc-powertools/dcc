@@ -11,7 +11,10 @@
   assertions; macOS/Windows simulations no-op).
 - Completed slice: T-0046 (anonymous Feature volumes omit `source`; named volumes and
   bind mounts preserve it).
-- Selected slice: T-0047, followed by the remaining independent children.
+- Completed slice: T-0047 (two-way relay with half-close response drain, transactional
+  listener binds, optional IPv6, retained/cancelled connection tasks, and connector
+  cleanup; real Docker/`nc` smoke added but not runnable without Docker).
+- Selected slice: T-0049, followed by the remaining independent children.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this
@@ -34,5 +37,6 @@
 
 ## Issues To Present At Final Handoff
 
-- None yet. Record only unresolved ambiguity, unexpected complexity, or correctness
-  concerns that remain after a task checkpoint; independent work continues.
+- Docker is not installed in this execution environment. T-0047's ignored live
+  `docker exec -i ... nc` smoke compiles and its deterministic relay boundary passes,
+  but the live smoke requires CI or another Docker-capable host.

@@ -1,7 +1,12 @@
 mod common;
 use common::*;
 
-use std::process::{Command, Output};
+use std::{
+    io::{Read as _, Write as _},
+    net::{Shutdown, TcpListener, TcpStream},
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
+};
 
 const IMAGE: &str = "debian:bookworm-slim";
 
@@ -112,6 +117,80 @@ fn assert_running_container(container_id: &str) {
         !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
         "expected running container for {container_id}"
     );
+}
+
+#[test]
+#[ignore]
+fn forwarded_port_reaches_container_loopback_service() {
+    let reserved = TcpListener::bind("127.0.0.1:0").expect("failed to reserve host port");
+    let port = reserved.local_addr().unwrap().port();
+    drop(reserved);
+
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root",
+            "forwardPorts": [{port}]
+        }}"#
+    ));
+    assert_success(&fx.dcc(&["build"]));
+
+    let service = format!(
+        "rm -f /tmp/dcc-forward-fifo; mkfifo /tmp/dcc-forward-fifo; \
+         (printf container-response > /tmp/dcc-forward-fifo) & \
+         nc -l 127.0.0.1 {port} < /tmp/dcc-forward-fifo > /workspace/forwarded-request.txt"
+    );
+    let mut command = fx.fx.dcc(&["exec", "/bin/sh", "-lc", &service]);
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to start dcc forwarding smoke");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut response = Vec::new();
+    while Instant::now() < deadline {
+        let address = format!("127.0.0.1:{port}").parse().unwrap();
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(250)) {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            if stream.write_all(b"host-request").is_ok()
+                && stream.shutdown(Shutdown::Write).is_ok()
+                && stream.read_to_end(&mut response).is_ok()
+                && response == b"container-response"
+            {
+                break;
+            }
+            response.clear();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        response, b"container-response",
+        "forwarded response mismatch"
+    );
+
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("failed to poll dcc process") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("dcc forwarding smoke did not exit before its deadline");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert!(status.success(), "dcc forwarding smoke failed: {stderr}");
+    assert_eq!(fx.read_file("forwarded-request.txt"), "host-request");
 }
 
 #[test]

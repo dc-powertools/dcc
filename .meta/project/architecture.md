@@ -755,11 +755,17 @@ running inside the container.
 
 ### Relay architecture (`forward.rs`)
 
-For each port in `forwardPorts`, `dcc run` binds a `TcpListener` on
-`127.0.0.1:<port>` on the host and spawns a long-running Tokio task
-(`relay_port`). For each accepted connection the task spawns a short-lived
-connection-handler task (`handle_connection`) and immediately resumes
-accepting.
+For each port in `forwardPorts`, `dcc run` requires a `TcpListener` on
+`127.0.0.1:<port>` and also binds `[::1]:<port>` when IPv6 loopback is
+available. IPv6 bind failure degrades explicitly to IPv4-only forwarding. All
+requested listeners are acquired before relay tasks start, so a later bind
+collision releases earlier listeners without leaving background tasks.
+
+Each listener owns a long-running Tokio task. For each accepted connection the
+listener retains a short-lived connection-handler in a task set and immediately
+resumes accepting. Shutdown aborts and joins the listener tasks; dropping each
+task set cancels its active connectors, so no detached relay survives the
+foreground `dcc` command.
 
 `handle_connection` opens a tunnel by spawning:
 
@@ -779,9 +785,11 @@ host TCP socket  ←→  docker exec -i nc  ←→  app (127.0.0.1:<port> inside
 Because `nc` connects from within the container, the application sees the
 connection as originating from `127.0.0.1`, not from the Docker bridge.
 
-When either direction closes (connection dropped, app closed the socket, or
-`nc` exits), `tokio::select!` cancels the other direction, `nc` is killed,
-and the handler task exits.
+When one input direction reaches EOF, the relay half-closes the opposite output
+and continues copying the remaining direction. This allows a client to finish a
+request with a write half-close and still receive the complete response. Once
+both directions finish (or either copy fails), `nc` is reaped and the handler
+task exits.
 
 ### Why nc (netcat)
 

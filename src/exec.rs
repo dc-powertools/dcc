@@ -318,9 +318,7 @@ async fn execute_foreground(
     }
     .await;
 
-    for handle in relay_handles {
-        handle.abort();
-    }
+    relay_handles.shutdown().await;
 
     let status = command_result?;
 
