@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `.meta/tasks/README.md`
-- Primary task: T-0043
-- Primary details: `.meta/tasks/0043-test-quality-corrections-brief.md`; `.meta/tasks/0043-test-quality-corrections-notes.md`; `.meta/quality/0043-test-quality-corrections-quality.md`
+- Primary task: None
+- Primary details: None
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -37,11 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Completed T-0043 test-quality corrections: all ten children now protect stable behavior, compatibility, security, and cross-layer contracts. | `.meta/quality/0043-test-quality-corrections-quality.md` |
 | 2026-08-24 | Removed `dcc build --update` (T-0042): `--no-cache` now also passes Docker `--pull` when building from an upstream base image. | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Removed lockfile implementation (T-0041): deleted `devcontainer.lock` read/write behavior and locked Feature digest plumbing, while preserving OCI blob digest verification for fetched Features. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Reorganized public docs again (T-0040): moved the broad guide to `docs/index.md`, made `docs/features.md` focus on devcontainer Feature packages, linked it to the official Features reference, and updated cross-links/ownership notes. | `.meta/tasks/README.md#tasks` |
 | 2026-08-17 | Reorganized public docs (T-0039): shortened the main README into an end-user overview, added `docs/features.md` for detailed feature/configuration/runtime guidance, added `docs/development.md` for maintainer and release guidance, linked both from README, and corrected stale baked-supervisor wording. | `.meta/tasks/README.md#tasks` |
-| 2026-08-17 | Updated the local commit trailer rule (T-0035) so `Co-Authored-By` names the actual model and coding harness, with Codex GPT-5 as this session's example. | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -66,7 +66,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 ## Hygiene
 
-- Last consistency and pruning pass: 2026-08-13
-- Completed repository-changing tasks since that pass: 9
-- Next pass due: 2026-09-12 or after 10 completed repository-changing tasks, whichever
+- Last consistency and pruning pass: 2026-08-24
+- Completed repository-changing tasks since that pass: 0
+- Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.

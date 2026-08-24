@@ -8,6 +8,9 @@ Owners:
 
 - T-0028 implementer
 
+Artifact budget rationale: this record stays slightly above the default because its
+four coupled protocol answers and compatibility consequences must remain together.
+
 Supersedes:
 
 - T-0024-R1 design decision D1 (delivery mechanism only; the POSIX `sh` language

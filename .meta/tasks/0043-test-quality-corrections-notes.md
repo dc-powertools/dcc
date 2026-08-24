@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-- Status: Active.
+- Status: Done.
 - Completed slice: T-0044 (`inject_trace` removed; install scripts are byte-preserved;
   execution and no-secret-output tests include a tracing negative control).
 - Completed slice: T-0048 (deterministic registry auth/status fixture, strict digest
@@ -26,7 +26,8 @@
   low-value tests removed, and three stable-outcome rewrites).
 - Completed slice: T-0053 (fixed-seed merge/shell properties plus Dockerfile, seed
   digest, and Feature-edit behavior matrices).
-- Selected slice: aggregate T-0043 verification and closeout.
+- Aggregate closeout: all runnable gates, security/consistency review, and scheduled
+  framework hygiene passed; no task remains selected.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this
