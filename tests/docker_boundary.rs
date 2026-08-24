@@ -199,6 +199,21 @@ fn contains_pair(call: &[String], flag: &str, value: &str) -> bool {
         .any(|pair| pair[0] == flag && pair[1] == value)
 }
 
+fn assert_resource_limits_before_image(run: &[String], memory_value: &str, cpus_value: &str) {
+    assert!(contains_pair(run, "--memory", memory_value));
+    assert!(contains_pair(run, "--cpus", cpus_value));
+
+    let mode = run.iter().position(|arg| arg == "--mode").unwrap();
+    let image = mode - 1;
+    let memory = run.iter().position(|arg| arg == "--memory").unwrap();
+    let cpus = run.iter().position(|arg| arg == "--cpus").unwrap();
+    assert!(memory < image && cpus < image);
+    assert!(
+        !run[image].starts_with('-'),
+        "image must precede supervisor arguments: {run:?}"
+    );
+}
+
 fn build_calls(calls: &[Vec<String>]) -> Vec<&Vec<String>> {
     calls
         .iter()
@@ -335,27 +350,55 @@ fn explicit_resource_limits_reach_docker_run_before_image_arguments() {
     assert_success(&output);
     let calls = fx.calls();
     let run = run_call(&calls);
-    assert!(contains_pair(run, "--memory", "768m"));
-    assert!(contains_pair(run, "--cpus", "1.25"));
-
-    let mode = run.iter().position(|arg| arg == "--mode").unwrap();
-    let memory = run.iter().position(|arg| arg == "--memory").unwrap();
-    let cpus = run.iter().position(|arg| arg == "--cpus").unwrap();
-    assert!(memory < mode - 1 && cpus < mode - 1);
-    assert!(
-        !run[mode - 1].starts_with('-'),
-        "image must precede supervisor arguments: {run:?}"
-    );
+    assert_resource_limits_before_image(run, "768m", "1.25");
 }
 
 #[test]
-fn unspecified_resource_limits_are_absent_from_docker_run() {
-    let fx = FakeDockerFixture::new(root_image_config());
+fn default_resource_limits_reach_every_runtime_container_creation_path() {
+    let config = r#"{
+        "image": "debian:bookworm-slim",
+        "containerUser": "root",
+        "customizations": { "dcc": { "commands": { "test": "true" } } }
+    }"#;
+    let cases: &[(&str, &[&str])] = &[
+        ("start", &["start"]),
+        ("exec", &["exec", "--keep", "true"]),
+        ("attach", &["attach", "--keep", "/bin/true"]),
+        ("run", &["run", "--keep", "test"]),
+    ];
+
+    for (name, args) in cases {
+        let fx = FakeDockerFixture::new(config);
+        let compatible = compatible_patch_version();
+        let output = fx.output(args, Some(&compatible));
+        assert_success(&output);
+        let calls = fx.calls();
+        let run = run_call(&calls);
+        assert_resource_limits_before_image(run, "4g", "2");
+        assert_eq!(
+            run.iter().filter(|arg| *arg == "--memory").count(),
+            1,
+            "{name} emitted an unexpected memory flag count: {run:?}"
+        );
+        assert_eq!(
+            run.iter().filter(|arg| *arg == "--cpus").count(),
+            1,
+            "{name} emitted an unexpected CPU flag count: {run:?}"
+        );
+    }
+}
+
+#[test]
+fn a_single_explicit_resource_override_retains_the_other_default() {
     let compatible = compatible_patch_version();
-    let output = fx.output(&["start"], Some(&compatible));
-    assert_success(&output);
-    let calls = fx.calls();
-    let run = run_call(&calls);
-    assert!(!run.iter().any(|arg| arg == "--memory"));
-    assert!(!run.iter().any(|arg| arg == "--cpus"));
+    for (args, expected_memory, expected_cpus) in [
+        (&["start", "--memory", "768m"][..], "768m", "2"),
+        (&["start", "--cpus", "1.25"][..], "4g", "1.25"),
+    ] {
+        let fx = FakeDockerFixture::new(root_image_config());
+        let output = fx.output(args, Some(&compatible));
+        assert_success(&output);
+        let calls = fx.calls();
+        assert_resource_limits_before_image(run_call(&calls), expected_memory, expected_cpus);
+    }
 }

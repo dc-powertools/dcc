@@ -44,10 +44,12 @@ pub(crate) enum Command {
     },
     #[command(trailing_var_arg = true)]
     Exec {
-        #[arg(long)]
-        memory: Option<String>,
-        #[arg(long)]
-        cpus: Option<String>,
+        /// Maximum memory available to the runtime container.
+        #[arg(long, default_value = "4g")]
+        memory: String,
+        /// Maximum CPUs available to the runtime container.
+        #[arg(long, default_value = "2")]
+        cpus: String,
         /// Skip supported in-container lifecycle scripts, printing a warning for
         /// each one skipped. Useful for debugging a misbehaving script.
         #[arg(long)]
@@ -60,19 +62,23 @@ pub(crate) enum Command {
         args: Vec<String>,
     },
     Start {
-        #[arg(long)]
-        memory: Option<String>,
-        #[arg(long)]
-        cpus: Option<String>,
+        /// Maximum memory available to the runtime container.
+        #[arg(long, default_value = "4g")]
+        memory: String,
+        /// Maximum CPUs available to the runtime container.
+        #[arg(long, default_value = "2")]
+        cpus: String,
         #[arg(long)]
         allow_unsafe_runtime: bool,
     },
     #[command(trailing_var_arg = true)]
     Attach {
-        #[arg(long)]
-        memory: Option<String>,
-        #[arg(long)]
-        cpus: Option<String>,
+        /// Maximum memory available to the runtime container.
+        #[arg(long, default_value = "4g")]
+        memory: String,
+        /// Maximum CPUs available to the runtime container.
+        #[arg(long, default_value = "2")]
+        cpus: String,
         #[arg(long)]
         allow_unsafe_runtime: bool,
         #[arg(short = 'k', long)]
@@ -99,10 +105,12 @@ pub(crate) enum Command {
         remove: Vec<String>,
     },
     Run {
-        #[arg(long)]
-        memory: Option<String>,
-        #[arg(long)]
-        cpus: Option<String>,
+        /// Maximum memory available to the runtime container.
+        #[arg(long, default_value = "4g")]
+        memory: String,
+        /// Maximum CPUs available to the runtime container.
+        #[arg(long, default_value = "2")]
+        cpus: String,
         #[arg(long)]
         allow_unsafe_runtime: bool,
         #[arg(short = 'k', long)]

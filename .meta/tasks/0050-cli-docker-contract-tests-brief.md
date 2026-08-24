@@ -64,3 +64,11 @@ Out of scope:
 
 Caller-plumbing regressions at the CLI-to-Docker boundary are caught without requiring
 live Docker for every case.
+
+## Superseding Product Correction
+
+T-0055 supersedes only T-0050's conclusion that unspecified runtime resource flags
+should be absent. The intended product contract is an implicit `--memory 4g` and
+`--cpus 2` on runtime container creation, with explicit values overriding either
+default independently. T-0050 remains the historical owner of the fake-Docker boundary
+fixture and its other compatibility/build assertions.

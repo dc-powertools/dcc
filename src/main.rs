@@ -81,8 +81,8 @@ async fn run() -> anyhow::Result<()> {
                 &args,
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
-                        memory: memory.as_deref(),
-                        cpus: cpus.as_deref(),
+                        memory: &memory,
+                        cpus: &cpus,
                     },
                     skip_lifecycle,
                     debug: cli.debug,
@@ -108,8 +108,8 @@ async fn run() -> anyhow::Result<()> {
                 &config_path,
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
-                        memory: memory.as_deref(),
-                        cpus: cpus.as_deref(),
+                        memory: &memory,
+                        cpus: &cpus,
                     },
                     skip_lifecycle: false,
                     debug: cli.debug,
@@ -137,8 +137,8 @@ async fn run() -> anyhow::Result<()> {
                 &args,
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
-                        memory: memory.as_deref(),
-                        cpus: cpus.as_deref(),
+                        memory: &memory,
+                        cpus: &cpus,
                     },
                     skip_lifecycle: false,
                     debug: cli.debug,
@@ -221,8 +221,8 @@ async fn run() -> anyhow::Result<()> {
                 script.as_deref(),
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
-                        memory: memory.as_deref(),
-                        cpus: cpus.as_deref(),
+                        memory: &memory,
+                        cpus: &cpus,
                     },
                     skip_lifecycle: false,
                     debug: cli.debug,

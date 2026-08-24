@@ -2,6 +2,24 @@ mod common;
 use common::*;
 
 #[test]
+fn runtime_command_help_documents_default_resource_limits() {
+    let fx = Fixture::new();
+    for command in ["run", "exec", "start", "attach"] {
+        let output = fx.dcc(&[command, "--help"]).output().unwrap();
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--memory <MEMORY>") && stdout.contains("[default: 4g]"),
+            "{command} help did not document the 4g memory default: {stdout}"
+        );
+        assert!(
+            stdout.contains("--cpus <CPUS>") && stdout.contains("[default: 2]"),
+            "{command} help did not document the 2-CPU default: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn strict_rejects_unknown_fields() {
     let fx = Fixture::new();
     fx.write_config(

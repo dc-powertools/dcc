@@ -396,15 +396,18 @@ be skipped except by using `dcc build --refresh-only`, which skips
 
 ## Resource Limits
 
-Runtime containers inherit Docker's available host resources unless a limit is
-specified. Apply Docker-equivalent limits on `dcc run`, `dcc exec`, `dcc attach`, or
-`dcc start`:
+Runtime container creation defaults to a 4 GiB memory limit and 2 CPUs. These limits
+apply to containers created by `dcc run`, `dcc exec`, `dcc attach`, or `dcc start`.
+Override either default independently with Docker-equivalent flags:
 
 ```sh
 dcc run --memory 8g --cpus 6 test
 dcc exec --memory 512m npm test
 dcc start --memory 8g --cpus 6
 ```
+
+For example, `dcc start --memory 8g` retains the default 2-CPU limit, while
+`dcc start --cpus 6` retains the default 4 GiB memory limit.
 
 ## What To Expect Compared With Normal Devcontainers
 

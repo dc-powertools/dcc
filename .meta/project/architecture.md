@@ -593,8 +593,8 @@ docker run
   --rm
   -dit
   --workdir <workspaceFolder>  (default: /workspace)
-  --memory <memory>            (omitted from Docker when unspecified)
-  --cpus <cpus>                (omitted from Docker when unspecified)
+  --memory <memory>            (default: 4g)
+  --cpus <cpus>                (default: 2)
   <safe runArgs...>
   <allowed unsafe runtime args...>
   -u <containerUser>
