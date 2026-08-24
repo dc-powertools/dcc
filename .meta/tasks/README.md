@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0057
+- Next task ID: T-0058
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -75,6 +75,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0054 | Implement `updateRemoteUserUID` mapping on macOS while preserving the established Linux behavior and explicit Windows no-op. | User request 2026-08-24 / r1 | Done | T-0026, T-0045 | Initiative / High | None | Stop; outcome complete. | `.meta/tasks/0054-macos-uid-remap-brief.md`; `.meta/quality/0054-macos-uid-remap-quality.md` | macOS now discovers host UID/GID and plans the existing safeguarded build-stage remap; Linux behavior is unchanged, and Windows/unsupported hosts explicitly no-op. Deterministic platform tests, focused UID/Dockerfile tests, format, check, clippy, the full test suite, build, and diff checks passed. A live macOS Docker Desktop run remains environment-bound residual evidence. |
 | T-0055 | Restore implicit Docker runtime limits of 4 GiB memory and 2 CPUs, retain explicit overrides, and document the defaults as intended product behavior. | User request 2026-08-24 / r1 | Done | T-0050 | Quick change / Medium | None | Stop; outcome complete. | `.meta/tasks/0055-default-docker-limits-brief.md`; `.meta/quality/0055-default-docker-limits-quality.md` | `run`, `exec`, `attach`, and `start` now create containers with default `--memory 4g --cpus 2`; either explicit option overrides only that resource. CLI help and docs expose the defaults, and fake-Docker tests cover all entry points, ordering, uniqueness, and partial overrides. Format, check, clippy, full tests, build, and diff checks passed; live Docker enforcement remains environment-bound residual evidence. |
 | T-0056 | Restore an error for missing `${containerEnv:VAR}` values without a default and document the intended substitution contract. | User request 2026-08-24 / r1 | Done | T-0051 | Initiative / Medium | None | Stop; outcome complete. | `.meta/tasks/0056-missing-container-env-error-brief.md`; `.meta/decisions/0006-require-missing-container-env-default.md`; `.meta/quality/0056-missing-container-env-error-quality.md` | Missing `${containerEnv:VAR}` now errors unless an explicit default is supplied; explicit empty defaults remain allowed, present-empty stays empty, and present-nonempty wins. Fallible resolution with consumer context covers state, workspaceFolder, runArgs, command arguments, mounts, remoteEnv, build/runtime lifecycle hooks, and Feature equivalents. Decision 0006 supersedes 0005. Format, check, clippy, full tests, build, and diff checks passed. |
+| T-0057 | Fully design and implement `dcc profile list` so users can discover available profiles, including stable text and JSON output, documentation, and automated verification. | User request 2026-08-24 / r1 | Ready | None | Initiative / Medium | None | Frame profile discovery and output semantics in a task brief, then implement the command with tests and user documentation. | None | Pending. |
 
 ## Operating Contract
 
