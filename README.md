@@ -38,31 +38,18 @@ your `PATH`.
 
 ## Quick Start
 
-Create a standard devcontainer profile:
+A typical devcontainer profile is assembled from a set of [Features](docs/features.md):
 
 ```jsonc
 // .devcontainer/devcontainer.json
 {
-  "image": "rust:1",
-  "containerUser": "vscode",
+  "image": "debian",
   "features": {
-    "ghcr.io/devcontainers/features/node:1": {}
+    "ghcr.io/dc-powertools/features/sudo:latest": {},
+    "ghcr.io/dc-powertools/features/git:latest": {},
+    "ghcr.io/dc-powertools/features/mo:latest": {},
+    "ghcr.io/dc-powertools/features/node:latest": {}
   },
-  "containerEnv": {
-    "CARGO_HOME": "/cache/cargo"
-  },
-  "customizations": {
-    "dcc": {
-      "commands": {
-        "test": "cargo test",
-        "lint": "cargo clippy -- -D warnings"
-      },
-      "state": [
-        "/home/vscode/.cargo",
-        { "path": "/home/vscode/.npmrc", "type": "file" }
-      ]
-    }
-  }
 }
 ```
 
@@ -70,10 +57,8 @@ Then build and run the profile:
 
 ```sh
 dcc build
-dcc run test
-dcc exec cargo test
-dcc attach
-dcc stop
+dcc exec bash  # run `mo login`, start a session, then exit the shell
+dcc run mo:yolo
 ```
 
 `dcc build` is explicit: runtime commands do not build the image for you. Run it
