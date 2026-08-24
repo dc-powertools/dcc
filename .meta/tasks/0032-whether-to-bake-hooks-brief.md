@@ -138,13 +138,15 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- [ ] A decision answers Q1–Q4 with recorded rationale.
-- [ ] The decision names the selected hook delivery model and its effect on the `rt`
+- [x] A decision answers Q1–Q4 with recorded rationale.
+- [x] The decision names the selected hook delivery model and its effect on the `rt`
       mount (kept, shrunk, or deleted).
-- [ ] If the decision reverses T-0028's provisional hook conclusion, decision 0004 Q3
-      is amended and T-0029's scope is updated.
-- [ ] If `localEnv` support in `postStartCommand` is dropped, the deviation is
-      documented in README and project standards as a known spec incompatibility.
+- [x] If the decision reverses T-0028's provisional hook conclusion, decision 0004 Q3
+      is amended and T-0029's scope is updated. Not applicable: the decision affirmed
+      the provisional conclusion.
+- [x] If `localEnv` support in `postStartCommand` is dropped, the deviation is
+      documented in README and project standards as a known spec incompatibility. Not
+      applicable: support was preserved.
 
 ## Constraints
 
@@ -204,3 +206,12 @@ Out of scope:
 - A hook delivery model is selected, and its effect on the `rt` mount is stated.
 - Decision 0004 and T-0029 are consistent with the outcome.
 - Any spec deviation is documented.
+
+## Closure
+
+The accepted decision in `.meta/decisions/0004-embed-supervisor-in-image.md` already
+answers Q1–Q4: startup hooks remain host-delivered, the `rt` mount remains for those
+hooks, in-container substitution is rejected, and `${localEnv:…}` compatibility is
+preserved. T-0029 implemented that model. No spec deviation or further implementation
+is required. The scheduled 2026-08-24 consistency pass corrected this task's stale
+`Ready` status to `Done`.
