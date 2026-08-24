@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths: ['Cargo.toml']
   workflow_call:
+    inputs:
+      ref:
+        description: 'Exact commit to verify and tag after an automated bump'
+        required: false
+        type: string
 
 jobs:
   # Gate the tag/release on green CI. Both entrypoints (the automatic push and
@@ -16,6 +21,8 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+    with:
+      ref: ${{ inputs.ref || github.sha }}
 
   tag:
     name: Create tag if missing
@@ -27,13 +34,11 @@ jobs:
       created: ${{ steps.tag.outputs.created }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      # Always read/tag the latest main: on a push it equals the pushed commit;
-      # when called by bump.yml the caller's SHA is stale, so pin to main (which
-      # already has the just-pushed bump commit). Version read and tag target
-      # come from the same checkout, so they are always self-consistent.
+      # Read and tag the same exact commit that passed CI. bump.yml supplies the
+      # commit it created; the automatic push entrypoint uses the triggering SHA.
       - uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Resolve version from Cargo.toml
         id: resolve
@@ -63,3 +68,4 @@ jobs:
       contents: write
     with:
       ref: "v${{ needs.tag.outputs.version }}"
+      ci_already_passed: true

@@ -10,15 +10,18 @@ on:
         description: 'Git tag to build and release (e.g. v1.2.3)'
         required: true
         type: string
+      ci_already_passed:
+        description: 'Trusted caller already ran CI for the exact commit behind ref'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  # Gate the build/release on green CI. Runs unconditionally on both triggers so
-  # there are no skipped jobs in the chain (a skipped job would poison the implicit
-  # success() of downstream jobs). On the workflow_call path this re-runs CI that
-  # autotag.yml already ran before tagging; that redundancy is accepted to keep the
-  # release flow free of conditional skips.
+  # Direct tag pushes run their own CI. The trusted autotag caller can reuse the CI
+  # result for the exact commit it tagged instead of running the same suite twice.
   ci:
     name: CI
+    if: ${{ !inputs.ci_already_passed }}
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
@@ -28,6 +31,7 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     needs: ci
+    if: ${{ always() && (inputs.ci_already_passed || needs.ci.result == 'success') }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:

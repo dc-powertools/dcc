@@ -18,7 +18,7 @@ Record only commands verified by successful execution in this environment.
 | Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 511 unit tests, 31 runnable CLI flag integration tests with 3 ignored, 9 config error tests, 13 fake-Docker boundary tests, 9 feature command tests, and 32 ignored Docker smoke tests listed without running Docker. | 2026-08-24 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-08-24 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
-| Workflow lint | `actionlint .github/workflows/ci.yml` | `actionlint` on `PATH` | Passed with no findings using `actionlint 1.7.12`. | 2026-07-20 |
+| Workflow lint | `actionlint .github/workflows/*.yml` | `actionlint` on `PATH` | Passed for every workflow with no findings using `actionlint 1.7.12`. | 2026-08-24 |
 | Devcontainer config validation | `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace > /tmp/dcc-devcontainer-read-configuration.json` | Node.js v20.19.2, npm 9.2.0, `@devcontainers/cli 0.87.0`, Docker 26.1.5, and a running Docker daemon. In this harness, Docker needed `dockerd --iptables=false --storage-driver=vfs --bridge=none --ip-forward=false --ip-masq=false`. | Passed; produced 14,073 bytes of merged configuration for `.devcontainer/devcontainer.json`, including root image, Features, mounts, hooks, workspace mount, and defaulted compatibility fields. | 2026-07-15 |
 
 ## Architecture

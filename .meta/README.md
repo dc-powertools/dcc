@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Removed duplicate CI from automatic releases while binding bump, CI, tag, and release to one commit and retaining direct-tag CI (T-0063). | `.meta/threat-models/0063-release-ci-reuse.md` |
 | 2026-08-24 | Removed the `ETXTBSY` fixture race and pinned release-gating reusable CI to the requested tag ref (T-0062). | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Diagnosed the autotag failure (T-0061) as a flaky Linux `ETXTBSY` race in a just-written executable test fixture; tagging succeeded, release CI failed afterward, and its reusable CI also checked a stale pre-bump ref. | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Completed the variant-aware port-forward connector (T-0060) after CI passed the EOF-dependent forwarding smoke twice and all 32 Docker smokes in both runs. | `.meta/quality/0060-port-forward-connector-quality.md` |
@@ -65,6 +66,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - UID remap quality record: `.meta/quality/0026-update-remote-user-uid-quality.md`
 - Runtime threat model: `.meta/threat-models/0004-dcc-runtime.md`
 - CI ref and fixture threat model: `.meta/threat-models/0062-ci-ref-and-fixture.md`
+- Release CI reuse threat model: `.meta/threat-models/0063-release-ci-reuse.md`
 - Product brief: `.meta/project/brief.md`
 - Implementation context: `.meta/project/context.md`
 - Project standards and command catalog: `.meta/project/standards.md`
@@ -77,6 +79,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 6
+- Completed repository-changing tasks since that pass: 7
 - Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.

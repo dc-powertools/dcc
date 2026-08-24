@@ -100,13 +100,15 @@ git push origin main
 commits `chore: bump version to vX.Y.Z`.
 
 When the push lands on `main`, the **Auto-tag on version change** workflow
-(`.github/workflows/autotag.yml`) runs CI. If CI passes, it creates the matching
-`vX.Y.Z` tag when needed, which triggers the **Release** workflow to build the
-target binaries and publish a GitHub Release. If CI fails, no tag or release is
-produced.
+(`.github/workflows/autotag.yml`) runs CI against that exact commit. If CI passes,
+it creates the matching `vX.Y.Z` tag when needed and calls the **Release** workflow
+to build the target binaries and publish a GitHub Release without repeating CI.
+If autotag CI fails, no tag or release is produced. A `vX.Y.Z` tag pushed directly
+runs the Release workflow's own CI gate before any release build.
 
 You can also run the **Bump Version** workflow from the Actions tab and choose
-`patch`, `minor`, or `major`; it performs the same version bump in CI.
+`patch`, `minor`, or `major`; it performs the same version bump in CI and passes
+the resulting commit identity through autotag, CI, tagging, and release.
 
 Do not push or publish a release unless the project owner explicitly asks for
 that action.
