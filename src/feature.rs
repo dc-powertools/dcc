@@ -99,11 +99,14 @@ fn feature_command_label(add: &[String], remove: &[String]) -> String {
 
 fn normalize_feature_refs(values: Vec<String>, flag: &str) -> anyhow::Result<Vec<String>> {
     let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for value in values {
         if value.trim().is_empty() {
             anyhow::bail!("{flag} requires a non-empty feature reference");
         }
-        normalized.push(value);
+        if seen.insert(value.clone()) {
+            normalized.push(value);
+        }
     }
     Ok(normalized)
 }

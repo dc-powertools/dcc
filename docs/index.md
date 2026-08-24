@@ -162,7 +162,10 @@ Seeding runs before build-preparation hooks (`onCreateCommand`,
 declares no state.
 
 `dcc build` records seeded state in `.dcc/<profile>.seed.json`, with per-entry
-`seed_digest` and `build_id`.
+`seed_digest` and `build_id`. Digests include file bytes and, within directories,
+normalized relative paths and symlink targets. Directory traversal order, ownership,
+timestamps, and permission modes are intentionally excluded; they do not make identical
+seed content appear changed across hosts.
 
 Re-seed behavior:
 

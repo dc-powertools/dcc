@@ -19,7 +19,7 @@ pub(crate) mod vars;
 /// `docker run -u` when `containerUser` is not set in the devcontainer config.
 pub(crate) const DEFAULT_CONTAINER_USER: &str = "dev";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawConfig {
     pub(crate) extends: Option<String>,
@@ -161,14 +161,14 @@ impl BuildArgValue {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct Customizations {
     pub(crate) dcc: Option<RawDccConfig>,
     #[serde(flatten)]
     pub(crate) other: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawDccConfig {
     pub(crate) extends: Option<String>,

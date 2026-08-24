@@ -335,7 +335,10 @@ fn sh_quote(s: &str) -> String {
 /// digested over a sorted, deterministic tar of their contents; files over
 /// their raw bytes. Returns `None` when the path does not exist or is empty
 /// (no files / zero-length file), so an empty seeded directory and an unseeded
-/// one remain distinguishable via the ledger.
+/// one remain distinguishable via the ledger. Relative paths, file bytes, and
+/// symlink targets affect directory digests. Entry order, ownership, timestamps,
+/// and permission modes are normalized so host metadata differences do not
+/// invalidate an otherwise identical seed.
 pub(crate) fn host_state_digest(host_path: &Path) -> anyhow::Result<Option<String>> {
     if !host_path.exists() {
         return Ok(None);
@@ -824,6 +827,85 @@ mod tests {
         let d2 = host_state_digest(&p).unwrap().unwrap();
         assert_eq!(d1, d2);
         assert_eq!(d1.len(), 64);
+    }
+
+    #[test]
+    fn host_digest_changes_when_file_content_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("state");
+        std::fs::write(&path, "before").unwrap();
+        let before = host_state_digest(&path).unwrap().unwrap();
+        std::fs::write(&path, "after").unwrap();
+        let after = host_state_digest(&path).unwrap().unwrap();
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn directory_digest_changes_with_relative_path_but_not_creation_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first");
+        let reordered = tmp.path().join("reordered");
+        let renamed = tmp.path().join("renamed");
+        for path in [&first, &reordered, &renamed] {
+            std::fs::create_dir(path).unwrap();
+        }
+
+        std::fs::write(first.join("a"), "alpha").unwrap();
+        std::fs::write(first.join("b"), "beta").unwrap();
+        std::fs::write(reordered.join("b"), "beta").unwrap();
+        std::fs::write(reordered.join("a"), "alpha").unwrap();
+        std::fs::write(renamed.join("c"), "alpha").unwrap();
+        std::fs::write(renamed.join("b"), "beta").unwrap();
+
+        let first_digest = host_state_digest(&first).unwrap().unwrap();
+        assert_eq!(
+            first_digest,
+            host_state_digest(&reordered).unwrap().unwrap(),
+            "directory traversal order must be normalized"
+        );
+        assert_ne!(
+            first_digest,
+            host_state_digest(&renamed).unwrap().unwrap(),
+            "relative paths are part of seeded content identity"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_digest_changes_when_symlink_target_changes() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        symlink("target-a", first.join("link")).unwrap();
+        symlink("target-b", second.join("link")).unwrap();
+
+        assert_ne!(
+            host_state_digest(&first).unwrap(),
+            host_state_digest(&second).unwrap(),
+            "symlink targets are seeded content"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn host_digest_normalizes_permission_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("state");
+        std::fs::write(&path, "same bytes").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let private = host_state_digest(&path).unwrap().unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let executable = host_state_digest(&path).unwrap().unwrap();
+        assert_eq!(
+            private, executable,
+            "permission modes are intentionally excluded from content invalidation"
+        );
     }
 
     // ── manifest_from_state ───────────────────────────────────────────────────

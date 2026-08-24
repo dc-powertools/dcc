@@ -411,7 +411,10 @@ Hydration decisions are driven by a host-side ledger at
 `seed_digest` (digest of what `dcc` wrote) and `build_id` (image identity). The
 ledger is authoritative: `dcc` never infers intent from directory emptiness, so
 an empty seeded directory and an unseeded one are distinguishable, and empty file
-state remains legitimate.
+state remains legitimate. Digest identity includes raw file bytes and, inside
+directories, normalized relative paths and symlink targets. Traversal order,
+ownership, timestamps, and permission modes are intentionally normalized or excluded
+to keep equivalent content stable across hosts.
 
 Build ordering:
 

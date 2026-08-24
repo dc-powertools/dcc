@@ -24,7 +24,9 @@
   validation coverage).
 - Completed slice: T-0052 (candidate-by-candidate brittle-test classification, nine
   low-value tests removed, and three stable-outcome rewrites).
-- Selected slice: T-0053.
+- Completed slice: T-0053 (fixed-seed merge/shell properties plus Dockerfile, seed
+  digest, and Feature-edit behavior matrices).
+- Selected slice: aggregate T-0043 verification and closeout.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this

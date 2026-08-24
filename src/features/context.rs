@@ -318,6 +318,21 @@ mod tests {
             .unwrap()
     }
 
+    fn assert_shell_quote_round_trip(value: &str) {
+        let script = format!("printf '%s' {}", shell_quote(value));
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "shell rejected quoted argument {value:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, value.as_bytes());
+    }
+
     #[test]
     fn feature_slug_basic() {
         assert_eq!(
@@ -362,15 +377,23 @@ mod tests {
     }
 
     #[test]
-    fn generated_assets_are_copied_into_dockerfile_and_context() {
+    fn build_context_includes_stage_label_feature_and_generated_assets() {
+        let feature = FeatureContext {
+            id: "matrix-feature".to_string(),
+            install_sh: b"#!/bin/sh\n".to_vec(),
+            feature_json: b"{}".to_vec(),
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
         let context = build_context(
             "alpine:3",
             &[],
-            &[],
+            &[feature],
             "root",
-            false,
+            true,
             &[(
-                ".dcc-generated/bin/dcc-controller".to_string(),
+                ".dcc-generated/dcc-ctl".to_string(),
                 b"#!/bin/sh\n".to_vec(),
                 0o755,
             )],
@@ -388,8 +411,19 @@ mod tests {
             }
             paths.push(path);
         }
-        assert!(paths.contains(&".dcc-generated/bin/dcc-controller".to_string()));
+        assert!(paths.contains(&".dcc-features/matrix-feature/install.sh".to_string()));
+        assert!(paths.contains(&".dcc-generated/dcc-ctl".to_string()));
+        assert_eq!(dockerfile.lines().next(), Some("FROM alpine:3"));
+        assert!(dockerfile
+            .lines()
+            .any(|line| line.starts_with("LABEL dcc.version=")));
         assert!(dockerfile.contains("COPY .dcc-generated/ /usr/local/share/dcc/"));
+        let feature_pos = dockerfile.find("matrix-feature/install.sh").unwrap();
+        let nc_pos = dockerfile.find("command -v nc").unwrap();
+        assert!(
+            feature_pos < nc_pos,
+            "Feature installation must precede fallback package installation: {dockerfile}"
+        );
     }
 
     #[test]
@@ -407,6 +441,46 @@ mod tests {
         // Dollar signs are safe inside single quotes
         let q = shell_quote("$(evil)");
         assert_eq!(q, "'$(evil)'");
+    }
+
+    #[test]
+    fn shell_quote_round_trips_edge_matrix_through_sh() {
+        for value in [
+            "",
+            "plain",
+            " leading and trailing ",
+            "single'quote",
+            "$HOME $(touch nope) `false`",
+            "line one\nline two",
+            "tabs\tand\\backslashes",
+        ] {
+            assert_shell_quote_round_trip(value);
+        }
+    }
+
+    use proptest::prelude::*;
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 96,
+            failure_persistence: None,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x5A11_0053),
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn shell_quote_round_trips_bounded_ascii_through_sh(
+            bytes in proptest::collection::vec(1u8..=126, 0..48),
+        ) {
+            let value = String::from_utf8(bytes).unwrap();
+            let script = format!("printf '%s' {}", shell_quote(&value));
+            let output = Command::new("/bin/sh")
+                .arg("-c")
+                .arg(script)
+                .output()
+                .unwrap();
+            prop_assert!(output.status.success());
+            prop_assert_eq!(output.stdout, value.as_bytes());
+        }
     }
 
     #[test]
