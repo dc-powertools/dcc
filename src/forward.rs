@@ -352,7 +352,7 @@ mod tests {
         time::Duration,
     };
 
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::io::AsyncReadExt as _;
 
     use super::*;
 

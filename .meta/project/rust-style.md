@@ -89,7 +89,7 @@ Keep the module hierarchy shallow — two levels is almost always enough. Use `m
 
 Run `cargo fmt` before committing — CI rejects unformatted code.
 
-Run `cargo clippy -- -D warnings` before committing. Fix warnings rather than suppressing them. If suppression is genuinely necessary, add a `#[allow(...)]` with a comment explaining why.
+Run `cargo clippy --all-targets -- -D warnings` before committing. Fix warnings rather than suppressing them. If suppression is genuinely necessary, add a `#[allow(...)]` with a comment explaining why.
 
 ## Testing
 

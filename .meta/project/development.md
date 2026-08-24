@@ -35,7 +35,7 @@ Run all three checks and confirm they pass cleanly:
 
 ```bash
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
@@ -56,7 +56,7 @@ Every commit must leave the repository in a passing state. Before creating a com
 
 ```bash
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 

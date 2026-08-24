@@ -37,20 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Removed the test-only unused import and expanded Clippy to lint every Cargo target locally and in CI (T-0064). | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Removed duplicate CI from automatic releases while binding bump, CI, tag, and release to one commit and retaining direct-tag CI (T-0063). | `.meta/threat-models/0063-release-ci-reuse.md` |
 | 2026-08-24 | Removed the `ETXTBSY` fixture race and pinned release-gating reusable CI to the requested tag ref (T-0062). | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Diagnosed the autotag failure (T-0061) as a flaky Linux `ETXTBSY` race in a just-written executable test fixture; tagging succeeded, release CI failed afterward, and its reusable CI also checked a stale pre-bump ref. | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Completed the variant-aware port-forward connector (T-0060) after CI passed the EOF-dependent forwarding smoke twice and all 32 Docker smokes in both runs. | `.meta/quality/0060-port-forward-connector-quality.md` |
-| 2026-08-24 | Designed the `nc -N` port-forwarding correction and Docker-free regression coverage (T-0059), with the accepted netcat-variant limitation made explicit. | `.meta/tasks/0059-nc-half-close-design.md` |
-| 2026-08-24 | Diagnosed the latest CI failure (T-0058): the port-forward connector does not half-close its network socket when host input reaches EOF, so EOF-dependent exchanges hang and the Docker smoke receives bytes but times out before clearing them. | `.meta/tasks/README.md#tasks` |
-| 2026-08-24 | Restored strict errors for missing `${containerEnv:VAR}` references without explicit defaults (T-0056). | `.meta/decisions/0006-require-missing-container-env-default.md`; `.meta/quality/0056-missing-container-env-error-quality.md` |
-| 2026-08-24 | Restored implicit Docker runtime limits of 4 GiB memory and 2 CPUs (T-0055), with independent explicit overrides. | `.meta/quality/0055-default-docker-limits-quality.md` |
-| 2026-08-24 | Implemented macOS `updateRemoteUserUID` mapping (T-0054) while preserving Linux behavior and explicit unsupported-host no-ops. | `.meta/quality/0054-macos-uid-remap-quality.md` |
-| 2026-08-24 | Completed T-0043 test-quality corrections: all ten children now protect stable behavior, compatibility, security, and cross-layer contracts. | `.meta/quality/0043-test-quality-corrections-quality.md` |
-| 2026-08-24 | Removed `dcc build --update` (T-0042): `--no-cache` now also passes Docker `--pull` when building from an upstream base image. | `.meta/tasks/README.md#tasks` |
-| 2026-08-24 | Removed lockfile implementation (T-0041): deleted `devcontainer.lock` read/write behavior and locked Feature digest plumbing, while preserving OCI blob digest verification for fetched Features. | `.meta/tasks/README.md#tasks` |
-| 2026-08-17 | Reorganized public docs again (T-0040): moved the broad guide to `docs/index.md`, made `docs/features.md` focus on devcontainer Feature packages, linked it to the official Features reference, and updated cross-links/ownership notes. | `.meta/tasks/README.md#tasks` |
-| 2026-08-17 | Reorganized public docs (T-0039): shortened the main README into an end-user overview, added `docs/features.md` for detailed feature/configuration/runtime guidance, added `docs/development.md` for maintainer and release guidance, linked both from README, and corrected stale baked-supervisor wording. | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -79,6 +70,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 7
+- Completed repository-changing tasks since that pass: 8
 - Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.

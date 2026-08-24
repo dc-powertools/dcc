@@ -14,7 +14,7 @@ Record only commands verified by successful execution in this environment.
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-08-24 |
 | Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.0`. | 2026-08-24 |
-| Lint | `cargo clippy -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied. | 2026-08-24 |
+| Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-08-24 |
 | Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 511 unit tests, 31 runnable CLI flag integration tests with 3 ignored, 9 config error tests, 13 fake-Docker boundary tests, 9 feature command tests, and 32 ignored Docker smoke tests listed without running Docker. | 2026-08-24 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-08-24 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
@@ -82,7 +82,7 @@ Record only commands verified by successful execution in this environment.
 
 ## Release
 
-- CI runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, and
+- CI runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and
   `cargo build`, plus ignored Docker smoke tests on GitHub-hosted Ubuntu runners.
 - Do not push, publish releases, or run release workflows without explicit owner
   direction.

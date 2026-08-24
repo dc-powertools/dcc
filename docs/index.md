@@ -290,7 +290,7 @@ Project commands are shell strings:
     "dcc": {
       "commands": {
         "test": "cargo test",
-        "lint": "cargo clippy -- -D warnings"
+        "lint": "cargo clippy --all-targets -- -D warnings"
       }
     }
   }

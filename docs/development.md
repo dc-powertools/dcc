@@ -47,7 +47,7 @@ Before finishing a change, run:
 
 ```sh
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
