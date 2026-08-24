@@ -49,8 +49,9 @@ host platform is Linux, emit a single `RUN` that ports the reference
 
 `NEW_UID`/`NEW_GID` are passed as `docker build --build-arg` from the host
 process uid/gid. The values are captured once at build time via
-`std::os::unix::fs::MetadataExt` on a host path (no new dependency), gated
-behind `#[cfg(unix)]`; non-unix hosts and the dry-run path report the no-op.
+`id -u` / `id -g` (no new dependency), gated behind
+`#[cfg(target_os = "linux")]`; non-Linux hosts report the no-op, while dry runs report
+the platform decision without executing the build.
 
 The remap `RUN` runs as root (the generated stage is root until the final image
 inherits the base `USER`), which is exactly the reference's `USER root` block.

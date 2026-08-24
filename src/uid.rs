@@ -11,23 +11,40 @@
 //!
 //! This module owns the *planning*: given the resolved config and the host
 //! uid/gid, decide whether to emit the remap and produce the `--build-arg`
-//! values and the in-image `RUN` script. Non-Linux hosts and the dry-run path
-//! report a no-op.
+//! values and the in-image `RUN` script. Non-Linux hosts report a no-op; dry
+//! runs report the platform decision without executing a build.
 
-/// The host user's uid/gid, captured at build time. `None` on non-unix hosts.
+/// The host user's uid/gid, captured at build time. `None` on non-Linux hosts.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) struct HostIds {
     pub(crate) uid: u32,
     pub(crate) gid: u32,
 }
 
-/// Captures the invoking process's uid/gid. Returns `None` on non-unix hosts
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct HostPlatform {
+    is_linux: bool,
+}
+
+impl HostPlatform {
+    const LINUX: Self = Self { is_linux: true };
+    const NON_LINUX: Self = Self { is_linux: false };
+
+    const fn current() -> Self {
+        if cfg!(target_os = "linux") {
+            Self::LINUX
+        } else {
+            Self::NON_LINUX
+        }
+    }
+}
+
+/// Captures the invoking process's uid/gid. Returns `None` on non-Linux hosts
 /// (the remap is a Linux-only no-op elsewhere; Docker Desktop translates uids
 /// inside its VM on macOS/Windows).
 pub(crate) fn host_ids() -> Option<HostIds> {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
-        use std::os::unix::process::CommandExt as _;
         // `id -u` / `id -g` avoids a filesystem probe whose owner depends on
         // which path is sampled; the process ids are exactly what the spec
         // means by "the local user's UID/GID".
@@ -59,12 +76,9 @@ pub(crate) fn host_ids() -> Option<HostIds> {
                     None
                 }
             })?;
-        // CommandExt import is intentionally used to anchor the unix-only
-        // path; the trait is in scope for future stdio tweaks.
-        let _ = std::process::Command::new("true").uid(0);
         Some(HostIds { uid, gid })
     }
-    #[cfg(not(unix))]
+    #[cfg(not(target_os = "linux"))]
     {
         None
     }
@@ -111,14 +125,27 @@ impl std::fmt::Display for RemapSkipReason {
 /// Decides whether to remap for `container_user` given `update_remote_user_uid`
 /// and the captured host ids.
 ///
-/// `host_ids` is `Option` so the caller can pass `host_ids()` directly; on
-/// non-unix hosts that is `None` and the result is `NonLinuxHost`.
+/// `host_ids` is `Option` so the caller can pass `host_ids()` directly.
 pub(crate) fn plan_uid_remap(
     container_user: &str,
     update_remote_user_uid: bool,
     host_ids: Option<HostIds>,
 ) -> RemapPlan {
-    if !cfg!(unix) {
+    plan_uid_remap_for_platform(
+        container_user,
+        update_remote_user_uid,
+        host_ids,
+        HostPlatform::current(),
+    )
+}
+
+fn plan_uid_remap_for_platform(
+    container_user: &str,
+    update_remote_user_uid: bool,
+    host_ids: Option<HostIds>,
+    platform: HostPlatform,
+) -> RemapPlan {
+    if !platform.is_linux {
         return RemapPlan::None {
             reason: RemapSkipReason::NonLinuxHost,
         };
@@ -219,11 +246,20 @@ mod tests {
         Some(HostIds { uid, gid })
     }
 
+    fn plan_on(
+        platform: HostPlatform,
+        container_user: &str,
+        enabled: bool,
+        host_ids: Option<HostIds>,
+    ) -> RemapPlan {
+        plan_uid_remap_for_platform(container_user, enabled, host_ids, platform)
+    }
+
     // --- plan_uid_remap no-op branches ---
 
     #[test]
     fn plan_skips_when_disabled() {
-        let plan = plan_uid_remap("dev", false, ids(1001, 999));
+        let plan = plan_on(HostPlatform::LINUX, "dev", false, ids(1001, 999));
         assert_eq!(
             plan,
             RemapPlan::None {
@@ -234,7 +270,7 @@ mod tests {
 
     #[test]
     fn plan_skips_root_user() {
-        let plan = plan_uid_remap("root", true, ids(1001, 999));
+        let plan = plan_on(HostPlatform::LINUX, "root", true, ids(1001, 999));
         assert_eq!(
             plan,
             RemapPlan::None {
@@ -245,7 +281,7 @@ mod tests {
 
     #[test]
     fn plan_skips_numeric_user() {
-        let plan = plan_uid_remap("1000", true, ids(1001, 999));
+        let plan = plan_on(HostPlatform::LINUX, "1000", true, ids(1001, 999));
         assert_eq!(
             plan,
             RemapPlan::None {
@@ -256,24 +292,18 @@ mod tests {
 
     #[test]
     fn plan_skips_when_host_ids_unavailable() {
-        let plan = plan_uid_remap("dev", true, None);
-        // On unix this is HostIdsUnavailable; on non-unix the earlier
-        // NonLinuxHost branch wins. Assert the branch that matches the host.
-        match plan {
+        let plan = plan_on(HostPlatform::LINUX, "dev", true, None);
+        assert_eq!(
+            plan,
             RemapPlan::None {
                 reason: RemapSkipReason::HostIdsUnavailable,
             }
-            | RemapPlan::None {
-                reason: RemapSkipReason::NonLinuxHost,
-            } => {}
-            other => panic!("expected None skip, got {other:?}"),
-        }
+        );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn plan_remaps_non_root_named_user() {
-        let plan = plan_uid_remap("dev", true, ids(1001, 999));
+    fn simulated_linux_remaps_non_root_named_user() {
+        let plan = plan_on(HostPlatform::LINUX, "dev", true, ids(1001, 999));
         assert_eq!(
             plan,
             RemapPlan::Remap {
@@ -284,16 +314,18 @@ mod tests {
         );
     }
 
-    #[cfg(not(unix))]
     #[test]
-    fn plan_skips_on_non_unix_host() {
-        let plan = plan_uid_remap("dev", true, ids(1001, 999));
-        assert_eq!(
-            plan,
-            RemapPlan::None {
-                reason: RemapSkipReason::NonLinuxHost
-            }
-        );
+    fn simulated_macos_and_windows_skip_remapping() {
+        for simulated_host in ["macOS", "Windows"] {
+            let plan = plan_on(HostPlatform::NON_LINUX, "dev", true, ids(1001, 999));
+            assert_eq!(
+                plan,
+                RemapPlan::None {
+                    reason: RemapSkipReason::NonLinuxHost
+                },
+                "{simulated_host} must not plan a Linux UID remap"
+            );
+        }
     }
 
     // --- is_numeric_user ---
@@ -360,10 +392,35 @@ mod tests {
         );
     }
 
-    // --- host_ids is callable on every platform ---
-
+    #[cfg(target_os = "linux")]
     #[test]
-    fn host_ids_does_not_panic() {
-        let _ = host_ids();
+    fn host_ids_returns_numeric_ids_on_linux() {
+        let ids = host_ids().expect("Linux hosts should expose uid/gid through `id`");
+        let command_id = |flag: &str| {
+            String::from_utf8(
+                std::process::Command::new("id")
+                    .arg(flag)
+                    .output()
+                    .unwrap()
+                    .stdout,
+            )
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap()
+        };
+        assert_eq!(
+            ids,
+            HostIds {
+                uid: command_id("-u"),
+                gid: command_id("-g")
+            }
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn host_ids_are_unavailable_off_linux() {
+        assert_eq!(host_ids(), None);
     }
 }

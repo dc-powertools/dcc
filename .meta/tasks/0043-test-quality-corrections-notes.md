@@ -7,7 +7,9 @@
   execution and no-secret-output tests include a tracing negative control).
 - Completed slice: T-0048 (deterministic registry auth/status fixture, strict digest
   verification, metadata errors, and archive path/type confinement).
-- Selected slice: T-0045, followed by the remaining independent children.
+- Completed slice: T-0045 (Linux-only injectable UID planning and observed host-ID
+  assertions; macOS/Windows simulations no-op).
+- Selected slice: T-0046, followed by the remaining independent children.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this

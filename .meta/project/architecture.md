@@ -962,7 +962,7 @@ The `updateRemoteUserUID` remap (`src/uid.rs`) follows the reference
 after user creation so features install into the already-remapped home
 ownership. It is planned by `plan_uid_remap` from the resolved `containerUser`,
 the `updateRemoteUserUID` config flag (default `true`), and the host process
-uid/gid (`host_ids`, captured via `id -u`/`id -g`, `None` on non-unix). The
+uid/gid (`host_ids`, captured via `id -u`/`id -g`, `None` on non-Linux). The
 remap `RUN` and its `ARG`s are emitted by `remap_dockerfile_block`; the
 `--build-arg` values come from `remap_build_args` and are passed to
 `docker build`. It no-ops (and emits a recognizable echo line) when the user is
