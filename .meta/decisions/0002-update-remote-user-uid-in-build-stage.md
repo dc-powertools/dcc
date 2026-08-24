@@ -16,6 +16,12 @@ Superseded by:
 
 - None
 
+Amended by:
+
+- T-0054 on 2026-08-24: macOS participates in remap planning; Windows and
+  unsupported hosts remain no-ops. The build-stage design and all safety
+  conditions are unchanged.
+
 ## Context
 
 `dcc` runs containers as `containerUser` (default `dev`, not root) and bind-mounts the
@@ -47,8 +53,9 @@ host process uid/gid captured via `id -u`/`id -g` (`src/uid.rs::host_ids`).
 
 `updateRemoteUserUID` is a recognized devcontainer config field on `RawConfig`
 (defaulting to `true` on `DevcontainerConfig`), merged child-overrides-parent. The remap
-is planned by `plan_uid_remap` and is a no-op when: the host is not Linux, the flag is
-`false`, the user is `root`, the user is numeric, or the host uid/gid are unavailable.
+is planned by `plan_uid_remap` and is a no-op when: the flag is `false`, the user is
+`root`, the user is numeric, the host is neither Linux nor macOS, or the host uid/gid
+are unavailable.
 
 ## Rationale
 
@@ -93,10 +100,9 @@ requirement.
 
 ## Consequences
 
-- A non-root `containerUser` can write to bind-mounted host content on Linux regardless
-  of the host user's uid, conforming to a default-on spec property.
-- The remap is Linux-only; on macOS/Windows Docker Desktop translates uids in its VM and
-  the remap is a no-op.
+- A non-root `containerUser` can write to bind-mounted host content on Linux and
+  macOS regardless of the host user's uid.
+- Windows and unsupported hosts explicitly skip remap planning.
 - `dcc build` now passes `--build-arg` values to the stdin-context `docker build`
   (`docker::build` accepts `build_args`).
 - The reference's silent collision no-op is preserved (safety over convenience); the
@@ -112,6 +118,17 @@ requirement.
   data and explicitly not what the spec prescribes; the reference chowns only the
   user's home folder inside the image.
 - **Podman `--userns=keep-id`**: out of scope; Podman is not a common `dcc` target.
+
+## Platform-Scope Amendment (T-0054, 2026-08-24)
+
+T-0045 previously narrowed the implementation from an inherited Unix-wide gate to
+Linux only, matching the contract understood at that time. The product owner later
+clarified that macOS UID/GID mapping is intended behavior. T-0054 therefore extends
+host-ID discovery and remap eligibility to `target_os = "macos"` while retaining the
+deterministic platform abstraction introduced by T-0045. Windows and all other hosts
+remain explicit no-ops. This amendment does not change the generated remap script,
+collision handling, build ordering, seeding behavior, or the rejected derived-image
+alternative.
 
 ## References
 

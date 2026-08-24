@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Implemented macOS `updateRemoteUserUID` mapping (T-0054) while preserving Linux behavior and explicit unsupported-host no-ops. | `.meta/quality/0054-macos-uid-remap-quality.md` |
 | 2026-08-24 | Completed T-0043 test-quality corrections: all ten children now protect stable behavior, compatibility, security, and cross-layer contracts. | `.meta/quality/0043-test-quality-corrections-quality.md` |
 | 2026-08-24 | Removed `dcc build --update` (T-0042): `--no-cache` now also passes Docker `--pull` when building from an upstream base image. | `.meta/tasks/README.md#tasks` |
 | 2026-08-24 | Removed lockfile implementation (T-0041): deleted `devcontainer.lock` read/write behavior and locked Feature digest plumbing, while preserving OCI blob digest verification for fetched Features. | `.meta/tasks/README.md#tasks` |
@@ -67,6 +68,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 0
+- Completed repository-changing tasks since that pass: 1
 - Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.

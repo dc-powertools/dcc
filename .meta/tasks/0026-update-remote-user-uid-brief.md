@@ -1,5 +1,10 @@
 # T-0026 Brief: Implement `updateRemoteUserUID` For Bind-Mount Permission Correctness
 
+> Historical task brief: T-0045 later made the implemented platform gate explicitly
+> Linux-only. T-0054 subsequently superseded that platform-scope outcome by enabling
+> the same safeguarded mapping on macOS while retaining Windows as a no-op. The
+> Linux-only statements below record T-0026's accepted scope at completion.
+
 ## Identity And Source
 
 - Task ID: T-0026

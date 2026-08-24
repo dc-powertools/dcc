@@ -1,5 +1,9 @@
 # T-0026 Quality Record
 
+> Historical verification record: T-0054 later extends the verified Linux-only
+> platform outcome to macOS while preserving Windows as a no-op. The observations
+> below describe T-0026/T-0045 behavior at the time they were run.
+
 - Date: 2026-08-13
 - Change: Implement `updateRemoteUserUID` so a non-root `containerUser` can write
   bind-mounted workspace/cache/state regardless of host uid; restore

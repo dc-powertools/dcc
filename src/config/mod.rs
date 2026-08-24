@@ -234,9 +234,9 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) ports_attributes: HashMap<String, PortAttributes>,
     pub(crate) other_ports_attributes: Option<PortAttributes>,
     pub(crate) override_command: Option<bool>,
-    /// `updateRemoteUserUID` (devcontainer spec, defaults to `true`): on Linux,
-    /// remap the container user's uid/gid to the host user's so bind mounts
-    /// are writable regardless of the host user's uid.
+    /// `updateRemoteUserUID` (defaults to `true`): on Linux and macOS, remap
+    /// the container user's uid/gid to the host user's so bind mounts are
+    /// writable regardless of the host user's uid.
     pub(crate) update_remote_user_uid: bool,
     pub(crate) workspace_folder: String,
     pub(crate) workspace_mount: Option<serde_json::Value>,

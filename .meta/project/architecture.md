@@ -946,7 +946,7 @@ RUN id '<user>' >/dev/null 2>&1 \
  || useradd -m -s /bin/sh '<user>' \
  || adduser -D -s /bin/sh '<user>'
 # Only present when updateRemoteUserUID is enabled (default) and containerUser
-# is a non-root named user on a Linux host:
+# is a non-root named user on a Linux or macOS host:
 ARG REMOTE_USER='<user>'
 ARG NEW_UID=<host-uid>
 ARG NEW_GID=<host-gid>
@@ -975,8 +975,9 @@ The `updateRemoteUserUID` remap (`src/uid.rs`) follows the reference
 after user creation so features install into the already-remapped home
 ownership. It is planned by `plan_uid_remap` from the resolved `containerUser`,
 the `updateRemoteUserUID` config flag (default `true`), and the host process
-uid/gid (`host_ids`, captured via `id -u`/`id -g`, `None` on non-Linux). The
-remap `RUN` and its `ARG`s are emitted by `remap_dockerfile_block`; the
+uid/gid (`host_ids`, captured via `id -u`/`id -g` on Linux and macOS). Windows
+and unsupported hosts return no host IDs and explicitly skip remap planning.
+The remap `RUN` and its `ARG`s are emitted by `remap_dockerfile_block`; the
 `--build-arg` values come from `remap_build_args` and are passed to
 `docker build`. It no-ops (and emits a recognizable echo line) when the user is
 not found in `/etc/passwd`, the uid/gid already match, or another user already

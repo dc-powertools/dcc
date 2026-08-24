@@ -251,9 +251,9 @@ error.
 
 `containerUser` defaults to `dev`. When `containerUser` is not `root`, `dcc`
 creates the user in the image if needed. When `updateRemoteUserUID` is enabled
-and `containerUser` is a non-root named user on Linux, `dcc` remaps that user's
-uid/gid to the host user's uid/gid so bind-mounted workspace, cache, and state
-paths are writable.
+and `containerUser` is a non-root named user on Linux or macOS, `dcc` remaps
+that user's uid/gid to the host user's uid/gid so bind-mounted workspace,
+cache, and state paths are writable. Windows does not perform this remap.
 
 Every `dcc build` stamps the image with a `dcc.version` label and bakes the PID
 1 lifecycle supervisor scripts into `/usr/local/share/dcc/`. Runtime commands
@@ -472,7 +472,7 @@ as errors.
 | `remoteEnv` | Environment variables passed at runtime. Supports `${localWorkspaceFolder}`, `${localCacheFolder}`, `${localEnv:VAR}`, and `${containerEnv:VAR}`. |
 | `containerUser` | User to run hooks and foreground commands as. Defaults to `dev`. |
 | `remoteUser` | Not implemented as a top-level field. Use `containerUser`. |
-| `updateRemoteUserUID` | Boolean, defaults to `true`. On Linux, remaps a non-root named `containerUser` to the host uid/gid when safe. |
+| `updateRemoteUserUID` | Boolean, defaults to `true`. On Linux and macOS, remaps a non-root named `containerUser` to the host uid/gid when safe; Windows is a no-op. |
 | `mounts` | Additional bind or volume mounts. Sensitive host sources require `--allow-unsafe-runtime`. |
 | `runArgs` | Conservative allowlist of extra Docker runtime flags. Privileged, host-integrating, or unknown flags are gated or rejected. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the invocation includes `--allow-unsafe-runtime`. |

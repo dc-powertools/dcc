@@ -1,5 +1,10 @@
 # T-0045 Brief: Linux-Only UID Remapping Contract
 
+> Superseded platform outcome: T-0054 implements the product owner's later
+> clarification that macOS participates in UID/GID mapping. This brief remains the
+> historical record of the Linux-only correction completed by T-0045; its injectable
+> platform-decision design and explicit Windows no-op remain current.
+
 ## Identity And Source
 
 - Task ID: T-0045

@@ -4,6 +4,12 @@
 - Revision: r1
 - Date: 2026-08-13
 
+> Historical design note: T-0045 subsequently made the platform gate explicitly
+> Linux-only. T-0054 then superseded that platform-scope outcome by adding macOS
+> eligibility while preserving Windows as a no-op. The build-stage design below and
+> its safety conditions remain current; its Linux-only statements describe the
+> original T-0026 revision.
+
 ## Decision: fold the remap into dcc's own generated build stage
 
 The reference CLI (`devcontainers/cli`, `scripts/updateUID.Dockerfile`) performs
