@@ -3,8 +3,9 @@
 ## Checkpoint
 
 - Status: Active.
-- Selected slice: T-0044, followed by the security-sensitive T-0048 and then the
-  remaining independent children.
+- Completed slice: T-0044 (`inject_trace` removed; install scripts are byte-preserved;
+  execution and no-secret-output tests include a tracing negative control).
+- Selected slice: T-0048, followed by the remaining independent children.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this

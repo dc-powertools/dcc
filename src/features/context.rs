@@ -45,7 +45,7 @@ pub(crate) fn build_context(
         add_to_tar(
             &mut builder,
             &format!(".dcc-features/{}/install.sh", feature.id),
-            &inject_trace(&feature.install_sh),
+            &feature.install_sh,
             0o755,
         )?;
         add_to_tar(
@@ -255,33 +255,6 @@ pub(crate) fn unique_feature_id(
     id
 }
 
-/// Injects `set -x` into an `install.sh` so that every command is echoed to
-/// stderr before it runs. Docker BuildKit surfaces this output only for failed
-/// layers, making it easy to pinpoint the exact command that caused a build
-/// failure without adding noise to successful builds.
-///
-/// `PS4` is set to include `$LINENO` so each traced line shows its line number
-/// within the script.
-///
-/// The injection is inserted after the shebang line (when one is present) to
-/// preserve the intended interpreter.
-fn inject_trace(install_sh: &[u8]) -> Vec<u8> {
-    let (shebang, body) = match install_sh.iter().position(|&b| b == b'\n') {
-        Some(pos) if install_sh.starts_with(b"#!") => {
-            (Some(&install_sh[..pos]), &install_sh[pos + 1..])
-        }
-        _ => (None, install_sh),
-    };
-    let mut result = Vec::with_capacity(install_sh.len() + 64);
-    if let Some(sh) = shebang {
-        result.extend_from_slice(sh);
-        result.push(b'\n');
-    }
-    result.extend_from_slice(b"PS4='+ line ${LINENO}: '\nset -x\n");
-    result.extend_from_slice(body);
-    result
-}
-
 fn add_to_tar(
     builder: &mut tar::Builder<Vec<u8>>,
     path: &str,
@@ -301,6 +274,49 @@ fn add_to_tar(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::io::Read as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::process::Command;
+
+    fn archived_install_script(script: &[u8]) -> Vec<u8> {
+        let feature = FeatureContext {
+            id: "test-feature".to_string(),
+            install_sh: script.to_vec(),
+            feature_json: b"{}".to_vec(),
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let tar_bytes = build_context("rust:1", &[], &[feature], "root", false, &[], None).unwrap();
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap()
+                == std::path::Path::new(".dcc-features/test-feature/install.sh")
+            {
+                let mut content = Vec::new();
+                entry.read_to_end(&mut content).unwrap();
+                return content;
+            }
+        }
+        panic!("install.sh not found in generated build context");
+    }
+
+    fn run_install_script(script: &[u8], secret: &str) -> std::process::Output {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("install.sh");
+        std::fs::write(&path, script).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        Command::new("/bin/sh")
+            .args(["-c", "./install.sh"])
+            .current_dir(temp.path())
+            .env("FEATURE_SECRET", secret)
+            .output()
+            .unwrap()
+    }
 
     #[test]
     fn feature_slug_basic() {
@@ -673,91 +689,49 @@ mod tests {
         assert!(!df.contains("command -v nc"), "nc install should be absent");
     }
 
-    // --- inject_trace ---
-
     #[test]
-    fn inject_trace_with_shebang_inserts_after_it() {
-        let script = b"#!/bin/sh\necho hello\n";
-        let traced = inject_trace(script);
-        let text = std::str::from_utf8(&traced).unwrap();
-        assert!(text.starts_with("#!/bin/sh\n"), "shebang must be first");
-        let set_x_pos = text.find("set -x").unwrap();
-        let echo_pos = text.find("echo hello").unwrap();
-        let shebang_end = text.find('\n').unwrap();
-        assert!(
-            set_x_pos > shebang_end,
-            "set -x must come after the shebang"
-        );
-        assert!(set_x_pos < echo_pos, "set -x must come before script body");
-    }
-
-    #[test]
-    fn inject_trace_without_shebang_prepends() {
-        let script = b"echo hello\n";
-        let traced = inject_trace(script);
-        let text = std::str::from_utf8(&traced).unwrap();
-        let set_x_pos = text.find("set -x").unwrap();
-        let echo_pos = text.find("echo hello").unwrap();
-        assert!(set_x_pos < echo_pos, "set -x must precede script body");
-    }
-
-    #[test]
-    fn inject_trace_empty_script() {
-        let traced = inject_trace(b"");
-        let text = std::str::from_utf8(&traced).unwrap();
-        assert!(text.contains("set -x"));
-    }
-
-    #[test]
-    fn inject_trace_preserves_bash_shebang() {
-        let script = b"#!/usr/bin/env bash\ncommand\n";
-        let traced = inject_trace(script);
-        let text = std::str::from_utf8(&traced).unwrap();
-        assert!(text.starts_with("#!/usr/bin/env bash\n"));
-    }
-
-    #[test]
-    fn inject_trace_includes_ps4_with_lineno() {
-        let traced = inject_trace(b"#!/bin/sh\necho hi\n");
-        let text = std::str::from_utf8(&traced).unwrap();
-        assert!(
-            text.contains("PS4="),
-            "PS4 should be set for line-number tracing"
-        );
-        assert!(text.contains("LINENO"), "PS4 should reference $LINENO");
-        let ps4_pos = text.find("PS4=").unwrap();
-        let set_x_pos = text.find("set -x").unwrap();
-        assert!(ps4_pos < set_x_pos, "PS4 must be set before set -x");
-    }
-
-    #[test]
-    fn build_context_tar_install_sh_has_trace() {
-        let f = FeatureContext {
-            id: "node".to_string(),
-            install_sh: b"#!/bin/sh\necho hello\n".to_vec(),
-            feature_json: b"{}".to_vec(),
-            env_vars: IndexMap::new(),
-            container_env: IndexMap::new(),
-            extra_files: vec![],
-        };
-        let tar_bytes = build_context("rust:1", &[], &[f], "root", false, &[], None).unwrap();
-        let mut archive = tar::Archive::new(std::io::Cursor::new(&tar_bytes));
-        let mut install_content = String::new();
-        for entry in archive.entries().unwrap() {
-            let mut entry = entry.unwrap();
-            if entry.path().unwrap().to_str().unwrap() == ".dcc-features/node/install.sh" {
-                std::io::Read::read_to_string(&mut entry, &mut install_content).unwrap();
-            }
+    fn build_context_preserves_feature_install_script_bytes() {
+        for script in [
+            b"#!/bin/sh\nprintf 'posix'\n".as_slice(),
+            b"#!/usr/bin/env bash\nprintf 'bash'\n".as_slice(),
+            b"printf 'no-shebang'\n".as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(archived_install_script(script), script);
         }
-        assert!(!install_content.is_empty(), "install.sh not found in tar");
-        assert!(
-            install_content.contains("set -x"),
-            "install.sh must contain set -x"
-        );
-        assert!(
-            install_content.starts_with("#!/bin/sh\n"),
-            "shebang must be preserved as first line"
-        );
+    }
+
+    #[test]
+    fn generated_feature_install_scripts_execute_with_their_interpreter_contract() {
+        for script in [
+            b"#!/bin/sh\ntest \"$FEATURE_SECRET\" = expected\n".as_slice(),
+            b"#!/usr/bin/env bash\n[[ \"$FEATURE_SECRET\" == expected ]]\n".as_slice(),
+            b"test \"$FEATURE_SECRET\" = expected\n".as_slice(),
+        ] {
+            let output = run_install_script(&archived_install_script(script), "expected");
+            assert!(
+                output.status.success(),
+                "generated install script failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn default_feature_install_does_not_trace_expanded_secrets() {
+        const SECRET: &str = "fixture-secret-that-must-not-be-traced";
+        let script = archived_install_script(b"#!/bin/sh\n: \"$FEATURE_SECRET\"\nprintf done\n");
+        let output = run_install_script(&script, SECRET);
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"done");
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(SECRET));
+
+        // Negative control: the same command does expose the expanded value when
+        // unconditional xtrace is reintroduced, so the assertion above detects the
+        // pre-change failure mode rather than merely observing an unused variable.
+        let traced = b"#!/bin/sh\nset -x\n: \"$FEATURE_SECRET\"\nprintf done\n";
+        let traced_output = run_install_script(traced, SECRET);
+        assert!(String::from_utf8_lossy(&traced_output.stderr).contains(SECRET));
     }
 
     #[test]
