@@ -13,7 +13,6 @@ agent restart, approval waits, and deliberate user interruption.
 | Task guidance | Changed constraint, goal, example, or priority for a task | Halt conflicting task work, record the amendment, and reframe only that task |
 | Global user stop | Stop all, pause, wait, hold on | Stop nonessential work, checkpoint active tasks, suspend workers, and do not schedule work |
 | Worker loss | Stale worker, missing result, crashed tool | Reconcile shared state; recover only work still needed and safe to own |
-| Capacity wait | An applicable usage window is at least 95%, or required telemetry is unknown | Checkpoint and suspend workers; resume only after a fresh safe reading |
 
 ## Durable Recovery State
 
