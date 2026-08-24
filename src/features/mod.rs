@@ -120,10 +120,14 @@ struct FeatureMount {
 impl FeatureMount {
     /// Converts to the `--mount` string form accepted by `docker run`.
     fn to_mount_string(&self) -> String {
-        format!(
-            "type={},source={},target={}",
-            self.mount_type, self.source, self.target
-        )
+        if self.mount_type == "volume" && self.source.is_empty() {
+            format!("type=volume,target={}", self.target)
+        } else {
+            format!(
+                "type={},source={},target={}",
+                self.mount_type, self.source, self.target
+            )
+        }
     }
 }
 
@@ -1020,6 +1024,16 @@ mod tests {
     }
 
     #[test]
+    fn mount_to_string_anonymous_volume_omits_source_field() {
+        let mount = FeatureMount {
+            source: String::new(),
+            target: "/data".to_string(),
+            mount_type: "volume".to_string(),
+        };
+        assert_eq!(mount.to_mount_string(), "type=volume,target=/data");
+    }
+
+    #[test]
     fn mount_to_string_bind() {
         let m = FeatureMount {
             source: "/host/path".to_string(),
@@ -1329,8 +1343,18 @@ mod tests {
     fn parse_label_volume_mount_omits_source() {
         let json = r#"[{"id":"feat","mounts":[{"type":"volume","target":"/data"}]}]"#;
         let config = parse_runtime_from_label(json).unwrap();
-        // source is empty so it is omitted from the --mount string
-        assert_eq!(config.mounts, vec!["type=volume,source=,target=/data"]);
+        assert_eq!(config.mounts, vec!["type=volume,target=/data"]);
+        assert!(!config.mounts[0].contains("source="));
+    }
+
+    #[test]
+    fn parse_label_named_volume_mount_preserves_source() {
+        let json = r#"[{"id":"feat","mounts":[{"type":"volume","source":"feature-data","target":"/data"}]}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(
+            config.mounts,
+            vec!["type=volume,source=feature-data,target=/data"]
+        );
     }
 
     #[test]

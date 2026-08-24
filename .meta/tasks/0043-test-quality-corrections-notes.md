@@ -9,7 +9,9 @@
   verification, metadata errors, and archive path/type confinement).
 - Completed slice: T-0045 (Linux-only injectable UID planning and observed host-ID
   assertions; macOS/Windows simulations no-op).
-- Selected slice: T-0046, followed by the remaining independent children.
+- Completed slice: T-0046 (anonymous Feature volumes omit `source`; named volumes and
+  bind mounts preserve it).
+- Selected slice: T-0047, followed by the remaining independent children.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this
