@@ -381,11 +381,12 @@ async fn run_build_preparation(
             Ok(probed) => container_env.extend(probed),
             Err(e) => eprintln!(
                 "warning: could not probe container HOME/USER ({e:#}); \
-                 ${{containerEnv:HOME}}/${{containerEnv:USER}} may be unresolved"
+                 unguarded ${{containerEnv:HOME}}/${{containerEnv:USER}} references will fail"
             ),
         }
     }
-    let workdir = config::vars::resolve_container_env(&config.workspace_folder, &container_env);
+    let workdir = config::vars::resolve_container_env(&config.workspace_folder, &container_env)
+        .context("workspaceFolder contains an invalid containerEnv reference")?;
 
     let state = resolve_runtime_state(config, &feature_runtime, &container_env)
         .context("invalid customizations.dcc.state after resolving containerEnv")?;
@@ -746,7 +747,7 @@ async fn run_planned_hooks(
 ) -> anyhow::Result<()> {
     let substitute = |s: &str| -> anyhow::Result<String> {
         let s = config::vars::apply_substitution(s, local_workspace, local_cache);
-        Ok(config::vars::resolve_container_env(&s, container_env))
+        config::vars::resolve_container_env(&s, container_env)
     };
     for hook in &plan.hooks {
         let cmd = hook.command.try_substitute(&substitute).with_context(|| {

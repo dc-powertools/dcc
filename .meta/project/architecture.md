@@ -258,19 +258,20 @@ container config env and is inherited uniformly (PID 1, its children, and
 once (`docker::probe_user_env` — a throwaway `docker run … sh -c 'echo $HOME; id -un'`)
 and merges them into the resolution map. The probe is gated on actual use
 (`exec::references_container_env`) so configs that don't use containerEnv pay nothing;
-a probe failure is a warning, leaving the keys absent so the empty/default contract
-applies.
+a probe failure is a warning, leaving the keys absent. A reference without a default
+then produces the same missing-variable error as any other absent image variable.
 
-An absent `${containerEnv:VAR}` resolves to its `:default` or the empty string, matching
-the Dev Container reference implementation. A present-but-empty value remains empty and
-does not use a default, so absence and explicit emptiness are distinguishable. Consumer
-validation runs afterward: notably, state paths still reject empty, relative, root,
-overlapping, and reserved resolved paths. `${localEnv:…}` follows the same absent/default
-distinction. Local and env-namespace variables are not substituted inside a
-`containerEnv` value (it is build-time). Any other unknown `${…}` is left as-is and
-triggers a warning; the run path additionally prints a user-facing warning for
-unresolved references left in a mount or `remoteEnv`. The durable rationale and exact
-matrix are recorded in decision 0005.
+An absent `${containerEnv:VAR}` must have an explicit `:default` or resolution fails
+with an error naming the missing variable and consumer. A default may be empty. A
+present-but-empty value remains empty and does not use a default, while a present
+non-empty value always wins. Consumer validation runs afterward: notably, state paths
+still reject empty, relative, root, overlapping, and reserved resolved paths.
+`${localEnv:…}` retains its separate Dev Container absent/default behavior. Local and
+env-namespace variables are not substituted inside a `containerEnv` value (it is
+build-time). Any other unknown `${…}` is left as-is and triggers a warning; the run path
+additionally prints a user-facing warning for unresolved references left in a mount or
+`remoteEnv`. The durable rationale and exact matrix are recorded in decision 0006;
+decision 0005 preserves the superseded upstream-compatible policy as history.
 
 ---
 

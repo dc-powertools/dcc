@@ -138,11 +138,18 @@ pub(crate) fn resolve_state_entries_container_env(
 ) -> anyhow::Result<Vec<StateEntry>> {
     let resolved = state
         .iter()
-        .map(|entry| StateEntry {
-            path: vars::resolve_container_env(&entry.path, env),
-            kind: entry.kind,
+        .map(|entry| {
+            Ok(StateEntry {
+                path: vars::resolve_container_env(&entry.path, env).with_context(|| {
+                    format!(
+                        "customizations.dcc.state path `{}` contains an invalid containerEnv reference",
+                        entry.path
+                    )
+                })?,
+                kind: entry.kind,
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     validate_state_entries(resolved)
 }
 
@@ -950,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn state_rejects_absent_container_env_after_empty_substitution() {
+    fn state_rejects_absent_container_env_without_default() {
         let deferred = vec![crate::config::StateEntry {
             path: "${containerEnv:MISSING}".to_string(),
             kind: crate::config::StateKind::Directory,
@@ -959,8 +966,12 @@ mod tests {
         let err = resolve_state_entries_container_env(&loaded, &std::collections::HashMap::new())
             .unwrap_err();
         assert!(
-            err.to_string().contains("absolute"),
-            "empty resolved state path must still fail path validation: {err:#}"
+            err.to_string().contains("customizations.dcc.state path"),
+            "state context must be retained: {err:#}"
+        );
+        assert!(
+            format!("{err:#}").contains("variable `MISSING` is missing"),
+            "missing containerEnv must fail before path validation: {err:#}"
         );
     }
 

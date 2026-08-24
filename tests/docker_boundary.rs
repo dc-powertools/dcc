@@ -31,8 +31,8 @@ if [ "$command_name" = image ] && [ "${2-}" = inspect ]; then
     fi
     case "${4-}" in
         *dcc.version*) printf '%s\n' "${DCC_FAKE_VERSION_LABEL-<no value>}" ;;
-        *devcontainer.metadata*) printf '%s\n' '<no value>' ;;
-        *Config.Env*) printf '%s\n' '[]' ;;
+        *devcontainer.metadata*) printf '%s\n' "${DCC_FAKE_METADATA-<no value>}" ;;
+        *Config.Env*) printf '%s\n' "${DCC_FAKE_IMAGE_ENV-[]}" ;;
         *dcc.seed*) printf '%s\n' '<no value>' ;;
         *) printf '%s\n' '<no value>' ;;
     esac
@@ -138,6 +138,29 @@ impl FakeDockerFixture {
         if let Some(version) = version {
             command.env("DCC_FAKE_VERSION_LABEL", version);
         }
+        command.output().unwrap()
+    }
+
+    fn output_with_image_env(
+        &self,
+        args: &[&str],
+        version: Option<&str>,
+        image_env: &str,
+    ) -> Output {
+        let mut command = self.dcc(args);
+        if let Some(version) = version {
+            command.env("DCC_FAKE_VERSION_LABEL", version);
+        }
+        command.env("DCC_FAKE_IMAGE_ENV", image_env);
+        command.output().unwrap()
+    }
+
+    fn output_with_metadata(&self, args: &[&str], version: Option<&str>, metadata: &str) -> Output {
+        let mut command = self.dcc(args);
+        if let Some(version) = version {
+            command.env("DCC_FAKE_VERSION_LABEL", version);
+        }
+        command.env("DCC_FAKE_METADATA", metadata);
         command.output().unwrap()
     }
 
@@ -400,5 +423,135 @@ fn a_single_explicit_resource_override_retains_the_other_default() {
         assert_success(&output);
         let calls = fx.calls();
         assert_resource_limits_before_image(run_call(&calls), expected_memory, expected_cpus);
+    }
+}
+
+#[test]
+fn missing_container_env_without_default_fails_in_every_runtime_consumer() {
+    let cases: &[(&str, &str, &[&str])] = &[
+        (
+            r#"{"image":"debian:bookworm-slim","containerUser":"root","workspaceFolder":"${containerEnv:MISSING}"}"#,
+            "workspaceFolder",
+            &["start"],
+        ),
+        (
+            r#"{"image":"debian:bookworm-slim","containerUser":"root","runArgs":["--label=value=${containerEnv:MISSING}"]}"#,
+            "runArgs[0]",
+            &["start"],
+        ),
+        (
+            r#"{"image":"debian:bookworm-slim","containerUser":"root","mounts":["type=volume,target=${containerEnv:MISSING}"]}"#,
+            "mount 0",
+            &["start"],
+        ),
+        (
+            r#"{"image":"debian:bookworm-slim","containerUser":"root","remoteEnv":{"REQUIRED":"${containerEnv:MISSING}"}}"#,
+            "remoteEnv `REQUIRED`",
+            &["start"],
+        ),
+        (
+            r#"{"image":"debian:bookworm-slim","containerUser":"root","customizations":{"dcc":{"state":["${containerEnv:MISSING}"]}}}"#,
+            "customizations.dcc.state path",
+            &["start"],
+        ),
+        (
+            r#"{"image":"debian:bookworm-slim","containerUser":"root","postStartCommand":"echo ${containerEnv:MISSING}"}"#,
+            "startup hook scripts",
+            &["start"],
+        ),
+        (
+            root_image_config(),
+            "container command argument 0",
+            &["exec", "${containerEnv:MISSING}"],
+        ),
+    ];
+    let compatible = compatible_patch_version();
+
+    for (config, context, args) in cases {
+        let fx = FakeDockerFixture::new(config);
+        let output = fx.output(args, Some(&compatible));
+        assert_failure(&output);
+        assert_stderr_contains(&output, context);
+        assert_stderr_contains(&output, "variable `MISSING` is missing");
+        assert_stderr_contains(&output, "${containerEnv:MISSING}");
+        assert!(
+            !fx.calls().iter().any(|call| {
+                call.first().is_some_and(|arg| arg == "run")
+                    && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
+            }),
+            "{context} failure must occur before profile container creation"
+        );
+    }
+}
+
+#[test]
+fn container_env_default_and_present_empty_reach_runtime_environment() {
+    let config = r#"{
+        "image":"debian:bookworm-slim",
+        "containerUser":"root",
+        "remoteEnv":{
+            "ABSENT":"${containerEnv:MISSING:fallback}",
+            "EMPTY":"${containerEnv:EMPTY:fallback}"
+        }
+    }"#;
+    let fx = FakeDockerFixture::new(config);
+    let compatible = compatible_patch_version();
+    let output = fx.output_with_image_env(&["start"], Some(&compatible), r#"["EMPTY="]"#);
+    assert_success(&output);
+
+    let calls = fx.calls();
+    let run = calls
+        .iter()
+        .find(|call| {
+            call.first().is_some_and(|arg| arg == "run")
+                && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
+        })
+        .expect("expected profile container creation");
+    assert!(contains_pair(run, "-e", "ABSENT=fallback"));
+    assert!(contains_pair(run, "-e", "EMPTY="));
+}
+
+#[test]
+fn missing_container_env_fails_build_preparation_lifecycle_hook() {
+    let config = r#"{
+        "image":"debian:bookworm-slim",
+        "containerUser":"root",
+        "postCreateCommand":"echo ${containerEnv:MISSING}"
+    }"#;
+    let fx = FakeDockerFixture::new(config);
+    let output = fx.output(&["build", "--refresh-only"], None);
+    assert_failure(&output);
+    assert_stderr_contains(&output, "postCreateCommand from project");
+    assert_stderr_contains(&output, "variable `MISSING` is missing");
+}
+
+#[test]
+fn missing_container_env_without_default_fails_in_feature_consumers() {
+    let cases = [
+        (
+            r#"[{"id":"feat","remoteEnv":{"REQUIRED":"${containerEnv:MISSING}"}}]"#,
+            "remoteEnv `REQUIRED`",
+        ),
+        (
+            r#"[{"id":"feat","mounts":[{"type":"volume","target":"${containerEnv:MISSING}"}]}]"#,
+            "mount 0",
+        ),
+        (
+            r#"[{"id":"feat","customizations":{"dcc":{"state":["${containerEnv:MISSING}"]}}}]"#,
+            "customizations.dcc.state path",
+        ),
+        (
+            r#"[{"id":"feat","postStartCommand":"echo ${containerEnv:MISSING}"}]"#,
+            "postStartCommand from feature `feat`",
+        ),
+    ];
+    let compatible = compatible_patch_version();
+
+    for (metadata, context) in cases {
+        let fx = FakeDockerFixture::new(root_image_config());
+        let output = fx.output_with_metadata(&["start"], Some(&compatible), metadata);
+        assert_failure(&output);
+        assert_stderr_contains(&output, context);
+        assert_stderr_contains(&output, "variable `MISSING` is missing");
     }
 }

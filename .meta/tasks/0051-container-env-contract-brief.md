@@ -71,3 +71,10 @@ Out of scope:
 
 A profile author can predict undefined, empty, and defaulted `containerEnv` behavior
 from the docs, and the suite enforces exactly that contract.
+
+## Subsequent Product Correction
+
+T-0051 completed the upstream-compatible contract described above. On 2026-08-24 the
+product owner clarified that dcc's intended behavior is stricter: an absent
+`${containerEnv:VAR}` without an explicit default must be an error. T-0056 and decision
+0006 supersede that behavior without changing this record of what T-0051 implemented.

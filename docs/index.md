@@ -205,12 +205,14 @@ base image set:
 }
 ```
 
-An absent reference resolves to the empty string unless a fallback is supplied with
-`${containerEnv:VAR:default}`. An explicitly present empty `containerEnv` value remains
-empty and does not use the fallback; defaults apply only when the key is absent. State
-paths are validated after substitution, so an empty result still cannot create a
-relative, root, overlapping, or reserved state mount. `${localEnv:VAR}` follows the
-same absent/default distinction.
+An absent `${containerEnv:VAR}` is an error. Supply an explicit fallback with
+`${containerEnv:VAR:default}` when the variable is optional; the fallback may itself be
+empty (`${containerEnv:VAR:}`). An explicitly present empty `containerEnv` value remains
+empty and does not use the fallback, while a present non-empty value always wins. State
+paths are validated after substitution, so an explicitly allowed empty result still
+cannot create a relative, root, overlapping, or reserved state mount. This strict
+missing-value rule is specific to `${containerEnv:…}`; `${localEnv:VAR}` retains its
+Dev Container absent/default behavior.
 
 ## Commands
 

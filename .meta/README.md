@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-24 | Restored strict errors for missing `${containerEnv:VAR}` references without explicit defaults (T-0056). | `.meta/decisions/0006-require-missing-container-env-default.md`; `.meta/quality/0056-missing-container-env-error-quality.md` |
 | 2026-08-24 | Restored implicit Docker runtime limits of 4 GiB memory and 2 CPUs (T-0055), with independent explicit overrides. | `.meta/quality/0055-default-docker-limits-quality.md` |
 | 2026-08-24 | Implemented macOS `updateRemoteUserUID` mapping (T-0054) while preserving Linux behavior and explicit unsupported-host no-ops. | `.meta/quality/0054-macos-uid-remap-quality.md` |
 | 2026-08-24 | Completed T-0043 test-quality corrections: all ten children now protect stable behavior, compatibility, security, and cross-layer contracts. | `.meta/quality/0043-test-quality-corrections-quality.md` |
@@ -53,7 +54,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - UID remap decision: `.meta/decisions/0002-update-remote-user-uid-in-build-stage.md`
 - Remove image fast path decision: `.meta/decisions/0003-remove-image-fast-path.md`
 - Supervisor delivery model decision: `.meta/decisions/0004-embed-supervisor-in-image.md`
-- `containerEnv` substitution decision: `.meta/decisions/0005-container-env-substitution.md`
+- Current `containerEnv` substitution decision: `.meta/decisions/0006-require-missing-container-env-default.md`
+- Superseded `containerEnv` compatibility decision: `.meta/decisions/0005-container-env-substitution.md`
 - Rewrite quality record: `.meta/quality/0004-dcc-rewrite-quality.md`
 - UID remap quality record: `.meta/quality/0026-update-remote-user-uid-quality.md`
 - Runtime threat model: `.meta/threat-models/0004-dcc-runtime.md`
@@ -69,6 +71,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 2
+- Completed repository-changing tasks since that pass: 3
 - Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.

@@ -1,6 +1,6 @@
 # 0005: Match Dev Container `containerEnv` Empty And Default Semantics
 
-Status: Accepted
+Status: Superseded by [decision 0006](0006-require-missing-container-env-default.md)
 
 Date: 2026-08-24
 
@@ -15,7 +15,7 @@ Supersedes:
 
 Superseded by:
 
-- None
+- [Decision 0006: Require Defaults For Missing `containerEnv`](0006-require-missing-container-env-default.md)
 
 ## Context
 
