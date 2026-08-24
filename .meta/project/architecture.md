@@ -756,8 +756,8 @@ application that binds only to `localhost` rejects such connections.
 
 *Forwarding* means routing traffic through the container's own loopback
 interface so the application sees the source address as `127.0.0.1`. `dcc`
-implements this using a host-side TCP relay (`forward.rs`) and `nc` (netcat)
-running inside the container.
+implements this using a host-side TCP relay (`forward.rs`) and a baked connector
+wrapper running inside the container.
 
 ### Relay architecture (`forward.rs`)
 
@@ -776,37 +776,51 @@ foreground `dcc` command.
 `handle_connection` opens a tunnel by spawning:
 
 ```
-docker exec -i <container-name> nc 127.0.0.1 <port>
+docker exec -i <container-name> /usr/local/share/dcc/dcc-connect 127.0.0.1 <port>
 ```
 
-`nc` runs inside the container and connects to `127.0.0.1:<port>` on the
-container's own loopback interface. `docker exec -i` pipes the process's
-stdin/stdout back to the host. The handler then calls `tokio::io::copy` in
-both directions concurrently via `tokio::select!`:
+`dcc-connect` selects a known compatible TCP client and connects to
+`127.0.0.1:<port>` on the container's own loopback interface. `docker exec -i`
+pipes the process's stdin/stdout back to the host. The handler copies both
+directions concurrently:
 
 ```
-host TCP socket  ←→  docker exec -i nc  ←→  app (127.0.0.1:<port> inside container)
+host TCP socket  ←→  docker exec -i dcc-connect  ←→  app (127.0.0.1:<port> inside container)
 ```
 
 Because `nc` connects from within the container, the application sees the
 connection as originating from `127.0.0.1`, not from the Docker bridge.
 
-When one input direction reaches EOF, the relay half-closes the opposite output
-and continues copying the remaining direction. This allows a client to finish a
-request with a write half-close and still receive the complete response. Once
-both directions finish (or either copy fails), `nc` is reaped and the handler
-task exits.
+When client input reaches EOF, the relay flushes and drops the child stdin pipe
+immediately so `docker exec` can observe EOF while stdout continues to drain.
+The wrapper then half-closes the application-facing socket. This allows a client
+to finish a request with a write half-close and still receive the complete
+response. Once both directions finish (or either copy fails), the connector is
+reaped and the handler task exits.
 
-### Why nc (netcat)
+### Connector compatibility
 
-`nc` is the lowest-common-denominator TCP client available in virtually all
-Linux base images. It does not require any special privileges, does not need
-a daemon running inside the container, and its stdin/stdout are directly
-usable as a byte stream — exactly what `docker exec -i` pipes.
+Netcat command-line and EOF behavior are not uniform. OpenBSD netcat needs `-N`
+to half-close its network socket after stdin EOF; Nmap Ncat performs the needed
+half-close by default and does not accept OpenBSD's short flag; BusyBox and
+traditional netcat do not expose the required interface.
 
-`dcc build` installs `nc` automatically using a cross-distro Dockerfile `RUN`
-step (see In-Memory Build Context above). The step short-circuits if `nc` is
-already present and tries each package manager in turn:
+The POSIX `dcc-connect` wrapper is baked at `/usr/local/share/dcc/dcc-connect`
+and owns this variant boundary. Its selection order is:
+
+1. `nc.openbsd -N HOST PORT`;
+2. an executable identifying itself as Nmap `ncat`, invoked without `-N`;
+3. generic `nc -N HOST PORT`, only when `nc -h` advertises standalone `-N`;
+4. a clear unsupported-connector error.
+
+The wrapper also provides `--check`, validates its fixed loopback host and port,
+and executes a selected program with direct arguments rather than shell
+evaluation.
+
+For non-empty `forwardPorts`, the generated Dockerfile copies the wrapper after
+Feature installation and runs `dcc-connect --check`. A compatible client from
+the base image or a Feature requires no installation. Otherwise the build tries
+the following packages and runs `--check` again:
 
 | Package manager | Package installed |
 |---|---|
@@ -815,22 +829,19 @@ already present and tries each package manager in turn:
 | `yum` (RHEL/CentOS) | `nmap-ncat` |
 | `dnf` (Fedora/RHEL 8+) | `nmap-ncat` |
 
-The `nc` installation step is emitted in the generated Dockerfile only when
-`forwardPorts` is non-empty, since a Dockerfile build is required to install
-packages.
+An arbitrary pre-existing `nc` no longer short-circuits provisioning. Unsupported
+BusyBox or traditional variants therefore lead to installation of a compatible
+client when a supported package manager is available, or a build-time error.
+If future variants make help-text probing too fragile, a small compiled connector
+is the bounded fallback; the fixed host-side executable boundary would not change.
 
 ### Handle lifetime and cleanup
 
-The relay tasks hold `JoinHandle`s returned by `tokio::spawn`. `dcc run`
-stores all handles in a `Vec` and calls `handle.abort()` on each after
-`docker attach` returns. Aborting the listener task causes `listener.accept()`
-to resolve with an error and the loop exits, releasing the port binding.
-
-Per-connection tasks are spawned without retained handles. They are
-genuinely short-lived (they exit when the connection closes) and
-self-cleaning (the `nc` subprocess exits as soon as the container is gone).
-Holding handles for these tasks would require a `JoinSet` or equivalent and
-add complexity for no observable benefit given their bounded lifetime.
+Each listener has an explicit shutdown channel and retained `JoinHandle`.
+Connections are retained in that listener's `JoinSet`; shutdown stops
+acceptance, aborts active handlers, and joins them before returning. Connector
+processes use `kill_on_drop` and are explicitly killed and waited on after a
+relay result, so cancellation cannot detach a subprocess.
 
 ---
 
@@ -953,12 +964,16 @@ ARG NEW_UID=<host-uid>
 ARG NEW_GID=<host-gid>
 RUN <updateRemoteUserUID remap: sed-rewrite /etc/passwd + /etc/group,
      chown -R the user's home, with reference no-op conditions>
+# Baked dcc runtime assets:
+COPY .dcc-generated/ /usr/local/share/dcc/
+RUN chmod +x /usr/local/share/dcc/dcc-*
 # Only present when forwardPorts is non-empty (see Port Forwarding below):
-RUN command -v nc >/dev/null 2>&1 \
+RUN ( /usr/local/share/dcc/dcc-connect --check >/dev/null 2>&1 \
  || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends netcat-openbsd) \
  || (command -v apk     >/dev/null 2>&1 && apk add --no-cache netcat-openbsd) \
  || (command -v yum     >/dev/null 2>&1 && yum install -y nmap-ncat) \
- || (command -v dnf     >/dev/null 2>&1 && dnf install -y nmap-ncat)
+ || (command -v dnf     >/dev/null 2>&1 && dnf install -y nmap-ncat) ) \
+ && /usr/local/share/dcc/dcc-connect --check
 ```
 
 The devcontainer.json `containerEnv` `ENV` directives appear immediately after

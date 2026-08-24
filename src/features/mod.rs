@@ -584,7 +584,7 @@ fn feature_dcc_value<'a>(entry: &'a serde_json::Value, key: &str) -> Option<&'a 
 }
 
 pub(crate) fn generated_assets() -> Vec<context::ContextFile> {
-    // The PID 1 supervisor and command wrapper are baked into the image at
+    // The PID 1 supervisor and runtime wrappers are baked into the image at
     // `/usr/local/share/dcc/` (decision 0004). Startup hook scripts are NOT
     // baked — they are host-generated per launch and bind-mounted, because
     // `postStartCommand` may contain `${localEnv:VAR}` which is only resolvable
@@ -594,7 +594,9 @@ pub(crate) fn generated_assets() -> Vec<context::ContextFile> {
     // them via `docker exec` of a freshly substituted argv
     // (`run_planned_hooks` → `lifecycle::run_in_container`), so baked `.sh`
     // files would never be executed (T-0031 removed the vestigial copies).
-    crate::supervisor::baked_supervisor_assets()
+    let mut assets = crate::supervisor::baked_supervisor_assets();
+    assets.push(crate::forward::baked_connector_asset());
+    assets
 }
 
 fn parse_feature_commands_from_label(
@@ -843,6 +845,17 @@ pub(crate) fn feature_short_id(reference: &str, meta_id: Option<&str>) -> String
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn generated_assets_include_executable_port_forward_connector() {
+        let assets = generated_assets();
+        let (_, contents, mode) = assets
+            .iter()
+            .find(|(path, _, _)| path == ".dcc-generated/dcc-connect")
+            .expect("missing baked port-forward connector");
+        assert_eq!(*mode, 0o755);
+        assert!(contents.starts_with(b"#!/bin/sh\n"));
+    }
 
     // --- unique_feature_id (via context module) ---
 

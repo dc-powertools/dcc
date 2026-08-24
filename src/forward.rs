@@ -1,12 +1,94 @@
-use std::{future::Future, process::Stdio};
+use std::{ffi::OsStr, future::Future, process::Stdio};
 
 use anyhow::Context as _;
 use tokio::{
-    io::{self, AsyncRead, AsyncWrite, AsyncWriteExt as _},
+    io::{self, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
     sync::oneshot,
     task::{JoinHandle, JoinSet},
 };
+
+#[cfg(test)]
+use tokio::io::{AsyncRead, AsyncWrite};
+
+pub(crate) const CONNECTOR_PATH: &str = "/usr/local/share/dcc/dcc-connect";
+
+pub(crate) fn baked_connector_asset() -> (String, Vec<u8>, u32) {
+    (
+        ".dcc-generated/dcc-connect".to_string(),
+        connector_script().as_bytes().to_vec(),
+        0o755,
+    )
+}
+
+fn connector_script() -> &'static str {
+    r#"#!/bin/sh
+set -eu
+
+fail() {
+    printf '%s\n' "dcc-connect: $1" >&2
+    exit "${2:-1}"
+}
+
+select_connector() {
+    if command -v nc.openbsd >/dev/null 2>&1; then
+        printf '%s\n' nc.openbsd
+        return 0
+    fi
+
+    if command -v ncat >/dev/null 2>&1; then
+        ncat_version=$(ncat --version 2>&1 || :)
+        case "$ncat_version" in
+            *Ncat*)
+                printf '%s\n' ncat
+                return 0
+                ;;
+        esac
+    fi
+
+    if command -v nc >/dev/null 2>&1; then
+        nc_help=$(nc -h 2>&1 || :)
+        case " $nc_help " in
+            *[[:space:]]-N[[:space:]]*)
+                printf '%s\n' nc
+                return 0
+                ;;
+        esac
+    fi
+
+    return 1
+}
+
+unsupported() {
+    fail "no compatible connector found (requires nc.openbsd with -N, Nmap ncat, or nc advertising -N)" 127
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = "--check" ]; then
+    select_connector >/dev/null || unsupported
+    exit 0
+fi
+
+[ "$#" -eq 2 ] || fail "usage: dcc-connect HOST PORT" 64
+host=$1
+port=$2
+
+[ "$host" = "127.0.0.1" ] || fail "HOST must be 127.0.0.1" 64
+case "$port" in
+    ''|*[!0-9]*) fail "PORT must be an integer from 1 to 65535" 64 ;;
+esac
+if ! [ "$port" -ge 1 ] 2>/dev/null || ! [ "$port" -le 65535 ] 2>/dev/null; then
+    fail "PORT must be an integer from 1 to 65535" 64
+fi
+
+connector=$(select_connector) || unsupported
+case "$connector" in
+    nc.openbsd) exec nc.openbsd -N "$host" "$port" ;;
+    ncat) exec ncat "$host" "$port" ;;
+    nc) exec nc -N "$host" "$port" ;;
+    *) unsupported ;;
+esac
+"#
+}
 
 pub(crate) struct Forwarding {
     tasks: Vec<RelayTask>,
@@ -154,16 +236,25 @@ async fn relay_listener<H, F>(
 }
 
 async fn handle_connection(stream: TcpStream, container: &str, port: u16) -> anyhow::Result<()> {
-    let mut command = tokio::process::Command::new("docker");
+    let command = connector_command("docker", container, port);
+    handle_connection_with_command(stream, command).await
+}
+
+fn connector_command(
+    docker_program: impl AsRef<OsStr>,
+    container: &str,
+    port: u16,
+) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(docker_program);
     command.args([
         "exec",
         "-i",
         container,
-        "nc",
+        CONNECTOR_PATH,
         "127.0.0.1",
         &port.to_string(),
     ]);
-    handle_connection_with_command(stream, command).await
+    command
 }
 
 async fn handle_connection_with_command(
@@ -190,8 +281,21 @@ async fn handle_connection_with_command(
         .expect("stdout configured as piped");
     let (mut tcp_rx, mut tcp_tx) = stream.into_split();
 
-    let relay_result =
-        copy_both_directions(&mut tcp_rx, &mut tcp_tx, &mut proc_stdout, &mut proc_stdin).await;
+    let relay_result = tokio::try_join!(
+        async {
+            let copied = io::copy(&mut tcp_rx, &mut proc_stdin).await?;
+            proc_stdin.shutdown().await?;
+            // ChildStdin::shutdown flushes but does not release the pipe handle.
+            // Drop it now so docker exec can observe EOF while stdout is drained.
+            drop(proc_stdin);
+            Ok::<_, io::Error>(copied)
+        },
+        async {
+            let copied = io::copy(&mut proc_stdout, &mut tcp_tx).await?;
+            tcp_tx.shutdown().await?;
+            Ok::<_, io::Error>(copied)
+        }
+    );
 
     // Reap the connector on success, I/O failure, and cancellation of either copy.
     let _ = child.kill().await;
@@ -203,6 +307,7 @@ async fn handle_connection_with_command(
 /// Copies until both input directions reach EOF. Each completed input half closes
 /// the opposite output half, allowing a request-side half-close to reach the server
 /// while the response continues to drain back to the client.
+#[cfg(test)]
 async fn copy_both_directions<ClientRead, ClientWrite, UpstreamRead, UpstreamWrite>(
     client_read: &mut ClientRead,
     client_write: &mut ClientWrite,
@@ -232,8 +337,12 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsStr,
         io::ErrorKind,
         net::SocketAddr,
+        os::unix::fs::PermissionsExt as _,
+        path::Path,
+        process::{Command, Output},
         sync::mpsc::{self, Receiver},
         time::Duration,
     };
@@ -271,6 +380,118 @@ mod tests {
         })
         .await
         .unwrap_or_else(|_| panic!("timed out waiting for {description}"));
+    }
+
+    fn write_executable(path: &Path, contents: &str) {
+        std::fs::write(path, contents).unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    fn run_connector(programs: &[(&str, &str)], args: &[&str]) -> (Output, String) {
+        let temp = tempfile::tempdir().unwrap();
+        let connector = temp.path().join("dcc-connect");
+        let log = temp.path().join("connector.log");
+        write_executable(&connector, connector_script());
+        for (name, script) in programs {
+            write_executable(&temp.path().join(name), script);
+        }
+
+        let output = Command::new(&connector)
+            .args(args)
+            .env("PATH", temp.path())
+            .env("DCC_CONNECT_LOG", &log)
+            .output()
+            .unwrap();
+        let invocation = std::fs::read_to_string(log).unwrap_or_default();
+        (output, invocation)
+    }
+
+    const RECORDING_CONNECTOR: &str =
+        "#!/bin/sh\nprintf '%s\\n' \"${0##*/}|$*\" >\"$DCC_CONNECT_LOG\"\n";
+    const NMAP_NCAT: &str = "#!/bin/sh\nif [ \"${1-}\" = --version ]; then printf '%s\\n' 'Ncat: Version 7.95'; exit 0; fi\nprintf '%s\\n' \"${0##*/}|$*\" >\"$DCC_CONNECT_LOG\"\n";
+    const GENERIC_WITH_N: &str = "#!/bin/sh\nif [ \"${1-}\" = -h ]; then printf '%s\\n' '  -N shutdown after EOF'; exit 0; fi\nprintf '%s\\n' \"${0##*/}|$*\" >\"$DCC_CONNECT_LOG\"\n";
+    const GENERIC_WITHOUT_N: &str = "#!/bin/sh\nif [ \"${1-}\" = -h ]; then printf '%s\\n' 'usage: nc [-46h] host port'; exit 0; fi\nexit 9\n";
+    const BUSYBOX_NC: &str = "#!/bin/sh\nif [ \"${1-}\" = -h ]; then printf '%s\\n' 'BusyBox nc: usage: nc [-iNw] HOST PORT'; exit 0; fi\nexit 9\n";
+    const TRADITIONAL_NC: &str = "#!/bin/sh\nif [ \"${1-}\" = -h ]; then printf '%s\\n' 'nc [options] hostname port[s] [ports]'; exit 0; fi\nexit 9\n";
+    const IMPOSTOR_NCAT: &str = "#!/bin/sh\nif [ \"${1-}\" = --version ]; then printf '%s\\n' 'unrelated connector 1.0'; exit 0; fi\nexit 9\n";
+
+    #[test]
+    fn docker_connector_command_uses_fixed_baked_boundary() {
+        let command = connector_command("fake-docker", "container-name", 8123);
+        let command = command.as_std();
+        assert_eq!(command.get_program(), OsStr::new("fake-docker"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "exec",
+                "-i",
+                "container-name",
+                CONNECTOR_PATH,
+                "127.0.0.1",
+                "8123",
+            ]
+            .map(OsStr::new)
+        );
+    }
+
+    #[test]
+    fn connector_prefers_openbsd_then_nmap_then_compatible_generic_nc() {
+        let args = ["127.0.0.1", "8123"];
+        let (output, invocation) = run_connector(
+            &[
+                ("nc.openbsd", RECORDING_CONNECTOR),
+                ("ncat", NMAP_NCAT),
+                ("nc", GENERIC_WITH_N),
+            ],
+            &args,
+        );
+        assert!(output.status.success());
+        assert_eq!(invocation, "nc.openbsd|-N 127.0.0.1 8123\n");
+
+        let (output, invocation) =
+            run_connector(&[("ncat", NMAP_NCAT), ("nc", GENERIC_WITH_N)], &args);
+        assert!(output.status.success());
+        assert_eq!(invocation, "ncat|127.0.0.1 8123\n");
+
+        let (output, invocation) = run_connector(&[("nc", GENERIC_WITH_N)], &args);
+        assert!(output.status.success());
+        assert_eq!(invocation, "nc|-N 127.0.0.1 8123\n");
+    }
+
+    #[test]
+    fn connector_rejects_arbitrary_nc_and_invalid_arguments() {
+        for unsupported in [GENERIC_WITHOUT_N, BUSYBOX_NC, TRADITIONAL_NC] {
+            let (output, invocation) =
+                run_connector(&[("nc", unsupported)], &["127.0.0.1", "8123"]);
+            assert_eq!(output.status.code(), Some(127));
+            assert!(invocation.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("no compatible connector"));
+        }
+
+        let (output, _) = run_connector(
+            &[("ncat", IMPOSTOR_NCAT), ("nc", GENERIC_WITHOUT_N)],
+            &["--check"],
+        );
+        assert_eq!(output.status.code(), Some(127));
+
+        for args in [
+            vec!["localhost", "8123"],
+            vec!["127.0.0.1", "0"],
+            vec!["127.0.0.1", "65536"],
+            vec!["127.0.0.1", "not-a-port"],
+        ] {
+            let (output, _) = run_connector(&[("nc.openbsd", RECORDING_CONNECTOR)], &args);
+            assert_eq!(output.status.code(), Some(64), "args: {args:?}");
+        }
+    }
+
+    #[test]
+    fn connector_check_uses_the_runtime_selector_without_connecting() {
+        let (output, invocation) = run_connector(&[("ncat", NMAP_NCAT)], &["--check"]);
+        assert!(output.status.success());
+        assert!(invocation.is_empty());
     }
 
     #[tokio::test]
@@ -313,6 +534,46 @@ mod tests {
             .unwrap();
         assert_eq!(copied, (7, 18));
         application_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn subprocess_boundary_drains_response_after_client_eof_without_docker() {
+        let temp = tempfile::tempdir().unwrap();
+        let fake_docker = temp.path().join("docker");
+        write_executable(
+            &fake_docker,
+            r#"#!/bin/sh
+[ "$#" -eq 6 ] || exit 20
+[ "$1" = exec ] || exit 21
+[ "$2" = -i ] || exit 22
+[ "$3" = test-container ] || exit 23
+[ "$4" = /usr/local/share/dcc/dcc-connect ] || exit 24
+[ "$5" = 127.0.0.1 ] || exit 25
+[ "$6" = 8123 ] || exit 26
+request=$(/bin/cat)
+[ "$request" = request ] || exit 27
+printf '%s' response-after-eof
+"#,
+        );
+
+        let (mut client, server) = tcp_pair().await;
+        let command = connector_command(&fake_docker, "test-container", 8123);
+        let relay = tokio::spawn(handle_connection_with_command(server, command));
+
+        client.write_all(b"request").await.unwrap();
+        client.shutdown().await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(DEADLINE, client.read_to_end(&mut response))
+            .await
+            .expect("subprocess response drain timed out")
+            .unwrap();
+        assert_eq!(response, b"response-after-eof");
+
+        tokio::time::timeout(DEADLINE, relay)
+            .await
+            .expect("subprocess relay did not finish")
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

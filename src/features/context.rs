@@ -24,7 +24,7 @@ pub(crate) fn build_context(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
-    install_nc: bool,
+    provision_connector: bool,
     generated_assets: &[ContextFile],
     remap: Option<&crate::uid::RemapPlan>,
 ) -> anyhow::Result<Vec<u8>> {
@@ -33,7 +33,7 @@ pub(crate) fn build_context(
         devcontainer_env,
         features,
         container_user,
-        install_nc,
+        provision_connector,
         !generated_assets.is_empty(),
         remap,
     );
@@ -82,15 +82,15 @@ fn generate_dockerfile(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
-    install_nc: bool,
+    provision_connector: bool,
 ) -> String {
     generate_dockerfile_inner(
         image,
         devcontainer_env,
         features,
         container_user,
-        install_nc,
-        false,
+        provision_connector,
+        provision_connector,
         None,
     )
 }
@@ -100,7 +100,7 @@ fn generate_dockerfile_inner(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
-    install_nc: bool,
+    provision_connector: bool,
     install_generated_assets: bool,
     remap: Option<&crate::uid::RemapPlan>,
 ) -> String {
@@ -115,7 +115,7 @@ fn generate_dockerfile_inner(
         "LABEL dcc.version={}",
         shell_quote(env!("CARGO_PKG_VERSION"))
     ));
-    if !features.is_empty() || install_nc {
+    if !features.is_empty() || provision_connector {
         // Suppress debconf's Dialog→Readline→Teletype→Noninteractive fallback
         // warnings that appear when apt-get runs without a controlling terminal.
         // ARG (unlike ENV) is not baked into the final image, so interactive
@@ -190,12 +190,16 @@ fn generate_dockerfile_inner(
         }
         lines.push("RUN rm -rf /tmp/.dcc-features/".to_string());
     }
-    // Install nc (netcat) for port forwarding. Runs last so features that already
-    // provide nc short-circuit the check. Tries each package manager in turn;
-    // the first successful install wins.
-    if install_nc {
+    if install_generated_assets {
+        lines.push("COPY .dcc-generated/ /usr/local/share/dcc/".to_string());
+        lines.push("RUN chmod +x /usr/local/share/dcc/dcc-*".to_string());
+    }
+    // Validate the baked port-forward connector after features have run. A compatible
+    // tool supplied by the base image or a feature needs no package installation;
+    // otherwise try the distro-specific OpenBSD netcat/Nmap Ncat packages in turn.
+    if provision_connector {
         lines.push(
-            "RUN command -v nc >/dev/null 2>&1 \
+            "RUN ( /usr/local/share/dcc/dcc-connect --check >/dev/null 2>&1 \
              \\\n || (command -v apt-get >/dev/null 2>&1 \
              && apt-get update -qq \
              && apt-get install -y --no-install-recommends netcat-openbsd) \
@@ -204,14 +208,10 @@ fn generate_dockerfile_inner(
              \\\n || (command -v yum >/dev/null 2>&1 \
              && yum install -y nmap-ncat) \
              \\\n || (command -v dnf >/dev/null 2>&1 \
-             && dnf install -y nmap-ncat)"
+             && dnf install -y nmap-ncat) \
+             \\\n || (printf '%s\\n' 'dcc: unable to install a compatible port-forward connector' >&2; false) ) \
+             \\\n && /usr/local/share/dcc/dcc-connect --check"
                 .to_string(),
-        );
-    }
-    if install_generated_assets {
-        lines.push("COPY .dcc-generated/ /usr/local/share/dcc/".to_string());
-        lines.push(
-            "RUN find /usr/local/share/dcc -type f -name '*.sh' -exec chmod +x {} \\;".to_string(),
         );
     }
     lines.join("\n") + "\n"
@@ -393,36 +393,36 @@ mod tests {
             &[feature],
             "root",
             true,
-            &[(
-                ".dcc-generated/dcc-ctl".to_string(),
-                b"#!/bin/sh\n".to_vec(),
-                0o755,
-            )],
+            &[crate::forward::baked_connector_asset()],
             None,
         )
         .unwrap();
         let mut archive = tar::Archive::new(std::io::Cursor::new(&context));
         let mut paths = Vec::new();
         let mut dockerfile = String::new();
+        let mut connector_mode = None;
         for entry in archive.entries().unwrap() {
             let mut entry = entry.unwrap();
             let path = entry.path().unwrap().to_string_lossy().into_owned();
             if path == "Dockerfile" {
                 std::io::Read::read_to_string(&mut entry, &mut dockerfile).unwrap();
+            } else if path == ".dcc-generated/dcc-connect" {
+                connector_mode = Some(entry.header().mode().unwrap());
             }
             paths.push(path);
         }
         assert!(paths.contains(&".dcc-features/matrix-feature/install.sh".to_string()));
-        assert!(paths.contains(&".dcc-generated/dcc-ctl".to_string()));
+        assert!(paths.contains(&".dcc-generated/dcc-connect".to_string()));
+        assert_eq!(connector_mode, Some(0o755));
         assert_eq!(dockerfile.lines().next(), Some("FROM alpine:3"));
         assert!(dockerfile
             .lines()
             .any(|line| line.starts_with("LABEL dcc.version=")));
         assert!(dockerfile.contains("COPY .dcc-generated/ /usr/local/share/dcc/"));
         let feature_pos = dockerfile.find("matrix-feature/install.sh").unwrap();
-        let nc_pos = dockerfile.find("command -v nc").unwrap();
+        let connector_pos = dockerfile.find("dcc-connect --check").unwrap();
         assert!(
-            feature_pos < nc_pos,
+            feature_pos < connector_pos,
             "Feature installation must precede fallback package installation: {dockerfile}"
         );
     }
@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_debian_frontend_set_when_install_nc() {
+    fn dockerfile_debian_frontend_set_when_provisioning_connector() {
         let df = generate_dockerfile("rust:1", &[], &[], "root", true);
         assert!(
             df.contains("ARG DEBIAN_FRONTEND=noninteractive"),
@@ -723,35 +723,49 @@ mod tests {
             extra_files: vec![],
         };
         let df = generate_dockerfile("rust:1", &[], &[feature], "root", true);
-        assert!(df.contains("command -v nc"), "nc check should be present");
+        assert_eq!(
+            df.matches("/usr/local/share/dcc/dcc-connect --check")
+                .count(),
+            2,
+            "connector must be checked before and after fallbacks: {df}"
+        );
+        assert!(
+            !df.contains("RUN command -v nc"),
+            "an arbitrary nc must not bypass capability checks: {df}"
+        );
         assert!(
             df.contains("netcat-openbsd"),
             "apt/apk package should be named"
         );
         assert!(df.contains("nmap-ncat"), "yum/dnf package should be named");
         let feature_pos = df.find("ordering-fixture/install.sh").unwrap();
-        let nc_pos = df.find("command -v nc").unwrap();
+        let copy_pos = df.find("COPY .dcc-generated/").unwrap();
+        let connector_pos = df.find("dcc-connect --check").unwrap();
+        let apt_pos = df.find("command -v apt-get").unwrap();
         assert!(
-            feature_pos < nc_pos,
-            "Feature installation must complete before nc installation: {df}"
+            feature_pos < copy_pos && copy_pos < connector_pos && connector_pos < apt_pos,
+            "features and the baked wrapper must precede connector provisioning: {df}"
         );
     }
 
     #[test]
-    fn dockerfile_install_nc_after_user_creation() {
+    fn dockerfile_provisions_connector_after_user_creation() {
         let df = generate_dockerfile("rust:1", &[], &[], "dev", true);
         let user_pos = df.find("id 'dev'").unwrap();
-        let nc_pos = df.find("command -v nc").unwrap();
+        let connector_pos = df.find("dcc-connect --check").unwrap();
         assert!(
-            nc_pos > user_pos,
-            "nc install should appear after user creation"
+            connector_pos > user_pos,
+            "connector provisioning should appear after user creation"
         );
     }
 
     #[test]
-    fn dockerfile_no_install_nc_when_false() {
+    fn dockerfile_omits_connector_provisioning_when_not_requested() {
         let df = generate_dockerfile("rust:1", &[], &[], "root", false);
-        assert!(!df.contains("command -v nc"), "nc install should be absent");
+        assert!(
+            !df.contains("dcc-connect --check"),
+            "connector provisioning should be absent"
+        );
     }
 
     #[test]
