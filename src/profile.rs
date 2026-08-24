@@ -270,20 +270,6 @@ mod tests {
     }
 
     #[test]
-    fn container_id_dcc_prefix() {
-        let ws = workspace("/any/path");
-        let p = ProfileName::new("test");
-        assert!(ContainerId::new(&ws, &p).as_str().starts_with("dcc-"));
-    }
-
-    #[test]
-    fn container_id_profile_in_suffix() {
-        let ws = workspace("/any/path");
-        let p = ProfileName::new("myprofile");
-        assert!(ContainerId::new(&ws, &p).as_str().ends_with("--myprofile"));
-    }
-
-    #[test]
     fn container_id_same_identity_same_id() {
         let ws1 = Workspace {
             root: PathBuf::from("/path/a"),

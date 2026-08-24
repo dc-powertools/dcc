@@ -696,26 +696,6 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_script_has_reaper_not_grace() {
-        let s = supervisor_script();
-        assert!(s.contains("REAPER_SECS"));
-        assert!(s.contains("arrived"));
-        // The old time-based grace must be gone.
-        assert!(!s.contains("STARTUP_GRACE_SECS"));
-        assert!(!s.contains("PRIMED"));
-        assert!(!s.contains("primed"));
-    }
-
-    #[test]
-    fn supervisor_script_uses_fractional_sleep() {
-        let s = supervisor_script();
-        assert!(
-            s.contains("sleep 0.2"),
-            "expected `sleep 0.2` (200ms as fractional seconds), got: {s}"
-        );
-    }
-
-    #[test]
     fn ctl_script_supports_mode_stop_stop_now_and_wait_ready() {
         let s = ctl_script();
         assert!(s.contains("mode)"));
@@ -878,14 +858,19 @@ mod tests {
     }
 
     #[test]
-    fn baked_supervisor_assets_emits_three_executable_scripts() {
+    fn baked_supervisor_assets_include_required_executable_scripts() {
         let assets = baked_supervisor_assets();
-        assert_eq!(assets.len(), 3, "expected three supervisor scripts");
         let names: Vec<&str> = assets.iter().map(|(p, _, _)| p.as_str()).collect();
-        assert!(
-            names.iter().all(|p| p.starts_with(".dcc-generated/dcc-")),
-            "assets should target .dcc-generated/, got: {names:?}"
-        );
+        for required in [
+            ".dcc-generated/dcc-supervisor",
+            ".dcc-generated/dcc-ctl",
+            ".dcc-generated/dcc-exec",
+        ] {
+            assert!(
+                names.contains(&required),
+                "missing required asset {required}"
+            );
+        }
         for (path, content, mode) in &assets {
             let text = std::str::from_utf8(content).unwrap();
             assert!(

@@ -171,12 +171,6 @@ mod tests {
     }
 
     #[test]
-    fn host_path_is_absolute() {
-        let cache = CacheDir::new(&ws("/some/abs/path"), &ProfileName::new("dev"));
-        assert!(cache.host_path.is_absolute());
-    }
-
-    #[test]
     fn ensure_exists_creates_and_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let ws = Workspace {

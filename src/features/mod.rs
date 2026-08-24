@@ -1046,25 +1046,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn generated_assets_returns_only_supervisor_scripts() {
-        // T-0031: build-prep hook assets are no longer baked (they were never
-        // executed). generated_assets() returns only the three supervisor
-        // scripts that are baked into the image.
-        let assets = generated_assets();
-        assert_eq!(
-            assets.len(),
-            3,
-            "expected only the three supervisor scripts"
-        );
-        for (path, _, _) in &assets {
-            assert!(
-                !path.contains("/hooks/build-prep/"),
-                "no build-prep hook assets should be baked, got: {path}"
-            );
-        }
-    }
-
     // --- topological_sort ---
 
     fn entry(meta: FeatureMeta) -> FeatureEntry {

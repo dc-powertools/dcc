@@ -114,14 +114,4 @@ mod tests {
             "expected error to mention 'devcontainer', got: {err}"
         );
     }
-
-    #[test]
-    fn root_is_workspace() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        fs::create_dir(root.join(".devcontainer")).unwrap();
-
-        let ws = find_workspace_from(root).unwrap();
-        assert_eq!(ws.root, fs::canonicalize(root).unwrap());
-    }
 }

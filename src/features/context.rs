@@ -421,12 +421,12 @@ mod tests {
     #[test]
     fn dockerfile_root_user_skips_creation() {
         let df = generate_dockerfile("rust:1", &[], &[], "root", false);
-        assert_eq!(
-            df,
-            format!(
-                "FROM rust:1\nLABEL dcc.version='{}'\n",
-                env!("CARGO_PKG_VERSION")
-            )
+        assert!(df
+            .lines()
+            .any(|line| line == format!("LABEL dcc.version='{}'", env!("CARGO_PKG_VERSION"))));
+        assert!(
+            !df.contains("useradd") && !df.contains("adduser") && !df.contains("id 'root'"),
+            "root must not trigger user creation: {df}"
         );
     }
 
@@ -467,27 +467,6 @@ mod tests {
         let df = generate_dockerfile_inner("rust:1", &[], &[], "dev", false, false, None);
         assert!(!df.contains("ARG REMOTE_USER="), "got: {df}");
         assert!(!df.contains("updateRemoteUserUID"), "got: {df}");
-    }
-
-    #[test]
-    fn dockerfile_omits_remap_block_for_root_even_with_plan() {
-        // The caller never plans a remap for root, but the generator must not
-        // emit a root remap even if handed one defensively. We assert the
-        // generator relies on the caller's plan and does not second-guess root
-        // here: a None plan for root produces no remap.
-        let df = generate_dockerfile_inner("rust:1", &[], &[], "root", false, false, None);
-        assert!(!df.contains("ARG REMOTE_USER="), "got: {df}");
-    }
-
-    #[test]
-    fn dockerfile_version_label_immediately_after_from() {
-        let df = generate_dockerfile("rust:1", &[], &[], "root", false);
-        let mut lines = df.lines();
-        assert_eq!(lines.next(), Some("FROM rust:1"));
-        assert_eq!(
-            lines.next(),
-            Some(format!("LABEL dcc.version='{}'", env!("CARGO_PKG_VERSION")).as_str())
-        );
     }
 
     #[test]
@@ -659,17 +638,28 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_install_nc_appended_last() {
-        let df = generate_dockerfile("rust:1", &[], &[], "root", true);
+    fn dockerfile_installs_nc_after_features() {
+        let feature = FeatureContext {
+            id: "ordering-fixture".to_string(),
+            install_sh: vec![],
+            feature_json: vec![],
+            env_vars: IndexMap::new(),
+            container_env: IndexMap::new(),
+            extra_files: vec![],
+        };
+        let df = generate_dockerfile("rust:1", &[], &[feature], "root", true);
         assert!(df.contains("command -v nc"), "nc check should be present");
         assert!(
             df.contains("netcat-openbsd"),
             "apt/apk package should be named"
         );
         assert!(df.contains("nmap-ncat"), "yum/dnf package should be named");
-        // Should be the last non-empty line
-        let last = df.trim_end_matches('\n').lines().last().unwrap();
-        assert!(last.contains("dnf"), "nc install should be the last step");
+        let feature_pos = df.find("ordering-fixture/install.sh").unwrap();
+        let nc_pos = df.find("command -v nc").unwrap();
+        assert!(
+            feature_pos < nc_pos,
+            "Feature installation must complete before nc installation: {df}"
+        );
     }
 
     #[test]

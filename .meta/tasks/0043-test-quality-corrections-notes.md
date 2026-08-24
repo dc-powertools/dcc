@@ -22,7 +22,9 @@
 - Completed slice: T-0051 (upstream-compatible absent/default/present-empty
   `containerEnv` contract, durable decision 0005, and post-substitution consumer
   validation coverage).
-- Selected slice: T-0052, followed by T-0053.
+- Completed slice: T-0052 (candidate-by-candidate brittle-test classification, nine
+  low-value tests removed, and three stable-outcome rewrites).
+- Selected slice: T-0053.
 - Integration owner: Root Orchestrator; one child task is selected and committed at a
   time.
 - Delegation constraint: the requested fresh-agent sequence cannot start because this
@@ -33,6 +35,20 @@
 - Shared-tree baseline: task-catalog intake and T-0043 through T-0053 briefs were
   present as uncommitted framework state when implementation began; preserve unrelated
   task intake at every child commit.
+
+## T-0052 Candidate Classification
+
+| Candidate | Disposition | Stable coverage retained or added |
+| --- | --- | --- |
+| Supervisor `REAPER_SECS`, `arrived`, retired grace/primed names, and exact `sleep 0.2` | Delete shape tests | Real-shell one-shot drain, bootstrap wait, failure status, and command-exit tests execute the scripts and observe behavior. |
+| `generated_assets_returns_only_supervisor_scripts` exact length and retired hook path | Delete forwarding-layer duplicate; rewrite the owning supervisor asset test | The owning test requires the supervisor, control, and exec assets by public image path and verifies every emitted asset is executable shell. |
+| Retired stop dry-run phrase | Already deleted by T-0049 | `stop_dry_run_reports_action_for_each_variant` positively checks the graceful, now, and kill actions. |
+| Root remap test titled as planned while passing `None` | Delete duplicate/misleading test | UID planning tests prove root never produces a plan; the generator's no-plan test proves omission. |
+| Exact version-label placement and exact root Dockerfile body | Delete placement test; rewrite root test | Root-user creation is absent and the required version label is present without fixing line position or whitespace. |
+| Netcat last-line ordering with no Features | Rewrite | A Feature fixture proves its install step precedes netcat installation; separate tests retain package alternatives, user ordering, and omission. |
+| Duplicate workspace-root example | Delete `root_is_workspace` | `from_workspace_root` observes the same exact canonical root; nested and `.devcontainer` discovery remain separate. |
+| Cache absolute-path example | Delete | `host_path_correct` asserts the stronger exact cache path, while creation/idempotence tests use a real absolute temp root. |
+| Container-id prefix and profile-suffix fragments | Delete | Exact-result ID tests cover both format parts together, with separate identity stability and distinction cases. |
 
 ## Verification Strategy
 
