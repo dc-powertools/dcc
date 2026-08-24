@@ -11,7 +11,7 @@ use crate::{
         BuildConfig,
     },
     docker, dry_run,
-    features::{FeatureRuntimeConfig, LockEntry},
+    features::FeatureRuntimeConfig,
     lifecycle::{self, LifecycleCommand, LifecycleHooks},
     profile::{ContainerId, ProfileName},
     supervisor,
@@ -242,11 +242,6 @@ async fn build_dcc_stage(
             config_path.display()
         )
     })?;
-    let locked_digests = if update {
-        HashMap::new()
-    } else {
-        load_locked_digests(config_path)
-    };
     // Plan the updateRemoteUserUID remap from the host's uid/gid. The remap is
     // baked into the generated build stage; its --build-arg values are passed
     // to `docker build` below. See `src/uid.rs`.
@@ -262,20 +257,12 @@ async fn build_dcc_stage(
         crate::uid::RemapPlan::None { .. } => Vec::new(),
     };
     let output = if config.image.as_deref() == Some(base_image) {
-        crate::features::build_context(
-            config,
-            config_dir,
-            &locked_digests,
-            allow_unsafe_runtime,
-            Some(&remap),
-        )
-        .await
+        crate::features::build_context(config, config_dir, allow_unsafe_runtime, Some(&remap)).await
     } else {
         crate::features::build_context_from_base_image(
             config,
             base_image,
             config_dir,
-            &locked_digests,
             allow_unsafe_runtime,
             Some(&remap),
         )
@@ -315,7 +302,7 @@ async fn build_dcc_stage(
     .await
     .with_context(|| format!("failed to build image `{image_tag}`"))?;
 
-    write_lockfile(config_path, &output.lock_entries)
+    Ok(())
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -839,50 +826,6 @@ fn describe_lifecycle_command(cmd: &LifecycleCommand) -> String {
             .collect::<Vec<_>>()
             .join(" | "),
     }
-}
-
-fn load_locked_digests(config_path: &Path) -> HashMap<String, String> {
-    let lock_path = config_path.with_extension("lock");
-    let Ok(content) = std::fs::read(&lock_path) else {
-        return HashMap::new();
-    };
-    #[derive(serde::Deserialize)]
-    struct Lock {
-        features: Vec<Entry>,
-    }
-    #[derive(serde::Deserialize)]
-    struct Entry {
-        #[serde(rename = "ref")]
-        reference: String,
-        resolved: String,
-    }
-    let Ok(lock) = serde_json::from_slice::<Lock>(&content) else {
-        return HashMap::new();
-    };
-    lock.features
-        .into_iter()
-        .map(|e| (e.reference, e.resolved))
-        .collect()
-}
-
-fn write_lockfile(config_path: &Path, lock_entries: &[LockEntry]) -> anyhow::Result<()> {
-    let lock_path = config_path.with_extension("lock");
-    // C2: a feature-less profile produces an empty lock list. If no lockfile
-    // exists yet, skip the write so no new file appears in the user's repo.
-    // If a lockfile already exists, still rewrite it (e.g. the last feature
-    // was just dropped) so it does not go stale.
-    if lock_entries.is_empty() && !lock_path.exists() {
-        return Ok(());
-    }
-    let lock_json = serde_json::json!({
-        "dccVersion": env!("CARGO_PKG_VERSION"),
-        "features": lock_entries,
-    });
-    std::fs::write(
-        &lock_path,
-        serde_json::to_string_pretty(&lock_json).context("failed to serialise lockfile")?,
-    )
-    .with_context(|| format!("failed to write lockfile `{}`", lock_path.display()))
 }
 
 #[cfg(test)]

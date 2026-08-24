@@ -33,9 +33,8 @@ pub(crate) enum Command {
     Build {
         #[arg(long)]
         no_cache: bool,
-        /// Re-resolve inputs from upstream: discard locked feature digests and
-        /// re-pull the base image (`docker build --pull`) so a moved `image` tag
-        /// or republished base is picked up.
+        /// Re-resolve upstream image inputs by passing `docker build --pull`
+        /// so a moved `image` tag or republished base is picked up.
         #[arg(long)]
         update: bool,
         #[arg(long)]

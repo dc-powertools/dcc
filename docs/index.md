@@ -254,8 +254,8 @@ refuse to drive an image built by an incompatible `dcc` version. Patch-level
 drift is compatible; major/minor drift or a missing label requires a rebuild.
 
 Subsequent builds use Docker's layer cache. Pass `--no-cache` to force a full
-rebuild. Pass `--update` to re-resolve upstream inputs and pass `--pull` to
-`docker build`. Pass `--refresh-only` to skip image rebuild and rerun only
+rebuild. Pass `--update` to pass `--pull` to `docker build`, refreshing moved
+base image tags. Pass `--refresh-only` to skip image rebuild and rerun only
 `updateContentCommand` and `postCreateCommand`; the profile image must already
 exist.
 

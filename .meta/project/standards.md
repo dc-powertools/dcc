@@ -12,11 +12,11 @@ Record only commands verified by successful execution in this environment.
 | Toolchain check | `cargo --version` | Cargo on `PATH` | Passed; reported `cargo 1.96.0 (30a34c682 2026-05-25)`. | 2026-07-14 |
 | Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.96.0 (ac68faa20 2026-05-25)`. | 2026-07-14 |
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
-| Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-08-13 |
-| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.0`. | 2026-08-13 |
-| Lint | `cargo clippy -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied. | 2026-08-13 |
-| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 479 unit tests, 29 runnable CLI flag integration tests with 3 ignored, 9 config error integration tests, 6 feature command integration tests, and 33 ignored Docker smoke tests passed/listed without running Docker. | 2026-08-13 |
-| Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-08-13 |
+| Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-08-24 |
+| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.0`. | 2026-08-24 |
+| Lint | `cargo clippy -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied. | 2026-08-24 |
+| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 483 unit tests, 29 runnable CLI flag integration tests with 3 ignored, 9 config error integration tests, 6 feature command integration tests, and 33 ignored Docker smoke tests listed without running Docker. | 2026-08-24 |
+| Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-08-24 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 | Workflow lint | `actionlint .github/workflows/ci.yml` | `actionlint` on `PATH` | Passed with no findings using `actionlint 1.7.12`. | 2026-07-20 |
 | Devcontainer config validation | `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace > /tmp/dcc-devcontainer-read-configuration.json` | Node.js v20.19.2, npm 9.2.0, `@devcontainers/cli 0.87.0`, Docker 26.1.5, and a running Docker daemon. In this harness, Docker needed `dockerd --iptables=false --storage-driver=vfs --bridge=none --ip-forward=false --ip-masq=false`. | Passed; produced 14,073 bytes of merged configuration for `.devcontainer/devcontainer.json`, including root image, Features, mounts, hooks, workspace mount, and defaulted compatibility fields. | 2026-07-15 |

@@ -67,8 +67,9 @@ missing hard dependencies recursively, while `installsAfter` acts as a soft
 ordering hint for Features that are already in the installation set. Circular
 dependencies are an error.
 
-Passing `dcc build --update` discards locked Feature digests and re-resolves
-Feature references from upstream.
+Feature references resolve from upstream during `dcc build`. Passing
+`dcc build --update` also passes `docker build --pull` so Docker refreshes moved
+base image tags instead of reusing a stale local base.
 
 ## Feature Runtime Metadata
 
