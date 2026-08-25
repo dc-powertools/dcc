@@ -926,10 +926,11 @@ Download steps:
 
 5. **Extract**: Decompress and untar in memory. Retain `install.sh`,
    `devcontainer-feature.json`, and any other regular files (e.g. helper scripts
-   in `library_scripts/`). Absolute paths, parent traversal, links, and special
-   entries are rejected before content enters the build context. A missing
-   `devcontainer-feature.json` remains an install-only compatibility mode; supplied
-   metadata must be valid JSON with valid field types.
+   in `library_scripts/`). Safe archive-root directory markers such as `./` are
+   ignored. Absolute paths, parent traversal, links, special entries, and empty
+   non-directory paths are rejected before content enters the build context. A
+   missing `devcontainer-feature.json` remains an install-only compatibility mode;
+   supplied metadata must be valid JSON with valid field types.
 
 Feature option values are sourced from the devcontainer config's features map
 (e.g., `{"version": "2"}`). Defaults for options not specified by the user come

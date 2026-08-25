@@ -391,6 +391,12 @@ fn extract_from_tar<R: std::io::Read>(
         let mut entry = entry.context("failed to read tar entry")?;
         let path = safe_archive_path(&entry.path().context("failed to get tar entry path")?)?;
         let entry_type = entry.header().entry_type();
+        if path.as_os_str().is_empty() {
+            if entry_type.is_dir() {
+                continue;
+            }
+            bail!("feature archive contains an empty path");
+        }
         if entry_type.is_dir() {
             continue;
         }
@@ -430,9 +436,6 @@ fn safe_archive_path(path: &Path) -> anyhow::Result<PathBuf> {
                 bail!("unsafe path {path:?} in feature archive");
             }
         }
-    }
-    if safe.as_os_str().is_empty() {
-        bail!("feature archive contains an empty path");
     }
     Ok(safe)
 }
@@ -527,6 +530,7 @@ mod tests {
     fn feature_tar(metadata: Option<&[u8]>) -> Vec<u8> {
         let mut bytes = Vec::new();
         let mut builder = tar::Builder::new(&mut bytes);
+        raw_tar_entry(&mut builder, b"./", tar::EntryType::Directory);
         tar_entry(
             &mut builder,
             "install.sh",
@@ -735,6 +739,34 @@ mod tests {
         let (_, _, extra_files) = extract_feature(&buf).unwrap();
         assert_eq!(extra_files.len(), 1);
         assert_eq!(extra_files[0].0, "library_scripts/common.sh");
+    }
+
+    #[test]
+    fn extract_feature_accepts_archive_root_directory_entry() {
+        let mut buf = Vec::new();
+        let mut builder = tar::Builder::new(&mut buf);
+        raw_tar_entry(&mut builder, b"./", tar::EntryType::Directory);
+        tar_entry(&mut builder, "install.sh", b"#!/bin/sh\n", 0o755);
+        builder.finish().unwrap();
+        drop(builder);
+
+        let (install_sh, feature_json, extra_files) = extract_feature(&buf).unwrap();
+        assert_eq!(install_sh, b"#!/bin/sh\n");
+        assert!(feature_json.is_none());
+        assert!(extra_files.is_empty());
+    }
+
+    #[test]
+    fn extract_feature_rejects_non_directory_archive_root_entry() {
+        let mut buf = Vec::new();
+        let mut builder = tar::Builder::new(&mut buf);
+        tar_entry(&mut builder, "install.sh", b"#!/bin/sh\n", 0o755);
+        raw_tar_entry(&mut builder, b"./", tar::EntryType::Regular);
+        builder.finish().unwrap();
+        drop(builder);
+
+        let error = extract_feature(&buf).unwrap_err();
+        assert!(error.to_string().contains("empty path"));
     }
 
     #[test]
