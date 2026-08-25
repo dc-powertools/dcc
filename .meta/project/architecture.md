@@ -1176,3 +1176,12 @@ All other commands exit 0 on success and 1 on error.
   resource plumbing; this complements, rather than replaces, live Docker smokes
 
 Integration tests that require a live Docker daemon are annotated `#[ignore]`.
+`tests/tls_oci_docker_smoke.rs` keeps the private-registry package-to-image boundary in
+a dedicated serial target. It generates an ephemeral CA and localhost/IP leaf, serves
+only a minimal digest-correct OCI Feature containing an explicit `./` entry over
+loopback rustls, and drives the compiled `dcc build` with the production
+`registryCAs` configuration. Omitted and wrong roots must fail before a fake Docker
+boundary; the trusted path builds and runs the marker image. Exact-name resource
+guards, listener shutdown, temporary-directory closure, and post-cleanup Docker
+inspection cover success and forced-failure cleanup without changing host or daemon
+trust.

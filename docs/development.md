@@ -60,6 +60,20 @@ cargo build
 Docker-dependent smoke tests are ignored locally and run explicitly in CI on
 GitHub-hosted Ubuntu runners with Docker available.
 
+The private-registry package-to-image smoke has its own serial integration target:
+
+```sh
+cargo test --test tls_oci_docker_smoke -- --ignored --nocapture --test-threads=1
+```
+
+It generates a temporary CA and localhost certificate, serves a digest-addressed
+Feature from a loopback HTTPS OCI fixture, exercises the compiled `dcc build` through
+`customizations.dcc.registryCAs`, and runs the built image to verify the installed
+marker. It also checks omitted and wrong CAs before Docker, then removes and asserts
+the absence of every exact test container, image, listener, and temporary file. It
+does not use an external OCI Feature registry, committed key, insecure TLS mode, or
+host/daemon trust changes. Docker may still pull the existing base image.
+
 ## Documentation Changes
 
 Keep documentation current with behavior:

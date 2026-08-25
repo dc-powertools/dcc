@@ -31,15 +31,15 @@
 
 | Mitigation | Owner | Verification | Status |
 | --- | --- | --- | --- |
-| Canonical exact-authority map and per-authority reqwest clients | T-0072 | Unit parsing/merge tests and multi-authority TLS routing test | Planned |
-| Keep built-in roots; no HTTP or insecure retry in production | T-0072 | Default/public path test plus downgrade/wrong-root/hostname negatives | Planned |
-| Disable implicit redirects; bound hops and strip authorization cross-origin | T-0072 | Same-origin, cross-origin, downgrade, loop, and hop-limit contract tests | Planned |
-| Select token-realm trust by realm authority only | T-0072 | Split-host realm fails until its authority is configured | Planned |
-| Eager strict PEM/path validation without variable expansion | T-0072 | Missing, directory, unreadable, empty, malformed, key-only, mixed-data tests | Planned |
-| Preserve sanitized diagnostics and scoped token cache | T-0072 | Secret sentinel assertions in errors/log capture and request recording | Planned |
-| Generate ephemeral localhost CA/key/cert and contain fixture | T-0073 | No static private key search; loopback bind; cleanup assertion | Planned |
-| Exercise compiled `dcc build`, `./` archive entry, digest, install marker, and image run | T-0073 | Explicit ignored Docker smoke in serial CI | Planned |
-| RAII/process cleanup for registry, containers, network, temp files, and images | T-0073 | Success and forced-failure cleanup branches; post-test Docker assertions | Planned |
+| Canonical exact-authority map and per-authority reqwest clients | T-0072 | Unit parsing/merge tests and multi-authority TLS routing test | Implemented |
+| Keep built-in roots; no HTTP or insecure retry in production | T-0072 | Default/public path test plus downgrade/wrong-root/hostname negatives | Implemented |
+| Disable implicit redirects; bound hops and strip authorization cross-origin | T-0072 | Same-origin, cross-origin, downgrade, loop, and hop-limit contract tests | Implemented |
+| Select token-realm trust by realm authority only | T-0072 | Split-host realm fails until its authority is configured | Implemented |
+| Eager strict PEM/path validation without variable expansion | T-0072 | Missing, directory, unreadable, empty, malformed, key-only, mixed-data tests | Implemented |
+| Preserve sanitized diagnostics and scoped token cache | T-0072 | Secret sentinel assertions in errors/log capture and request recording | Implemented |
+| Generate ephemeral localhost CA/key/cert and contain fixture | T-0073 | No static private key search; loopback bind; cleanup assertion | Implemented |
+| Exercise compiled `dcc build`, `./` archive entry, digest, install marker, and image run | T-0073 | Explicit ignored Docker smoke in serial CI | Implemented; live run requires Docker CI |
+| RAII/process cleanup for registry, containers, network, temp files, and images | T-0073 | Success and forced-failure cleanup branches; post-test Docker assertions | Implemented; live run requires Docker CI |
 
 ## Agentic Risks
 
