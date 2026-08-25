@@ -37,11 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-25 | Kept generated dcc profiles, caches, runtime assets, and state out of Git status with non-destructive managed `.dcc/.gitignore` creation (T-0079). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Made later port-bind collision cleanup verification deterministic without timing-sensitive port reuse (T-0075). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Accepted the exact-authority custom-CA security contract and implementation/test design for private OCI registries (T-0071). | `.meta/quality/0071-custom-ca-design-quality.md` |
 | 2026-08-25 | Bumped the project patch version from 0.1.5 to 0.1.6 locally without triggering release automation (T-0078). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Restored fixed container-variable substitution for Feature-contributed state while preserving deferred environment and path-safety validation (T-0077). | `.meta/tasks/README.md#tasks` |
-| 2026-08-25 | Bumped the project patch version from 0.1.4 to 0.1.5 locally without triggering release automation (T-0074). | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -69,8 +69,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 ## Hygiene
 
-- Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 9
-- Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
+- Last consistency and pruning pass: 2026-08-25
+- Completed repository-changing tasks since that pass: 0
+- Next pass due: 2026-09-24 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
