@@ -52,7 +52,8 @@
 - Secret or sensitive-data exposure risk: certificates may be logged only by authority;
   ephemeral private keys stay in a temporary directory and are never printed or committed.
 - CI/CD or deployment permission risk: the smoke runs only in the existing serial Docker
-  job with no publish credentials and no external registry.
+  job with workflow-level `contents: read`, non-persisted checkout credentials, and no
+  external registry.
 
 ## Residual Risk
 

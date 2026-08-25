@@ -136,3 +136,12 @@ migration, persisted credential, or external fixture state exists.
   controls; archive safety tests; format/check/all-target Clippy/full tests/build;
   ignored Docker smoke; workflow lint; security, documentation, cleanup, and diff
   review.
+
+## Closure
+
+T-0071 accepted the exact-authority trust design, T-0072 implemented it with deterministic
+TLS counterfactuals, and T-0073 added the package-to-image smoke. User-provided CI logs for
+merge `e892a552` show format, Clippy, 555 unit tests, all runnable integration suites, build,
+32 existing Docker smokes, and both TLS OCI ignored tests passing, including the marker and
+exact cleanup assertions. T-0081 then remediated the only log-audit finding by restricting
+CI to `contents: read` and disabling checkout credential persistence.
