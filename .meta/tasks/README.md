@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0068
+- Next task ID: T-0069
 - Primary task: T-0057
 - Scheduling: Running
 - Global pause source or reason: None
@@ -86,6 +86,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0065 | Remove GitHub Actions Node.js 20 deprecation warnings from every workflow action. | User request 2026-08-24 / r1 | Done | None | Quick change / Low | None | Stop; outcome complete. | None | Upgraded `actions/upload-artifact` from v5 to v6 and `actions/download-artifact` from v5 to v7. Upstream manifests confirm every external action now uses Node 24 or is composite. `actionlint 1.7.12`, the runtime audit, format, all-target Clippy, and the full test suite passed. One unrelated forwarding bind-release test failed once, then passed 20 focused runs and the complete rerun. |
 | T-0066 | Bump the project patch version from 0.1.2 to 0.1.3 without pushing or triggering release automation. | User request 2026-08-24 / r1 | Done | None | Quick change / Low | None | Stop; outcome complete. | None | Updated `Cargo.toml` and the root `dcc` package entry in `Cargo.lock` to 0.1.3. Cargo metadata, format, check, all-target Clippy, the full test suite (511 unit tests plus all runnable integration tests), and build passed. No push, tag, or release workflow was triggered. |
 | T-0067 | Fix the skipped `Create Release` job while preserving exact-commit CI reuse for automatic releases and CI gating for direct tag pushes. | User request 2026-08-25 / r1 | Done | None | Quick change / High | None | Stop; outcome complete. | `.meta/quality/0067-release-publication-gate-quality.md`; `.meta/threat-models/0063-release-ci-reuse.md`; `.meta/incidents/0067-skipped-release-publication.md` | Added an explicit `!cancelled()` plus successful aggregated-build condition to `Create Release`, so intentional reusable-CI skips no longer suppress publication and failed/cancelled builds still cannot publish. Added a CI-enforced release-workflow contract script covering CI reuse, direct-tag gating, build gating, and publication. Counterfactual failure, the corrected contract, Bash syntax, ShellCheck, `actionlint 1.7.12`, format, all-target Clippy, the full test suite, diff, threat-model, and consistency reviews passed. No push or release was triggered; the next authorized release remains the live scheduler confirmation. |
+| T-0068 | Bump the project patch version from 0.1.3 to 0.1.4 so the repaired automatic-release path can be exercised after an owner push. | User request 2026-08-25 / r1 | Done | T-0067 | Quick change / Low | None | Stop; outcome complete. | None | Updated `Cargo.toml` and the root `dcc` package entry in `Cargo.lock` to 0.1.4. Cargo metadata, the release-workflow contract, `actionlint 1.7.12`, format, check, all-target Clippy, the full test suite (511 unit tests plus every runnable integration test), build, and diff review passed. No push, tag, or release workflow was triggered. |
 
 ## Operating Contract
 
