@@ -98,6 +98,11 @@ Feature state is mounted before project state. Feature commands are available
 through `dcc run`, and Feature hooks run before the project hook of the same
 phase.
 
+Feature state supports the same container-side path variables as project state:
+`${containerWorkspaceFolder}` and `${containerCacheFolder}` are resolved before
+validation, while `${containerEnv:VAR}` remains deferred until the built image
+environment is available. Host-local variables are rejected.
+
 ## Feature Commands
 
 Features may expose named shell commands through
@@ -142,7 +147,7 @@ by `dcc`.
 | `remoteEnv` | Environment variables passed at runtime. Supports the same runtime substitutions as project `remoteEnv`. |
 | `mounts` | Additional runtime mounts. Supports the same substitution as project mounts. |
 | `customizations.dcc.commands` | Feature named shell commands invokable through `dcc run`. |
-| `customizations.dcc.state` | Feature-contributed persistent state paths. Feature state is mounted before project state. |
+| `customizations.dcc.state` | Feature-contributed persistent state paths. Supports the same container-side path variables and validation as project state; Feature state is mounted before project state. |
 | `installsAfter` | Soft ordering hint for Features already in the installation set. |
 | `dependsOn` | Hard dependencies. Missing dependencies are added recursively; circular dependencies are an error. |
 | `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Lifecycle hooks. Feature hooks run before the project hook of the same type. |

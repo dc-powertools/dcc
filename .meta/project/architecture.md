@@ -879,7 +879,7 @@ a fatal error.
 - `remoteEnv` → stored as raw templates in the feature's label entry; substitution is applied at `dcc run` time
 - `mounts` → stored as JSON objects in the feature's label entry; converted to `--mount` template strings and substituted at `dcc run` time
 - `customizations.dcc.commands` → stored in the feature's label entry for `dcc run` command resolution; legacy top-level `scripts` is normalized with a warning
-- `customizations.dcc.state` → validated and stored in the feature's label entry; mounted before project state at runtime
+- `customizations.dcc.state` → fixed container path variables are substituted before validation and storage in the feature's label entry; `${containerEnv:...}` remains deferred; mounted before project state at runtime
 - unsafe runtime properties → rejected unless `--allow-unsafe-runtime` is present, then stored in the feature's label entry
 
 Features that contribute at least one runtime property get an entry in the

@@ -65,14 +65,7 @@ pub(crate) fn apply_substitutions(
             .lifecycle
             .substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache)),
         scripts: config.scripts,
-        state: config
-            .state
-            .into_iter()
-            .map(|StateEntry { path, kind }| StateEntry {
-                path: apply_state_path_substitution(&path),
-                kind,
-            })
-            .collect(),
+        state: apply_state_path_substitutions(config.state),
     }
 }
 
@@ -101,6 +94,18 @@ pub(crate) fn apply_container_env_substitution(s: &str) -> String {
 /// left unresolved for validation to reject.
 pub(crate) fn apply_state_path_substitution(s: &str) -> String {
     apply_to_string(s, None, None, None)
+}
+
+/// Applies container-side path substitution to every declared state entry.
+/// `${containerEnv:...}` remains deferred for image-aware resolution.
+pub(crate) fn apply_state_path_substitutions(state: Vec<StateEntry>) -> Vec<StateEntry> {
+    state
+        .into_iter()
+        .map(|StateEntry { path, kind }| StateEntry {
+            path: apply_state_path_substitution(&path),
+            kind,
+        })
+        .collect()
 }
 
 /// Returns every `${...}` token still present in `s`, in order of appearance.

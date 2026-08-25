@@ -5,7 +5,11 @@ use anyhow::Context as _;
 use indexmap::IndexMap;
 
 use crate::{
-    config::{vars::apply_container_env_substitution, DevcontainerConfig, StateEntry},
+    config::{
+        resolve::validate_state_entries_allowing_deferred_container_env,
+        vars::{apply_container_env_substitution, apply_state_path_substitutions},
+        DevcontainerConfig, StateEntry,
+    },
     lifecycle::{LifecycleHooks, HOOKS},
 };
 
@@ -254,10 +258,11 @@ pub(crate) async fn build_context_from_base_image(
         warn_ignored_feature_properties(reference, &entry.meta);
         validate_feature_meta(reference, &entry.meta, allow_unsafe_runtime)?;
         let commands = entry.meta.commands();
-        let state = crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
-            entry.meta.state(),
-        )
-        .with_context(|| format!("invalid customizations.dcc.state in feature `{reference}`"))?;
+        let state = apply_state_path_substitutions(entry.meta.state());
+        let state =
+            validate_state_entries_allowing_deferred_container_env(state).with_context(|| {
+                format!("invalid customizations.dcc.state in feature `{reference}`")
+            })?;
         feature_state_entries.extend(state.iter().cloned());
         let unsafe_runtime = entry.meta.unsafe_runtime();
 
@@ -339,10 +344,8 @@ pub(crate) async fn build_context_from_base_image(
         });
     }
 
-    crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
-        feature_state_entries.clone(),
-    )
-    .context("invalid customizations.dcc.state across Feature metadata")?;
+    validate_state_entries_allowing_deferred_container_env(feature_state_entries.clone())
+        .context("invalid customizations.dcc.state across Feature metadata")?;
 
     let mut devcontainer_env: Vec<(String, String)> = config
         .container_env
@@ -461,10 +464,9 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
         }
     }
 
-    config.state = crate::config::resolve::validate_state_entries_allowing_deferred_container_env(
-        config.state,
-    )
-    .context("invalid customizations.dcc.state in devcontainer.metadata label")?;
+    config.state = apply_state_path_substitutions(config.state);
+    config.state = validate_state_entries_allowing_deferred_container_env(config.state)
+        .context("invalid customizations.dcc.state in devcontainer.metadata label")?;
 
     Ok(config)
 }
@@ -1498,25 +1500,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_label_nested_state_validated() {
+    fn parse_label_nested_state_substituted_and_validated() {
         let json = r#"[{
             "id":"feat",
-            "customizations":{"dcc":{"state":["/home/dev/.cache",{"path":"/home/dev/.npmrc","type":"file"}]}}
+            "customizations":{"dcc":{"state":["${containerWorkspaceFolder}/target",{"path":"${containerEnv:HOME}/.npmrc","type":"file"}]}}
         }]"#;
         let config = parse_runtime_from_label(json).unwrap();
         assert_eq!(
             config.state,
             vec![
                 StateEntry {
-                    path: "/home/dev/.cache".to_string(),
+                    path: "/workspace/target".to_string(),
                     kind: crate::config::StateKind::Directory,
                 },
                 StateEntry {
-                    path: "/home/dev/.npmrc".to_string(),
+                    path: "${containerEnv:HOME}/.npmrc".to_string(),
                     kind: crate::config::StateKind::File,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parse_label_legacy_top_level_state_is_substituted() {
+        let json = r#"[{"id":"feat","state":["${containerWorkspaceFolder}/target"]}]"#;
+        let config = parse_runtime_from_label(json).unwrap();
+        assert_eq!(config.state[0].path, "/workspace/target");
     }
 
     #[test]
@@ -1613,7 +1622,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_context_nested_commands_and_state_round_trip() {
+    async fn build_context_substitutes_nested_state_and_preserves_deferred_env() {
         let tmp = tempfile::tempdir().unwrap();
         let config = local_config(
             tmp.path(),
@@ -1622,7 +1631,7 @@ mod tests {
                 "customizations":{
                     "dcc":{
                         "commands":{"lint":"cargo clippy"},
-                        "state":["/home/dev/.cargo",{"path":"/home/dev/.npmrc","type":"file"}]
+                        "state":["${containerWorkspaceFolder}/target",{"path":"${containerEnv:HOME}/.npmrc","type":"file"}]
                     }
                 }
             }"#,
@@ -1641,15 +1650,16 @@ mod tests {
             runtime.state,
             vec![
                 StateEntry {
-                    path: "/home/dev/.cargo".to_string(),
+                    path: "/workspace/target".to_string(),
                     kind: crate::config::StateKind::Directory,
                 },
                 StateEntry {
-                    path: "/home/dev/.npmrc".to_string(),
+                    path: "${containerEnv:HOME}/.npmrc".to_string(),
                     kind: crate::config::StateKind::File,
                 },
             ]
         );
+        assert_eq!(output.feature_state, runtime.state);
     }
 
     #[tokio::test]
@@ -1680,6 +1690,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_context_rejects_reserved_feature_state_after_substitution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"customizations":{"dcc":{"state":["${containerCacheFolder}/cargo"]}}}"#,
+        );
+        let err = build_context(&config, tmp.path(), false, None)
+            .await
+            .err()
+            .expect("resolved reserved Feature state should be rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("reserved system path `/cache`"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn build_context_rejects_host_local_feature_state_variable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = local_config(
+            tmp.path(),
+            br#"{"customizations":{"dcc":{"state":["${localCacheFolder}/cargo"]}}}"#,
+        );
+        let err = build_context(&config, tmp.path(), false, None)
+            .await
+            .err()
+            .expect("host-local Feature state should be rejected");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("${localCacheFolder}"), "got: {msg}");
+    }
+
+    #[tokio::test]
     async fn build_context_rejects_overlapping_feature_state_across_features() {
         let tmp = tempfile::tempdir().unwrap();
         let first = tmp.path().join("first");
@@ -1690,12 +1730,12 @@ mod tests {
         std::fs::write(second.join("install.sh"), b"#!/bin/sh\n").unwrap();
         std::fs::write(
             first.join("devcontainer-feature.json"),
-            br#"{"customizations":{"dcc":{"state":["/home/dev/.cache"]}}}"#,
+            br#"{"customizations":{"dcc":{"state":["${containerWorkspaceFolder}/target"]}}}"#,
         )
         .unwrap();
         std::fs::write(
             second.join("devcontainer-feature.json"),
-            br#"{"customizations":{"dcc":{"state":["/home/dev/.cache/tool"]}}}"#,
+            br#"{"customizations":{"dcc":{"state":["/workspace/target/tool"]}}}"#,
         )
         .unwrap();
         let mut features = IndexMap::new();
