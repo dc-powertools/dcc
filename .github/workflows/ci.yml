@@ -23,6 +23,9 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
 
+      - name: Validate release workflow contracts
+        run: bash scripts/check-release-workflow.sh
+
       - uses: dtolnay/rust-toolchain@stable
 
       - run: cargo fmt --check

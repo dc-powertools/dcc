@@ -17,6 +17,7 @@
 | --- | --- | --- | --- | --- |
 | Autotag reuses CI from a different commit. | An unverified commit can be tagged and released. | Medium | Reusable CI accepts an explicit ref. | The bump workflow previously did not expose its new commit SHA. |
 | A failed or cancelled direct-tag CI is treated like an intentional skip. | Release builds proceed after a failed gate. | Low | Build already depends on the CI job. | A conditional CI job requires an explicit result-aware build condition. |
+| Intentionally skipped reusable CI poisons the implicit status check of the final publication job. | The tag and artifacts exist, but no GitHub Release is published while the workflow reports success. | High | The build matrix has an explicit skipped-ancestor override. | The downstream publication job also needs an explicit cancellation- and build-result-aware condition. |
 | An untrusted caller claims CI already passed. | Release CI is bypassed. | Low | Only repository-owned workflows can call the local reusable workflow, and release permissions are unchanged. | The trust assertion must remain narrowly owned by autotag. |
 | Branch movement changes the commit between CI and tagging. | CI and released source diverge. | Medium | GitHub exposes immutable commit SHAs. | Autotag previously checked out moving `main` after CI. |
 
@@ -28,6 +29,7 @@
 | Use the same explicit SHA for autotag CI and tag creation. | T-0063 | Static expression contract check. | Done |
 | Permit CI reuse only through the positive `ci_already_passed` boolean supplied by autotag. | T-0063 | Caller/input review and `actionlint`. | Done |
 | Run release CI by default and allow builds only after trusted reuse or `needs.ci.result == 'success'`. | T-0063 | Direct-tag/reusable-call control-flow matrix review. | Done |
+| Require a successful aggregated build result at the final publication job with an explicit status function that overrides skipped-ancestor propagation. | T-0067 | Static release-workflow contract check and `actionlint`. | Done |
 
 ## Agentic Risks
 
