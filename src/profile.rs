@@ -1,9 +1,12 @@
 use std::{
-    fmt,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
-use crate::workspace::Workspace;
+use anyhow::Context as _;
+use serde::Serialize;
+
+use crate::{cli::OutputFormat, workspace::Workspace};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProfileName(String);
@@ -16,6 +19,19 @@ pub(crate) struct ImageTag(String);
 
 #[derive(Debug, Clone)]
 pub(crate) struct ContainerName(String);
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+struct ProfileListEntry {
+    name: String,
+    config: String,
+    #[serde(rename = "default")]
+    is_default: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileList {
+    profiles: Vec<ProfileListEntry>,
+}
 
 impl ProfileName {
     pub(crate) fn new(name: impl Into<String>) -> Self {
@@ -34,6 +50,106 @@ impl ProfileName {
             .join(".devcontainer")
             .join(format!("{}.json", self.0))
     }
+}
+
+pub(crate) fn list_profiles(
+    workspace: &Workspace,
+    format: OutputFormat,
+    debug: bool,
+) -> anyhow::Result<()> {
+    let profiles = discover_profiles(workspace)?;
+
+    if debug {
+        eprintln!("dcc debug: command `profile list`");
+        eprintln!("dcc debug: workspace `{}`", workspace.root.display());
+        eprintln!("dcc debug: profiles `{}`", profiles.len());
+    }
+
+    match format {
+        OutputFormat::Text => {
+            for profile in profiles {
+                let name = escape_text_profile_name(&profile.name);
+                if profile.is_default {
+                    println!("{name} (default)");
+                } else {
+                    println!("{name}");
+                }
+            }
+        }
+        OutputFormat::Json => {
+            let output = ProfileList { profiles };
+            let json = serde_json::to_string_pretty(&output)
+                .context("failed to serialize profile list")?;
+            println!("{json}");
+        }
+    }
+
+    Ok(())
+}
+
+fn discover_profiles(workspace: &Workspace) -> anyhow::Result<Vec<ProfileListEntry>> {
+    let directory = workspace.root.join(".devcontainer");
+    let entries = fs::read_dir(&directory)
+        .with_context(|| format!("failed to read profile directory `{}`", directory.display()))?;
+    let mut profiles = Vec::new();
+
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("failed to read an entry in `{}`", directory.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to inspect profile candidate `{}`", path.display()))?;
+        let is_file = if file_type.is_symlink() {
+            match fs::metadata(&path) {
+                Ok(metadata) => metadata.is_file(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to follow profile candidate `{}`", path.display())
+                    });
+                }
+            }
+        } else {
+            file_type.is_file()
+        };
+        if !is_file {
+            continue;
+        }
+
+        let Ok(file_name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(name) = file_name.strip_suffix(".json") else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+
+        profiles.push(ProfileListEntry {
+            name: name.to_owned(),
+            config: format!(".devcontainer/{file_name}"),
+            is_default: name == "devcontainer",
+        });
+    }
+
+    profiles.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(profiles)
+}
+
+fn escape_text_profile_name(name: &str) -> String {
+    let mut escaped = String::with_capacity(name.len());
+    for character in name.chars() {
+        if character == '\\' {
+            escaped.push_str("\\\\");
+        } else if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 /// Derives a profile name from the canonicalized path to a config file.
@@ -234,6 +350,82 @@ mod tests {
             "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
             hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]
         )
+    }
+
+    #[test]
+    fn discover_profiles_filters_direct_json_files_and_sorts_by_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join(".devcontainer");
+        fs::create_dir(&directory).unwrap();
+        for name in ["zeta.json", "devcontainer.json", "alpha.json", "notes.txt"] {
+            fs::write(directory.join(name), b"{}").unwrap();
+        }
+        fs::write(directory.join(".json"), b"{}").unwrap();
+        fs::create_dir(directory.join("nested.json")).unwrap();
+        let workspace = Workspace {
+            root: temp.path().to_path_buf(),
+            identity: "fixture".to_string(),
+        };
+
+        assert_eq!(
+            discover_profiles(&workspace).unwrap(),
+            vec![
+                ProfileListEntry {
+                    name: "alpha".to_string(),
+                    config: ".devcontainer/alpha.json".to_string(),
+                    is_default: false,
+                },
+                ProfileListEntry {
+                    name: "devcontainer".to_string(),
+                    config: ".devcontainer/devcontainer.json".to_string(),
+                    is_default: true,
+                },
+                ProfileListEntry {
+                    name: "zeta".to_string(),
+                    config: ".devcontainer/zeta.json".to_string(),
+                    is_default: false,
+                },
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_profiles_includes_file_symlinks_and_skips_unselectable_entries() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt as _, os::unix::fs::symlink};
+
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join(".devcontainer");
+        fs::create_dir(&directory).unwrap();
+        fs::write(temp.path().join("shared.json"), b"{}").unwrap();
+        symlink("../shared.json", directory.join("shared.json")).unwrap();
+        symlink("../missing.json", directory.join("broken.json")).unwrap();
+        fs::write(
+            directory.join(OsString::from_vec(b"invalid-\xff.json".to_vec())),
+            b"{}",
+        )
+        .unwrap();
+        let workspace = Workspace {
+            root: temp.path().to_path_buf(),
+            identity: "fixture".to_string(),
+        };
+
+        assert_eq!(
+            discover_profiles(&workspace).unwrap(),
+            vec![ProfileListEntry {
+                name: "shared".to_string(),
+                config: ".devcontainer/shared.json".to_string(),
+                is_default: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn text_profile_name_escapes_controls_and_backslashes() {
+        assert_eq!(
+            escape_text_profile_name("normal/λ\\line\nnext\ttab"),
+            "normal/λ\\\\line\\nnext\\ttab"
+        );
     }
 
     #[test]

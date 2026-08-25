@@ -24,6 +24,37 @@ configurations must be located within `.devcontainer/`.
 Each profile has its own image, container identity, durable cache, and declared
 state. The default is isolation between profiles.
 
+Run `dcc profile list` to discover named profiles:
+
+```text
+$ dcc profile list
+ci
+devcontainer (default)
+```
+
+The command scans only direct `.devcontainer/*.json` files, does not parse their
+contents, and does not invoke Docker. Results are sorted by profile name. Direct file
+symlinks are included when their targets exist; nested files, directories ending in
+`.json`, broken symlinks, and other extensions are ignored. If no profiles exist, text
+output is empty and the command still succeeds.
+
+Text mode escapes control characters and backslashes in profile names so every record
+remains on one physical line. JSON mode preserves the logical name using JSON escaping.
+
+Use `dcc profile list --format json` for stable structured output:
+
+```json
+{
+  "profiles": [
+    {
+      "name": "ci",
+      "config": ".devcontainer/ci.json",
+      "default": false
+    }
+  ]
+}
+```
+
 ## Config Inheritance
 
 A devcontainer config file may use `customizations.dcc.extends` to inherit all
@@ -217,7 +248,7 @@ Dev Container absent/default behavior.
 ## Commands
 
 The CLI supports these subcommands: `build`, `run`, `exec`, `start`, `attach`,
-`stop`, `id`, and `feature`.
+`stop`, `id`, `profile`, and `feature`.
 
 ### Global Flags
 
@@ -238,7 +269,8 @@ config-local safety gates without invoking Docker. Use `--format json` with
 `--dry-run` for a stable machine-readable report.
 
 Structured output outside dry runs is currently supported by
-`dcc id --format json` and `dcc feature --format json`.
+`dcc id --format json`, `dcc profile list --format json`, and
+`dcc feature --format json`.
 
 Pass `--debug` to print resolved command details to stderr without changing
 behavior.

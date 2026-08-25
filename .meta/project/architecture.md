@@ -25,7 +25,7 @@ src/
   main.rs             Entry point; parses CLI args and dispatches to commands
   cli.rs              clap CLI definitions (Cli struct, Command enum)
   workspace.rs        Workspace discovery (walks ancestor dirs to find .devcontainer)
-  profile.rs          ProfileName, ContainerId, and ContainerName newtypes; naming logic
+  profile.rs          Profile discovery plus ProfileName, ContainerId, and ContainerName newtypes
   cache.rs            Cache directory creation and path resolution
   docker.rs           Thin wrappers around docker CLI subcommands
   build.rs            dcc build command
@@ -314,6 +314,15 @@ impl ProfileName {
     pub fn config_path(&self, workspace: &Workspace) -> PathBuf
 }
 ```
+
+`dcc profile list` scans only direct entries in the workspace's `.devcontainer`
+directory. Exact `.json` files and symlinks to files map to the suffix-stripped profile
+name; directories, broken symlinks, other extensions, and the empty name are ignored.
+The typed result is sorted by name before both renderers run. Text escapes control
+characters and backslashes, prints one name per line, and annotates `devcontainer` as
+`(default)`; JSON emits ordered `name`, `config`, and `default` fields with normal JSON
+escaping. The command dispatches before normal `-p` resolution and never loads
+configuration contents or invokes Docker.
 
 `ContainerId` is derived as `dcc-<12hex>--<profile-name>`, where `<12hex>` is
 derived from the stable workspace identity. It doubles as the image tag produced
@@ -1050,6 +1059,8 @@ Commands:
   attach [--memory <size>] [--cpus <n>] [command...]
   stop
   id
+  profile list
+  feature [--add <reference>] [--remove <reference>]
 ```
 
 `--profile` (`-p`), `--strict`, `--dry-run`, `--debug`, and `--format` are clap

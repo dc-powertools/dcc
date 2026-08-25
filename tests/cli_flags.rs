@@ -620,6 +620,114 @@ fn build_rejects_devcontainer_unsafe_runtime_without_flag_before_docker() {
     assert_stderr_contains(&output, "securityOpt");
 }
 
+#[test]
+fn profile_list_text_is_sorted_filtered_and_marks_default() {
+    let fx = Fixture::new();
+    for name in [
+        "zeta.json",
+        "devcontainer.json",
+        "alpha.json",
+        "line\nbreak.json",
+        "notes.txt",
+    ] {
+        fx.write_config(name, "{}");
+    }
+    std::fs::create_dir(fx.dir.path().join(".devcontainer/nested.json")).unwrap();
+
+    let output = fx.dcc(&["profile", "list"]).output().unwrap();
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "alpha\ndevcontainer (default)\nline\\nbreak\nzeta\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn profile_list_json_has_stable_ordered_records() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", "{}");
+    fx.write_config("ci.json", "{}");
+
+    let output = fx
+        .dcc(&["profile", "list", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let actual: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        actual,
+        serde_json::json!({
+            "profiles": [
+                {
+                    "name": "ci",
+                    "config": ".devcontainer/ci.json",
+                    "default": false
+                },
+                {
+                    "name": "devcontainer",
+                    "config": ".devcontainer/devcontainer.json",
+                    "default": true
+                }
+            ]
+        })
+    );
+}
+
+#[test]
+fn profile_list_empty_results_are_successful_in_both_formats() {
+    let fx = Fixture::new();
+
+    let text = fx.dcc(&["profile", "list"]).output().unwrap();
+    assert_success(&text);
+    assert!(text.stdout.is_empty());
+
+    let json = fx
+        .dcc(&["--format", "json", "profile", "list"])
+        .output()
+        .unwrap();
+    assert_success(&json);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&json.stdout).unwrap(),
+        serde_json::json!({ "profiles": [] })
+    );
+}
+
+#[test]
+fn profile_list_works_from_subdirectory_and_debugs_without_resolving_profile_flag() {
+    let fx = Fixture::new();
+    fx.write_config("devcontainer.json", "{}");
+    let nested = fx.dir.path().join("nested/worktree");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    let output = fx
+        .dcc(&["--debug", "--profile", "./missing.json", "profile", "list"])
+        .current_dir(&nested)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "devcontainer (default)\n"
+    );
+    assert_stderr_contains(&output, "dcc debug: command `profile list`");
+    assert_stderr_contains(&output, "dcc debug: workspace");
+    assert_stderr_contains(&output, "dcc debug: profiles `1`");
+}
+
+#[test]
+fn profile_command_help_exposes_list_subcommand() {
+    let fx = Fixture::new();
+    let profile_help = fx.dcc(&["profile", "--help"]).output().unwrap();
+    assert_success(&profile_help);
+    assert!(String::from_utf8_lossy(&profile_help.stdout).contains("list"));
+
+    let list_help = fx.dcc(&["profile", "list", "--help"]).output().unwrap();
+    assert_success(&list_help);
+    assert!(String::from_utf8_lossy(&list_help.stdout)
+        .contains("List direct `.devcontainer/*.json` profiles"));
+}
+
 // Tests below require a live Docker daemon. They stay ignored for local/devcontainer
 // cargo test runs; GitHub Actions runs them explicitly on an Ubuntu Docker host.
 #[test]

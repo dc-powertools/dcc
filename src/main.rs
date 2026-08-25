@@ -38,9 +38,16 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
-    let cwd = std::env::current_dir().context("failed to determine current working directory")?;
     let workspace =
         workspace::find_workspace().context("failed to locate .devcontainer directory")?;
+    if let cli::Command::Profile {
+        command: cli::ProfileCommand::List,
+    } = &cli.command
+    {
+        return profile::list_profiles(&workspace, cli.format, cli.debug);
+    }
+
+    let cwd = std::env::current_dir().context("failed to determine current working directory")?;
     let (profile, config_path) = resolve_profile(&cli.profile, &workspace, &cwd)?;
     match cli.command {
         cli::Command::Build {
@@ -194,6 +201,9 @@ async fn run() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        cli::Command::Profile {
+            command: cli::ProfileCommand::List,
+        } => profile::list_profiles(&workspace, cli.format, cli.debug),
         cli::Command::Feature { add, remove } => feature::update_features(
             &workspace,
             &profile,

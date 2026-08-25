@@ -14,8 +14,9 @@ pub(crate) struct Cli {
     /// Output format for dry-run reports and supported structured output.
     #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
     pub(crate) format: OutputFormat,
-    /// Profile to operate on. Global so it may appear before or after the
-    /// subcommand (`dcc -p base build` and `dcc build -p base` are equivalent).
+    /// Profile to operate on for single-profile commands. Global so it may appear
+    /// before or after the subcommand (`dcc -p base build` and `dcc build -p base`
+    /// are equivalent).
     #[arg(short = 'p', long, global = true, default_value = "devcontainer")]
     pub(crate) profile: String,
     #[command(subcommand)]
@@ -96,6 +97,11 @@ pub(crate) enum Command {
         kill: bool,
     },
     Id {},
+    /// Discover profiles available in this workspace.
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
     Feature {
         /// Add a Feature reference to the selected profile.
         #[arg(short = 'a', long = "add", value_name = "FEATURE")]
@@ -117,4 +123,10 @@ pub(crate) enum Command {
         keep: bool,
         script: Option<String>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProfileCommand {
+    /// List direct `.devcontainer/*.json` profiles.
+    List,
 }

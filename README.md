@@ -71,9 +71,13 @@ The default profile is `.devcontainer/devcontainer.json`. Every command also
 accepts `-p/--profile <name>`, which loads `.devcontainer/<name>.json`:
 
 ```sh
+dcc profile list
 dcc build -p ci
 dcc run -p ci test
 ```
+
+`dcc profile list` discovers direct `.devcontainer/*.json` files without loading
+their contents or invoking Docker. Add `--format json` for structured output.
 
 Each profile gets its own image, container identity, cache, and state directory.
 Profile isolation is the default; artifacts are not shared unless you configure
@@ -86,6 +90,7 @@ dcc build                    # build the default profile image
 dcc build -p ci              # build .devcontainer/ci.json
 dcc build --refresh-only     # rerun update/post-create prep hooks
 dcc build --reseed-state     # overwrite declared state with the image seed
+dcc profile list             # list available named profiles
 
 dcc run                      # list named project and Feature commands
 dcc run test                 # run a named command
