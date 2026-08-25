@@ -832,6 +832,7 @@ mod tests {
             image: Some("rust:1".to_string()),
             build: None,
             features: IndexMap::new(),
+            registry_cas: Default::default(),
             container_env: HashMap::new(),
             remote_env: HashMap::new(),
             container_user: "root".to_string(),

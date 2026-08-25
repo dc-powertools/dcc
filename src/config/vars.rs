@@ -66,6 +66,7 @@ pub(crate) fn apply_substitutions(
             .substitute(&|s: &str| apply_substitution(s, &local_workspace, &local_cache)),
         scripts: config.scripts,
         state: apply_state_path_substitutions(config.state),
+        registry_cas: config.registry_cas,
     }
 }
 

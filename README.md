@@ -16,6 +16,7 @@ containers without sharing state between profiles.
 - Keeps a durable per-profile `/cache` mount under `.dcc/<profile>`.
 - Persists declared state paths with `customizations.dcc.state`.
 - Supports local config inheritance with `customizations.dcc.extends`.
+- Supports registry-scoped custom CAs for private OCI Feature registries.
 - Supports named project commands with `customizations.dcc.commands`.
 - Installs devcontainer Features and reads supported Feature metadata.
 

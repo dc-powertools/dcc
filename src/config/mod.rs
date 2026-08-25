@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub(crate) mod merge;
+pub(crate) mod registry_ca;
 pub(crate) mod resolve;
 pub(crate) mod vars;
 
@@ -174,6 +175,8 @@ pub(crate) struct RawDccConfig {
     pub(crate) extends: Option<String>,
     pub(crate) commands: Option<HashMap<String, String>>,
     pub(crate) state: Option<Vec<StateEntry>>,
+    #[serde(rename = "registryCAs")]
+    pub(crate) registry_cas: Option<registry_ca::RawRegistryCas>,
     #[serde(flatten)]
     pub(crate) extra: HashMap<String, serde_json::Value>,
 }
@@ -244,6 +247,8 @@ pub(crate) struct DevcontainerConfig {
     pub(crate) lifecycle: LifecycleHooks,
     pub(crate) scripts: HashMap<String, String>,
     pub(crate) state: Vec<StateEntry>,
+    pub(crate) registry_cas:
+        BTreeMap<registry_ca::RegistryAuthority, registry_ca::RegistryCaBundle>,
 }
 
 pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<RawConfig> {
@@ -254,6 +259,14 @@ pub(crate) fn parse_config_file(path: &Path, strict: bool) -> anyhow::Result<Raw
     check_extra_fields(&raw.extra, path, strict)?;
     check_dcc_extra_fields(&raw, path, strict)?;
     normalize_legacy_dcc_fields(&mut raw, path)?;
+    if let Some(registry_cas) = raw
+        .customizations
+        .as_mut()
+        .and_then(|customizations| customizations.dcc.as_mut())
+        .and_then(|dcc| dcc.registry_cas.as_mut())
+    {
+        registry_cas.anchor_paths(path)?;
+    }
     Ok(raw)
 }
 
@@ -770,7 +783,8 @@ mod tests {
                 "customizations": {
                     "dcc": {
                         "commands": { "test": "cargo test" },
-                        "state": [{ "path": "/cache/file", "type": "file" }]
+                        "state": [{ "path": "/cache/file", "type": "file" }],
+                        "registryCAs": {}
                     },
                     "vscode": { "settings": {} }
                 }
@@ -785,6 +799,9 @@ mod tests {
                 .map(String::as_str),
             Some("cargo test")
         );
+        assert!(dcc
+            .registry_cas
+            .is_some_and(|registry_cas| registry_cas.0.is_empty()));
         assert_eq!(
             dcc.state.as_ref().and_then(|s| s.first()),
             Some(&StateEntry {

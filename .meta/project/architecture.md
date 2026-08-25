@@ -39,6 +39,7 @@ src/
   config/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
     merge.rs          Extends merging algorithm
+    registry_ca.rs    Exact-authority parsing and strict custom-CA bundle validation
     resolve.rs        File-level resolution with cycle detection
     vars.rs           Variable substitution (${localCacheFolder} etc.); container path constants
   features/
@@ -64,6 +65,7 @@ third level of nesting.
 | `anyhow` | — | Error handling with context |
 | `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container-exists polling (`wait_for_running`) |
 | `reqwest` | `json`, `rustls-tls` | HTTP client for OCI registry; `rustls-tls` avoids OpenSSL for cross-compilation |
+| `rustls-pemfile` | `std` | Strict enumeration of configured private-registry CA bundle objects before roots enter the rustls transport |
 | `tar` | — | In-memory tar archive construction for the Docker build context |
 | `flate2` | — | gzip decompression of OCI layer blobs |
 | `sha2` | — | SHA-256 digest verification of downloaded OCI blobs |
@@ -72,7 +74,8 @@ third level of nesting.
 | `tracing-subscriber` | `env-filter` | Log output |
 
 Dev dependencies: `proptest` for property-based tests on the config parser and
-merge algorithm; `tempfile` for integration tests that write config files.
+merge algorithm; `tempfile` for integration tests that write config files; and
+`rcgen`, `rustls`, and `tokio-rustls` for ephemeral, Docker-free OCI TLS fixtures.
 
 `json5` is chosen because the devcontainer spec defines config files as JSONC
 (JSON with Comments), and the example configs in this project demonstrate
@@ -126,6 +129,14 @@ struct RawConfig {
     customizations: Option<Customizations>,
     extra: HashMap<String, serde_json::Value>, // serde flatten
 }
+
+struct RawDccConfig {
+    extends: Option<String>,
+    commands: Option<HashMap<String, String>>,
+    state: Option<Vec<StateEntry>>,
+    // Custom deserialization rejects duplicate canonical authorities.
+    registry_cas: Option<BTreeMap<RegistryAuthority, RegistryCaSource>>,
+}
 ```
 
 The `extra` field collects all unrecognized keys via `#[serde(flatten)]`. After
@@ -156,6 +167,7 @@ pub struct DevcontainerConfig {
     pub workspace_folder: String,
     pub workspace_mount: Option<serde_json::Value>,
     pub state: Vec<StateEntry>,
+    pub registry_cas: BTreeMap<RegistryAuthority, RegistryCaBundle>,
 }
 ```
 
@@ -195,6 +207,11 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 ```
 
 `extends` paths are resolved relative to the file that contains them.
+Relative `customizations.dcc.registryCAs` paths are also anchored to their declaring
+file before the raw configs are merged. This preserves provenance when a parent lives
+in another directory. Surviving entries are read and validated eagerly after the full
+merge, so an unused invalid bundle fails config loading while a child override does not
+read the replaced parent path.
 
 ### Merge Algorithm
 
@@ -214,6 +231,7 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
 | `privileged`, `cap_add`, `security_opt` | Child overwrites scalar `privileged`; arrays union |
 | `forward_ports` | Array union; duplicates removed, parent entries first |
 | `ports_attributes` | Map union; child value wins on key conflict |
+| `customizations.dcc.registryCAs` | Exact canonical-authority map union; child path wins on conflict |
 | `other_ports_attributes`, `override_command`, `update_remote_user_uid`, `workspace_folder`, `workspace_mount` | Child overwrites parent |
 
 Lifecycle hook fields are not merged as arrays; the child value wins for each hook.
@@ -905,7 +923,9 @@ embedded in the image via `docker build --label`.
 | `init`, `entrypoint` | Parsed and warned as ignored because `dcc` owns PID 1 startup. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings gated by `--allow-unsafe-runtime`. |
 
-Feature `containerUser` and `remoteUser` are rejected.
+Feature `containerUser`, `remoteUser`, and `customizations.dcc.registryCAs` are
+rejected. Registry trust is owned only by the selected project config and cannot be
+contributed by downloaded Feature metadata.
 
 ### OCI Artifact Download (`features/oci.rs`)
 
@@ -918,12 +938,28 @@ feature reference like `ghcr.io/devcontainers/features/node:1` is parsed as:
 
 Download steps:
 
+Before these steps, config loading canonicalizes each registry CA key to one exact DNS,
+IP, and effective-port authority. It accepts certificate-only PEM bundles up to 1 MiB,
+rejects canonical duplicates and surrounding data, and retains validated certificates
+in the resolved config. The OCI client always keeps a redirect-disabled public-root
+client. On first contact with a configured authority, it lazily builds and caches a
+client that retains those public roots and adds only that authority's bundle.
+
+Every OCI GET uses one shared manual redirect executor. Production targets and bearer
+realms must be absolute HTTPS URLs without user information. At most ten redirects are
+followed; each target independently selects public or exact-authority trust. Relative
+and same-origin redirects retain authorization, while a cross-origin redirect removes
+it permanently. Loops, missing or invalid locations, downgrade attempts, and hop-limit
+exhaustion fail without including response bodies or sensitive URL components in the
+error.
+
 1. **Authenticate**: Send `GET https://<registry>/v2/`. If the response is 401,
    parse the `WWW-Authenticate: Bearer` header for `realm`, `service`, and
-   `scope`. Fetch a token from the realm URL. Tokens are cached in a
+   `scope`. Fetch a token from the realm URL using the realm's own exact authority
+   trust entry; registry trust is never delegated to a split token host. Tokens are cached in a
    `HashMap<(registry, scope), token>` for the duration of the build. The scope
-   is included in the cache key because different repositories on the same
-   registry require different scopes.
+   is included in the cache key and the registry key is canonical, because different
+   repositories on the same registry require different scopes.
 
 2. **Fetch manifest**: `GET /v2/<repository>/manifests/<tag>` with
    `Accept: application/vnd.oci.image.manifest.v1+json`. Parse the JSON manifest.

@@ -74,6 +74,20 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
             source.display()
         );
     }
+    let dcc = raw
+        .customizations
+        .and_then(|customizations| customizations.dcc)
+        .unwrap_or_default();
+    let registry_cas = dcc
+        .registry_cas
+        .unwrap_or_default()
+        .validate()
+        .with_context(|| {
+            format!(
+                "invalid customizations.dcc.registryCAs in `{}`",
+                source.display()
+            )
+        })?;
     Ok(DevcontainerConfig {
         name: raw.name,
         image: raw.image,
@@ -101,17 +115,9 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
             .unwrap_or_else(|| vars::CONTAINER_WORKSPACE.to_string()),
         workspace_mount: raw.workspace_mount,
         initialize_command: raw.initialize_command,
-        scripts: raw
-            .customizations
-            .as_ref()
-            .and_then(|c| c.dcc.as_ref())
-            .and_then(|dcc| dcc.commands.clone())
-            .unwrap_or_default(),
-        state: raw
-            .customizations
-            .and_then(|c| c.dcc)
-            .and_then(|dcc| dcc.state)
-            .unwrap_or_default(),
+        scripts: dcc.commands.unwrap_or_default(),
+        state: dcc.state.unwrap_or_default(),
+        registry_cas,
         lifecycle: LifecycleHooks {
             on_create_command: raw.on_create_command,
             update_content_command: raw.update_content_command,
@@ -386,9 +392,12 @@ mod tests {
         validate_state_entries_allowing_deferred_container_env,
     };
     use crate::{
-        cache::CacheDir, config::load_config, lifecycle::LifecycleCommand, workspace::Workspace,
+        cache::CacheDir,
+        config::{load_config, registry_ca::RegistryAuthority},
+        lifecycle::LifecycleCommand,
+        workspace::Workspace,
     };
-    use std::path::PathBuf;
+    use std::{collections::HashSet, path::PathBuf};
     use tempfile::TempDir;
 
     fn write(dir: &std::path::Path, name: &str, content: &str) -> PathBuf {
@@ -409,6 +418,13 @@ mod tests {
             host_path: PathBuf::from("/tmp/.dcc/test"),
             profile_name: crate::profile::ProfileName::new("test"),
         }
+    }
+
+    fn certificate_pem() -> String {
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .unwrap()
+            .cert
+            .pem()
     }
 
     #[test]
@@ -1304,5 +1320,154 @@ mod tests {
         let path = write(dir.path(), "dev.json", r#"{ "image": "x:1" }"#);
         let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
         assert!(config.features.is_empty());
+    }
+
+    #[test]
+    fn registry_ca_paths_keep_declaration_file_provenance_before_merge() {
+        let dir = TempDir::new().unwrap();
+        let parent_dir = dir.path().join("parents");
+        let child_dir = dir.path().join("profiles");
+        std::fs::create_dir_all(parent_dir.join("certs")).unwrap();
+        std::fs::create_dir_all(child_dir.join("trust")).unwrap();
+        let parent = write(
+            &parent_dir,
+            "base.json",
+            r#"{
+                "image":"rust:1",
+                "customizations":{"dcc":{"registryCAs":{
+                    "parent.test":"certs/parent.pem",
+                    "override.test":"certs/old.pem"
+                }}}
+            }"#,
+        );
+        let child = write(
+            &child_dir,
+            "dev.json",
+            r#"{
+                "customizations":{"dcc":{
+                    "extends":"../parents/base.json",
+                    "registryCAs":{"OVERRIDE.test:443":"trust/new.pem"}
+                }}
+            }"#,
+        );
+
+        let raw = super::load_raw(&child, &mut HashSet::new(), false).unwrap();
+        let registry_cas = raw
+            .customizations
+            .unwrap()
+            .dcc
+            .unwrap()
+            .registry_cas
+            .unwrap();
+        assert_eq!(
+            registry_cas.path_for(&RegistryAuthority::parse("parent.test").unwrap()),
+            Some(
+                std::path::absolute(child_dir.join("../parents/certs/parent.pem"))
+                    .unwrap()
+                    .as_path()
+            )
+        );
+        assert_eq!(
+            registry_cas.path_for(&RegistryAuthority::parse("override.test").unwrap()),
+            Some(
+                std::path::absolute(child_dir.join("trust/new.pem"))
+                    .unwrap()
+                    .as_path()
+            )
+        );
+        assert!(parent.exists());
+    }
+
+    #[test]
+    fn registry_ca_child_override_removes_invalid_parent_source() {
+        let dir = TempDir::new().unwrap();
+        let parent_dir = dir.path().join("parent");
+        let child_dir = dir.path().join("child");
+        std::fs::create_dir_all(&parent_dir).unwrap();
+        std::fs::create_dir_all(&child_dir).unwrap();
+        write(
+            &parent_dir,
+            "base.json",
+            r#"{
+                "image":"rust:1",
+                "customizations":{"dcc":{"registryCAs":{
+                    "registry.test":"missing-parent.pem"
+                }}}
+            }"#,
+        );
+        std::fs::write(child_dir.join("ca.pem"), certificate_pem()).unwrap();
+        let child = write(
+            &child_dir,
+            "dev.json",
+            r#"{
+                "customizations":{"dcc":{
+                    "extends":"../parent/base.json",
+                    "registryCAs":{"REGISTRY.test:443":"ca.pem"}
+                }}
+            }"#,
+        );
+
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert_eq!(config.registry_cas.len(), 1);
+        assert!(config
+            .registry_cas
+            .contains_key(&RegistryAuthority::parse("registry.test").unwrap()));
+    }
+
+    #[test]
+    fn registry_ca_union_validates_every_surviving_entry_without_features() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("parent.pem"), certificate_pem()).unwrap();
+        std::fs::write(dir.path().join("child.pem"), certificate_pem()).unwrap();
+        write(
+            dir.path(),
+            "base.json",
+            r#"{
+                "image":"rust:1",
+                "customizations":{"dcc":{"registryCAs":{"parent.test":"parent.pem"}}}
+            }"#,
+        );
+        let child = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "customizations":{"dcc":{
+                    "extends":"base.json",
+                    "registryCAs":{"child.test:5443":"child.pem"}
+                }}
+            }"#,
+        );
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), true).unwrap();
+        assert_eq!(config.registry_cas.len(), 2);
+
+        let invalid = write(
+            dir.path(),
+            "invalid.json",
+            r#"{
+                "image":"rust:1",
+                "customizations":{"dcc":{"registryCAs":{"unused.test":"missing.pem"}}}
+            }"#,
+        );
+        let error = load_config(&invalid, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("unused.test"));
+        assert!(message.contains("missing.pem"));
+    }
+
+    #[test]
+    fn registry_ca_paths_do_not_expand_variables() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image":"rust:1",
+                "customizations":{"dcc":{"registryCAs":{
+                    "registry.test":"${localEnv:CA_PATH}"
+                }}}
+            }"#,
+        );
+        let error = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        assert!(format!("{error:#}").contains("${localEnv:CA_PATH}"));
     }
 }
