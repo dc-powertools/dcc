@@ -37,11 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-25 | Completed registry-scoped custom-CA support and verified its TLS OCI package-to-image path through marker execution and exact cleanup (T-0070). | `.meta/quality/0073-tls-oci-docker-smoke-quality.md` |
+| 2026-08-25 | Remediated CI token exposure with read-only workflow permissions and non-persisted checkout credentials (T-0081). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Replaced released-port rebinding with an exact-object listener-lifetime oracle that remains deterministic under concurrent port acquisition (T-0080). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Implemented exact-authority custom-CA trust for private OCI Feature registries without weakening public HTTPS defaults (T-0072). | `.meta/quality/0072-custom-ca-implementation-quality.md` |
 | 2026-08-25 | Kept generated dcc profiles, caches, runtime assets, and state out of Git status with non-destructive managed `.dcc/.gitignore` creation (T-0079). | `.meta/tasks/README.md#tasks` |
-| 2026-08-25 | Made later port-bind collision cleanup verification deterministic without timing-sensitive port reuse (T-0075). | `.meta/tasks/README.md#tasks` |
-| 2026-08-25 | Restored fixed container-variable substitution for Feature-contributed state while preserving deferred environment and path-safety validation (T-0077). | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -70,7 +70,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-25
-- Completed repository-changing tasks since that pass: 2
+- Completed repository-changing tasks since that pass: 4
 - Next pass due: 2026-09-24 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
