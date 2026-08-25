@@ -1793,6 +1793,7 @@ mod tests {
             image: Some("img".into()),
             build: None,
             features: IndexMap::new(),
+            registry_cas: Default::default(),
             container_env: HashMap::new(),
             remote_env: HashMap::new(),
             container_user: "dev".into(),

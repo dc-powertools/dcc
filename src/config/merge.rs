@@ -68,6 +68,12 @@ fn merge_dcc(parent: Option<RawDccConfig>, child: Option<RawDccConfig>) -> Optio
             extends: None,
             commands: merge_option_hash_maps(p.commands, c.commands),
             state: merge_option_vecs(p.state, c.state),
+            registry_cas: match (p.registry_cas, c.registry_cas) {
+                (None, None) => None,
+                (parent, None) => parent,
+                (None, child) => child,
+                (Some(parent), Some(child)) => Some(parent.merge(child)),
+            },
             extra: merge_hash_maps(p.extra, c.extra),
         }),
     }
@@ -718,6 +724,58 @@ mod tests {
     }
 
     #[test]
+    fn dcc_registry_cas_union_by_canonical_authority_with_child_wins() {
+        use crate::config::registry_ca::{RawRegistryCas, RegistryAuthority};
+
+        let parent_cas: RawRegistryCas = json5::from_str(
+            r#"{"registry.test:443":"parent.pem","parent.test":"parent-only.pem"}"#,
+        )
+        .unwrap();
+        let child_cas: RawRegistryCas =
+            json5::from_str(r#"{"REGISTRY.test":"child.pem","child.test:5443":"child-only.pem"}"#)
+                .unwrap();
+        let parent = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    registry_cas: Some(parent_cas),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let child = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    registry_cas: Some(child_cas),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+
+        let registry_cas = merge(parent, child)
+            .customizations
+            .unwrap()
+            .dcc
+            .unwrap()
+            .registry_cas
+            .unwrap();
+        assert_eq!(registry_cas.0.len(), 3);
+        assert_eq!(
+            registry_cas.path_for(&RegistryAuthority::parse("registry.test").unwrap()),
+            Some(std::path::Path::new("child.pem"))
+        );
+        assert!(registry_cas
+            .path_for(&RegistryAuthority::parse("parent.test").unwrap())
+            .is_some());
+        assert!(registry_cas
+            .path_for(&RegistryAuthority::parse("child.test:5443").unwrap())
+            .is_some());
+    }
+
+    #[test]
     fn dcc_extends_always_none() {
         let parent = RawConfig {
             customizations: Some(Customizations {
@@ -891,6 +949,7 @@ mod tests {
                         extends: None,
                         commands,
                         state,
+                        registry_cas: None,
                         extra: HashMap::new(),
                     }),
                     other: other
@@ -1050,6 +1109,11 @@ mod tests {
                         extends: None,
                         commands: expected_option_map(parent.commands, child.commands),
                         state: expected_option_vec(parent.state, child.state),
+                        registry_cas: match (parent.registry_cas, child.registry_cas) {
+                            (None, None) => None,
+                            (value, None) | (None, value) => value,
+                            (Some(parent), Some(child)) => Some(parent.merge(child)),
+                        },
                         extra: {
                             let mut extra = parent.extra;
                             extra.extend(child.extra);

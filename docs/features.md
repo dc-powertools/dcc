@@ -78,6 +78,21 @@ Feature references resolve from upstream during `dcc build`. Passing
 upstream base image, so Docker refreshes moved base image tags instead of reusing
 a stale local base.
 
+### Private registries and custom CAs
+
+Profiles can trust a private CA for one exact OCI authority through
+`customizations.dcc.registryCAs`. Map the registry authority to a PEM bundle path in
+the profile config; if the registry advertises a bearer-token service on a different
+authority, add a separate entry for that service. Redirect targets using private trust
+also need their own entries.
+
+Custom roots augment the normal public roots only for the named authority. dcc keeps
+HTTPS and hostname verification enabled, limits redirects, and strips bearer
+authorization when a redirect changes origin. CA files are validated eagerly and are
+never accepted from downloaded Feature metadata. See [Private Feature Registry
+CAs](index.md#private-feature-registry-cas) for the full authority, inheritance, path,
+and PEM rules.
+
 ## Feature Runtime Metadata
 
 Features can contribute runtime behavior through their

@@ -83,6 +83,10 @@ struct FeatureDccConfig {
     commands: IndexMap<String, String>,
     /// Profile-local state entries contributed by this feature.
     state: Vec<StateEntry>,
+    /// Trust configuration is project-owned and must never be supplied by a
+    /// downloaded Feature.
+    #[serde(flatten)]
+    extra: HashMap<String, serde_json::Value>,
 }
 
 impl FeatureMeta {
@@ -239,7 +243,8 @@ pub(crate) async fn build_context_from_base_image(
     allow_unsafe_runtime: bool,
     remap: Option<&crate::uid::RemapPlan>,
 ) -> anyhow::Result<FeatureBuildOutput> {
-    let mut client = OciClient::new().context("failed to initialize OCI HTTP client")?;
+    let mut client =
+        OciClient::new(&config.registry_cas).context("failed to initialize OCI HTTP client")?;
 
     // Phase 1: resolve the full feature set (dependsOn may add new features)
     let all = resolve_features(config, config_dir, &mut client).await?;
@@ -530,6 +535,16 @@ fn validate_feature_meta(
             "feature `{reference}` declares `remoteUser`, but Feature metadata cannot set container users"
         );
     }
+    if meta
+        .customizations
+        .dcc
+        .as_ref()
+        .is_some_and(|dcc| dcc.extra.contains_key("registryCAs"))
+    {
+        anyhow::bail!(
+            "feature `{reference}` declares `customizations.dcc.registryCAs`, but Feature metadata cannot configure registry trust"
+        );
+    }
 
     let unsafe_runtime = meta.unsafe_runtime();
     if !allow_unsafe_runtime && !unsafe_runtime.is_empty() {
@@ -647,10 +662,7 @@ async fn resolve_features(
             local::load_local_feature(&reference, config_dir, &user_options)
                 .with_context(|| format!("failed to load local feature `{reference}`"))?
         } else {
-            client
-                .download_feature(&reference, &user_options)
-                .await
-                .with_context(|| format!("failed to download feature `{reference}`"))?
+            download_oci_feature(client, &reference, &user_options).await?
         };
 
         let meta = parse_feature_meta(downloaded.feature_json.as_deref())
@@ -686,6 +698,17 @@ async fn resolve_features(
     }
 
     Ok(all)
+}
+
+async fn download_oci_feature(
+    client: &mut OciClient,
+    reference: &str,
+    user_options: &serde_json::Value,
+) -> anyhow::Result<oci::DownloadedFeature> {
+    client
+        .download_feature(reference, user_options)
+        .await
+        .context("failed to download OCI feature")
 }
 
 /// Topological sort of the resolved feature set using Kahn's algorithm.
@@ -932,6 +955,19 @@ mod tests {
         assert!(!is_local_feature("my-registry.io/owner/repo:latest"));
     }
 
+    #[tokio::test]
+    async fn oci_download_boundary_does_not_echo_raw_reference_secrets() {
+        const SECRET: &str = "sentinel-raw-feature-reference";
+        let mut client = OciClient::new(&Default::default()).unwrap();
+        let reference = format!("user:{SECRET}@registry.invalid?query={SECRET}/owner/feature:1");
+        let error = download_oci_feature(&mut client, &reference, &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("failed to download OCI feature"));
+        assert!(!rendered.contains(SECRET));
+    }
+
     #[test]
     fn bare_name_is_not_local() {
         assert!(!is_local_feature("my-feature"));
@@ -1169,6 +1205,7 @@ mod tests {
         let mut features = IndexMap::new();
         features.insert("./local-feat".to_string(), serde_json::json!({}));
         DevcontainerConfig {
+            registry_cas: Default::default(),
             name: None,
             image: Some("rust:1".to_string()),
             build: None,
@@ -1430,6 +1467,30 @@ mod tests {
                 kind: crate::config::StateKind::Directory,
             }]
         );
+    }
+
+    #[test]
+    fn feature_metadata_cannot_configure_registry_trust() {
+        for registry_cas in [
+            serde_json::json!({"registry.example": "/feature-controlled-ca.pem"}),
+            serde_json::Value::Null,
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "id": "untrusted-feature",
+                "customizations": {
+                    "dcc": {
+                        "registryCAs": registry_cas
+                    }
+                }
+            }))
+            .unwrap();
+            let meta = parse_feature_meta(Some(&bytes)).unwrap();
+            let error = validate_feature_meta("registry.example/owner/feature:1", &meta, false)
+                .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("cannot configure registry trust"));
+        }
     }
 
     #[test]

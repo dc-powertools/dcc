@@ -103,6 +103,76 @@ child `onCreateCommand`.
 Legacy top-level `extends` is still accepted with a warning. New configs should
 use `customizations.dcc.extends`.
 
+Registry CA entries are merged by their canonical authority. A child entry replaces
+the matching parent entry, while entries for other authorities are retained. Relative
+CA paths are resolved against the file that declares each entry, so an inherited path
+continues to refer to the parent config's directory.
+
+## Private Feature Registry CAs
+
+Use `customizations.dcc.registryCAs` when an OCI Feature registry or its bearer-token
+service uses a certificate issued by a private CA:
+
+```jsonc
+{
+  "image": "rust:1",
+  "features": {
+    "registry.example.test/team/rust-tools:1": {}
+  },
+  "customizations": {
+    "dcc": {
+      "registryCAs": {
+        "registry.example.test": "./certs/registry-ca.pem",
+        "auth.example.test:5443": "/etc/company/auth-ca.pem"
+      }
+    }
+  }
+}
+```
+
+Each key is one exact registry or token-service authority: an ASCII DNS name, IPv4
+address, or bracketed IPv6 address, with an optional port. DNS names are matched
+case-insensitively; omitted port 443 and explicit `:443` are equivalent. Schemes,
+paths, user information, wildcards, trailing dots, and port 0 are rejected. Configure
+each registry, redirect target, or split token-service authority separately; trust is
+never copied from one authority to another.
+
+Each value names one PEM bundle containing one or more `CERTIFICATE` blocks. Relative
+paths use the declaring config file's directory; absolute paths are also supported.
+Variable and tilde expansion is not performed. The selected config eagerly checks
+every effective bundle before network access: the path must be a readable regular
+file no larger than 1 MiB, and the file must contain certificates only, with no keys,
+other PEM objects, or surrounding data.
+
+Custom roots are additive to dcc's normal public roots and apply only to the exact
+authority. OCI traffic remains HTTPS-only. Redirects are bounded and independently
+verified for their destination; bearer authorization is removed on cross-origin
+redirects. A bearer-token realm on another authority therefore needs its own entry.
+There is no insecure TLS fallback or HTTP retry. Errors identify the operation and
+authority without printing certificates, tokens, response bodies, or sensitive URL
+query values.
+
+There is no CLI flag or environment-variable override for registry trust. Keep CA
+configuration in the selected profile (or an inherited config) so the trust change is
+reviewable.
+
+### Troubleshooting registry TLS
+
+- If the registry certificate is not trusted, confirm that the bundle contains the CA
+  that issued the server certificate and that the map key includes the registry's exact
+  non-default port.
+- If the CA file cannot be read, remember that a relative path starts at the config file
+  containing that specific map entry, including when the entry is inherited.
+- If the error identifies hostname or certificate-validity verification, update the
+  server certificate; adding its CA cannot make a mismatched, expired, or not-yet-valid
+  leaf certificate valid.
+- If authentication or a redirected blob host fails, add a separate entry for the exact
+  token-realm or redirect-target authority. The registry entry intentionally does not
+  grant trust to another host or port.
+- If config loading reports an invalid bundle, use a certificate-only PEM bundle no
+  larger than 1 MiB. Remove private keys, other PEM object types, and text outside the
+  `CERTIFICATE` blocks.
+
 ## Durable Cache
 
 Every profile gets a durable cache directory mounted in the container at
@@ -517,6 +587,7 @@ as errors.
 | `runArgs` | Conservative allowlist of extra Docker runtime flags. Privileged, host-integrating, or unknown flags are gated or rejected. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the invocation includes `--allow-unsafe-runtime`. |
 | `customizations.dcc.extends` | Local config file to inherit from. |
+| `customizations.dcc.registryCAs` | Exact OCI registry or token-service authorities mapped to private-CA PEM bundle paths. |
 | `customizations.dcc.commands` | Project named shell commands invokable through `dcc run <name>`. |
 | `customizations.dcc.state` | Container paths whose contents are persisted under the profile cache. |
 | `forwardPorts` | Ports to forward from container to host through the container's loopback interface. |
