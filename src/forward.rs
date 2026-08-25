@@ -135,7 +135,7 @@ impl Drop for Forwarding {
 /// All listeners are bound before any tasks are spawned. Consequently, a bind error
 /// drops every listener acquired by this call and cannot strand a relay task.
 pub(crate) async fn forward_ports(container: &str, ports: &[u16]) -> anyhow::Result<Forwarding> {
-    let listeners = bind_forwarding_listeners(ports, |_| {}).await?;
+    let listeners = bind_forwarding_listeners(ports, |listener, port| (listener, port)).await?;
 
     let mut handles = Vec::with_capacity(listeners.len());
     for (listener, port) in listeners {
@@ -153,24 +153,22 @@ pub(crate) async fn forward_ports(container: &str, ports: &[u16]) -> anyhow::Res
     Ok(Forwarding { tasks: handles })
 }
 
-async fn bind_forwarding_listeners(
+async fn bind_forwarding_listeners<OwnedListener>(
     ports: &[u16],
-    mut on_bound: impl FnMut(&TcpListener),
-) -> anyhow::Result<Vec<(TcpListener, u16)>> {
+    mut own_listener: impl FnMut(TcpListener, u16) -> OwnedListener,
+) -> anyhow::Result<Vec<OwnedListener>> {
     let mut listeners = Vec::with_capacity(ports.len() * 2);
     for &port in ports {
         let v4_address = format!("127.0.0.1:{port}");
         let v4 = TcpListener::bind(&v4_address)
             .await
             .with_context(|| format!("failed to bind {v4_address} for forwarding"))?;
-        on_bound(&v4);
-        listeners.push((v4, port));
+        listeners.push(own_listener(v4, port));
 
         let v6_address = format!("[::1]:{port}");
         let v6 = TcpListener::bind(&v6_address).await;
         if let Some(v6) = optional_ipv6_listener(v6, &v6_address, port) {
-            on_bound(&v6);
-            listeners.push((v6, port));
+            listeners.push(own_listener(v6, port));
         }
     }
     Ok(listeners)
@@ -638,10 +636,12 @@ printf '%s' response-after-eof
     async fn later_bind_collision_releases_every_listener_without_spawning_tasks() {
         let collision = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let collision_port = collision.local_addr().unwrap().port();
-        let mut earlier_addresses = Vec::new();
+        let mut earlier_listeners = Vec::new();
 
-        let error = match bind_forwarding_listeners(&[0, collision_port], |listener| {
-            earlier_addresses.push(listener.local_addr().unwrap());
+        let error = match bind_forwarding_listeners(&[0, collision_port], |listener, port| {
+            let listener = Arc::new(listener);
+            earlier_listeners.push(Arc::downgrade(&listener));
+            (listener, port)
         })
         .await
         {
@@ -650,13 +650,13 @@ printf '%s' response-after-eof
         };
         let message = format!("{error:#}");
         assert!(message.contains(&format!("127.0.0.1:{collision_port}")));
-        assert!(!earlier_addresses.is_empty());
+        assert!(!earlier_listeners.is_empty());
 
-        let mut rebound = Vec::new();
-        for address in earlier_addresses {
-            rebound.push(TcpListener::bind(address).await.unwrap_or_else(|error| {
-                panic!("earlier listener {address} remained bound: {error}")
-            }));
+        for listener in earlier_listeners {
+            assert!(
+                listener.upgrade().is_none(),
+                "earlier listener remained owned after later collision"
+            );
         }
     }
 
