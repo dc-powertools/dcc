@@ -359,10 +359,13 @@ impl CacheDir {
 }
 ```
 
-The cache directory is created by `ensure_exists` on `dcc run` if it does not
-already exist. It is never deleted automatically. `dcc build` does not create
-or write to the cache directory; all persistent build output is stored in the
-Docker image itself (see `devcontainer.metadata` label below).
+The cache directory is created by `ensure_exists` for build preparation and runtime
+commands if it does not already exist. It is never deleted automatically. The
+managed `.dcc/` root receives a `.gitignore` containing `*` when no entry already
+exists at that path, keeping generated profiles, runtime assets, seed ledgers, caches,
+and state out of Git status. Existing `.dcc/.gitignore` entries are never modified.
+Build preparation may hydrate declared state into the profile directory and record a
+seed ledger alongside it (see `devcontainer.metadata` label below).
 
 Declared `customizations.dcc.state` entries are validated as absolute container
 paths after config merge and container-side substitution. They reject unresolved

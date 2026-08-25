@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 
@@ -36,7 +39,14 @@ impl CacheDir {
                 "failed to create cache directory `{}`",
                 self.host_path.display()
             )
-        })
+        })?;
+        let managed_root = self.host_path.parent().ok_or_else(|| {
+            anyhow::anyhow!(
+                "cache directory `{}` has no managed root",
+                self.host_path.display()
+            )
+        })?;
+        ensure_managed_root_ignored(managed_root)
     }
 
     pub(crate) fn plan_state_mounts(&self, state: &[StateEntry]) -> Vec<StateMount> {
@@ -56,6 +66,25 @@ impl CacheDir {
         }
         Ok(())
     }
+}
+
+/// Creates the ignore rule for a dcc-managed `.dcc/` root without changing any
+/// pre-existing `.gitignore` entry.
+pub(crate) fn ensure_managed_root_ignored(managed_root: &Path) -> anyhow::Result<()> {
+    let path = managed_root.join(".gitignore");
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to create `{}`", path.display()));
+        }
+    };
+    file.write_all(b"*\n")
+        .with_context(|| format!("failed to write `{}`", path.display()))
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -150,7 +179,7 @@ fn state_host_path(cache_root: &std::path::Path, container_path: &str) -> PathBu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, process::Command};
 
     use crate::{profile::ProfileName, workspace::Workspace};
 
@@ -197,6 +226,92 @@ mod tests {
         cache.ensure_exists().unwrap();
         assert!(dir.path().join(".dcc").is_dir());
         assert!(cache.host_path.is_dir());
+        assert_eq!(
+            std::fs::read(dir.path().join(".dcc/.gitignore")).unwrap(),
+            b"*\n"
+        );
+    }
+
+    #[test]
+    fn ensure_exists_adds_ignore_to_pre_existing_managed_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".dcc")).unwrap();
+        let cache = CacheDir::new(
+            &Workspace {
+                root: dir.path().to_path_buf(),
+                identity: dir.path().to_string_lossy().into_owned(),
+            },
+            &ProfileName::new("profile"),
+        );
+
+        cache.ensure_exists().unwrap();
+
+        assert_eq!(
+            std::fs::read(dir.path().join(".dcc/.gitignore")).unwrap(),
+            b"*\n"
+        );
+    }
+
+    #[test]
+    fn ensure_exists_preserves_pre_existing_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".dcc")).unwrap();
+        let gitignore = dir.path().join(".dcc/.gitignore");
+        std::fs::write(&gitignore, b"custom rule\n").unwrap();
+        let cache = CacheDir::new(
+            &Workspace {
+                root: dir.path().to_path_buf(),
+                identity: dir.path().to_string_lossy().into_owned(),
+            },
+            &ProfileName::new("profile"),
+        );
+
+        cache.ensure_exists().unwrap();
+        cache.ensure_exists().unwrap();
+
+        assert_eq!(std::fs::read(gitignore).unwrap(), b"custom rule\n");
+    }
+
+    #[test]
+    fn managed_root_ignore_hides_generated_content_from_git_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            init.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        let cache = CacheDir::new(
+            &Workspace {
+                root: dir.path().to_path_buf(),
+                identity: dir.path().to_string_lossy().into_owned(),
+            },
+            &ProfileName::new("profile"),
+        );
+        cache.ensure_exists().unwrap();
+        std::fs::write(cache.host_path.join("cache-entry"), b"generated").unwrap();
+        std::fs::create_dir_all(dir.path().join(".dcc/profile.rt/start-hooks")).unwrap();
+        std::fs::write(dir.path().join(".dcc/profile.seed.json"), b"{}").unwrap();
+
+        let status = Command::new("git")
+            .args(["status", "--porcelain=v1", "--untracked-files=all"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            status.status.success(),
+            "git status failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        assert!(
+            status.stdout.is_empty(),
+            "dcc-managed content was visible to Git: {}",
+            String::from_utf8_lossy(&status.stdout)
+        );
     }
 
     #[test]

@@ -99,6 +99,13 @@ impl RtDir {
                 self.host_path.display()
             )
         })?;
+        let managed_root = self.host_path.parent().ok_or_else(|| {
+            anyhow::anyhow!(
+                "runtime assets directory `{}` has no managed root",
+                self.host_path.display()
+            )
+        })?;
+        crate::cache::ensure_managed_root_ignored(managed_root)?;
         // Remove any stale start-hooks from a prior launch; the host rewrites them
         // fresh on each runtime launch (see [`Self::write_start_hooks`]).
         let start_hooks = self.host_path.join("start-hooks");
@@ -855,6 +862,10 @@ mod tests {
         );
         // The stale start-hooks directory should be gone.
         assert!(!stale.exists(), "stale start-hooks should be removed");
+        assert_eq!(
+            std::fs::read(tmp.path().join(".dcc/.gitignore")).unwrap(),
+            b"*\n"
+        );
     }
 
     #[test]

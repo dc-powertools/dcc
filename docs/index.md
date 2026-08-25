@@ -106,7 +106,10 @@ use `customizations.dcc.extends`.
 ## Durable Cache
 
 Every profile gets a durable cache directory mounted in the container at
-`/cache`. The host cache lives under `.dcc/<profile>` in the workspace.
+`/cache`. The host cache lives under `.dcc/<profile>` in the workspace. When dcc
+creates or uses this managed directory, it creates `.dcc/.gitignore` with a local
+ignore rule if that file does not already exist. Existing `.gitignore` entries are
+left unchanged.
 
 These variables are available in devcontainer configuration:
 
