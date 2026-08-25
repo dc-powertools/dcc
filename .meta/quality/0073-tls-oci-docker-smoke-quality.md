@@ -17,12 +17,12 @@
 
 | Acceptance Criterion | Verification Method | Observed Evidence | Status |
 | --- | --- | --- | --- |
-| Fixture is ephemeral and contained | Source review plus focused failure-path run | CA and leaf generated per run; key remains in memory; public CA files and loopback listener disappear | Pass |
-| OCI package and responses are exact | Package contract, digest unit tests, request capture | Raw `./` first entry, metadata, executable installer, SHA-256 manifest/blob path, bounded three-GET sequence | Pass |
-| Wrong trust fails before Docker | Compiled CLI negative control | Missing/wrong CA preserve certificate error, record no HTTP, and never reach fake Docker | Pass |
+| Fixture is ephemeral and contained | Source review plus focused failure-path run | Post-T-0080 rerun passed: CA and leaf generated per run; key remains in memory; public CA files, loopback listener, and temporary workspace disappear | Pass |
+| OCI package and responses are exact | Package contract, digest unit tests, request capture | Post-T-0080 package contract passed; raw `./` first entry, metadata, executable installer, SHA-256 manifest/blob path, and bounded three-GET sequence remain covered | Pass |
+| Wrong trust fails before Docker | Compiled CLI negative control | Post-T-0080 rerun passed: missing/wrong CA preserve certificate context, record no HTTP, never reach fake Docker, and clean the fixture | Pass |
 | Trusted package reaches the image | Ignored Docker smoke | Correct config drives `dcc build`, marker run, and exact Docker cleanup | Not run |
 | Built image marker is verified | Ignored Docker smoke | Exact named/labeled `docker run --rm` checks installed marker | Not run |
-| Cleanup covers success and failure | Failure-path run, resource-guard review, live assertions | Server/temp failure cleanup passed; exact Docker cleanup assertions await live execution | Not run |
+| Cleanup covers success and failure | Failure-path run, resource-guard review, live assertions | Server/temp failure cleanup passed again; exact-name Docker success/failure cleanup assertions await live execution | Not run |
 | CI and docs make the smoke durable | Workflow lint and doc review | Dedicated target is invoked explicitly with one test thread in the existing Docker job | Pass |
 
 ## Readiness
@@ -35,26 +35,26 @@
 | Slices and ownership | Yes | Dedicated integration target isolates fixture/resource lifecycle; root retains catalog/cursor. |
 | Verification and rollback | Concern | Docker-less harness can prove TLS negatives but not the required image build/run/cleanup. |
 
-Readiness verdict: Ready with concerns; implementation may proceed, but Docker execution is
+Readiness verdict: Ready with concerns; implementation is complete, but Docker execution is
 required before Done.
 
 ## Verification Results
 
 | Required? | Check Or Method | Observed Result | Status | Unblocking Condition If Not Run |
 | --- | --- | --- | --- | --- |
-| Yes | Package contract test | 1 passed; explicit root, metadata, and executable installer | Pass | |
-| Yes | Ignored missing/wrong-CA control | 1 passed serially; certificate-context failures, zero HTTP records, fake Docker absent, listener/temp cleanup | Pass | |
+| Yes | Package contract test | Post-T-0080 exact rerun passed 1 test; explicit root, metadata, and executable installer | Pass | |
+| Yes | Ignored missing/wrong-CA control | Post-T-0080 exact serial rerun passed 1 test; certificate-context failures, zero HTTP records, fake Docker absent, listener/temp cleanup | Pass | |
 | Yes | Existing archive/digest negatives | 7 extraction and 2 digest tests passed, including traversal/type/root and mutation failures | Pass | |
-| Yes | Live ignored trusted smoke | Not run: `docker` and socket absent; user namespaces denied with `EPERM`; cgroup read-only | Not run | Functional Docker host plus pull access for `debian:bookworm-slim`; run the CI command below |
+| Yes | Live ignored trusted smoke | Not run after T-0080: `docker`, `dockerd`, `containerd`, alternate container CLIs, and Docker sockets are absent; user namespaces fail with `EPERM`; cgroup v2 is read-only; the process has no effective capabilities. Docker Hub auth plus the ARM64 `debian:bookworm-slim` manifest and layer metadata were reachable, but image materialization cannot run without a daemon | Not run | Functional Docker daemon and CLI capable of build/run and pulling `debian:bookworm-slim`; run the CI command below |
 | Yes | `cargo fmt --check` | Passed | Pass | |
 | Yes | `cargo check --locked` | Passed | Pass | |
 | Yes | `cargo clippy --all-targets -- -D warnings` | Passed | Pass | |
-| Yes | `cargo test --locked` | First run failed in T-0075 bind recheck; unchanged rerun passed 555 unit and 68 runnable integration tests; 37 ignored | Fail | Correct the T-0075 race, then obtain a clean full-suite run |
+| Yes | `cargo test --locked` | T-0080 replaced the released-port rebind race with an exact-object lifetime oracle; its clean first run under concurrent port churn passed 555 unit and 68 runnable integration tests | Pass | |
 | Yes | `cargo build --locked` | Passed | Pass | |
-| Yes | `actionlint .github/workflows/*.yml` | Passed with checksum-verified actionlint 1.7.12 | Pass | |
+| Yes | `actionlint .github/workflows/*.yml` | Passed with checksum-verified actionlint 1.7.12 for the committed workflow; unavailable in the resumed shell, and T-0080 did not change the workflow | Pass | |
 | Yes | Release workflow contract and diff check | Both passed | Pass | |
 | Yes | Dependency/static security review | No manifest/lock delta; one rustls line; no static key, insecure mode, external Feature registry, or trust mutation | Pass | |
-| Yes | Independent security/diff and QA review | No unresolved High/Medium T-0073 finding; focused target/OCI checks passed | Pass | |
+| Yes | Independent security/diff and QA review | Post-T-0080 reviews found no unresolved High/Medium/Low finding; focused target/OCI checks passed; CI is serial and cleanup uses exact names without prune, wildcard, network, volume, or trust-store mutation | Pass | |
 
 - Criteria or methods amended after implementation began, with reason and impact: split the
   Docker-free TLS negatives from the trusted live smoke so the security boundary remains
@@ -62,10 +62,11 @@ required before Done.
   design review. This strengthened cleanup evidence without changing scope.
 - Counterfactual evidence: omitted and wrong CA both reach the same generated server, preserve
   certificate-verification context, record no HTTP request, and do not invoke fake Docker.
-- Flaky result and disposition: the first full run exposed unrelated T-0075 test
-  `later_bind_collision_releases_every_listener_without_spawning_tasks` failing to rebind one
-  earlier address with `EADDRINUSE`; its unchanged isolated run and the clean full rerun passed.
-  This is recorded as a T-0075 flake signal, not concealed as a first-pass success.
+- Flaky result and disposition: the earlier T-0075 released-address rebind signal was corrected
+  by T-0080, which now observes ownership of the exact listener objects without competing for
+  their released ports. Its retained-owner counterfactual failed as intended, 200 concurrent
+  stress runs passed, and the first full-suite run under port churn passed cleanly. The signal no
+  longer blocks T-0073.
 
 ## Review Findings
 
@@ -81,11 +82,11 @@ required before Done.
 
 | Canonical Source | Expected | Actual | Required Update |
 | --- | --- | --- | --- |
-| T-0070 brief | TLS OCI package reaches image marker without weaker trust | Implemented dedicated ignored smoke and negative controls | Live Docker evidence pending |
+| T-0070 brief | TLS OCI package reaches image marker without weaker trust | Implemented dedicated ignored smoke and post-T-0080 negative controls pass | Live Docker evidence pending |
 | Decision 0007 | Exact `registryCAs`, HTTPS, no fallback | Compiled CLI uses declaration-relative CA; no alternate trust path | None |
 | Threat model 0070 | Ephemeral keys, loopback, bounded input, exact cleanup | Implemented and status table aligned | None |
 | Tests and docs | Ordinary tests Docker-free; ignored smoke explicit in serial CI | Dedicated target and maintainer/architecture docs align | None |
-| State | T-0073 active until every required gate runs | Docker gate remains unavailable locally | Root transition to Needs verification |
+| State | T-0073 remains open until every required gate runs | Only the Docker build/run/cleanup gate remains unavailable locally | Root transition to Needs verification |
 
 ## Batch And Residual Risk
 
@@ -94,18 +95,16 @@ required before Done.
   workflow invocation, and test architecture form one independently executable end-to-end proof;
   the dedicated test target isolates them from production and existing Docker tests.
 - Risk not resolved by passing checks: live behavior still depends on Docker, base-image pull
-  availability, and CI runner networking; Feature install scripts inherently execute as root;
-  the previously completed T-0075 listener regression emitted one new flake signal.
+  availability, and CI runner networking; Feature install scripts inherently execute as root.
 
 ## Completion
 
-- Required checks all passed: No; the required trusted Docker image build/run/cleanup was not run,
-  and the full suite exposed an unresolved T-0075 race.
+- Required checks all passed: No; the required trusted Docker image build/run/cleanup was not run.
 - Status: Needs verification
-- Exact incomplete condition, if not Done: correct the T-0075 listener-rebind race and obtain a
-  clean full-suite run; then, on a functional Docker host, run
+- Exact incomplete condition, if not Done: on a functional Docker host with pull access for
+  `debian:bookworm-slim`, run
   `cargo test --test tls_oci_docker_smoke -- --ignored --nocapture --test-threads=1` and record
-  that both ignored tests pass, including exact cleanup absence assertions.
-- Next action: root reopens T-0075 or creates a corrective task. After correction, CI or an
-  equivalent Docker host runs the full suite and dedicated serial target; root closes T-0073 and
-  reconciles T-0070 only after both evidence gaps pass.
+  that both ignored tests pass, including the marker build/run and exact success/failure cleanup
+  absence assertions.
+- Next action: root marks T-0073 Needs verification with only that Docker build/run/cleanup gate
+  outstanding. After it passes, root closes T-0073 and reconciles T-0070.
