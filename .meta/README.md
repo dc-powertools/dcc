@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-08-25 | Bumped the project patch version from 0.1.4 to 0.1.5 locally without triggering release automation (T-0074). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Added deterministic Docker-free `dcc profile list` discovery with stable, filename-safe text and structured JSON output (T-0057). | `.meta/quality/0057-profile-list-quality.md` |
 | 2026-08-25 | Restored OCI Feature compatibility for safe archive-root directory entries while retaining archive traversal and entry-type protections (T-0069). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Bumped the project patch version from 0.1.3 to 0.1.4 locally so the repaired release path can be exercised after an owner push (T-0068). | `.meta/tasks/README.md#tasks` |
@@ -72,7 +73,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-24
-- Completed repository-changing tasks since that pass: 4
+- Completed repository-changing tasks since that pass: 5
 - Next pass due: 2026-09-23 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
