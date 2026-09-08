@@ -44,7 +44,7 @@ async fn run() -> anyhow::Result<()> {
         command: cli::ProfileCommand::List,
     } = &cli.command
     {
-        return profile::list_profiles(&workspace, cli.format, cli.debug);
+        return profile::list_profiles(&workspace, cli.format, cli.dry_run, cli.debug).await;
     }
     if let cli::Command::Profile {
         command:
@@ -226,7 +226,7 @@ async fn run() -> anyhow::Result<()> {
         }
         cli::Command::Profile {
             command: cli::ProfileCommand::List,
-        } => profile::list_profiles(&workspace, cli.format, cli.debug),
+        } => profile::list_profiles(&workspace, cli.format, cli.dry_run, cli.debug).await,
         cli::Command::Profile {
             command: cli::ProfileCommand::Bootstrap { .. },
         } => anyhow::bail!("profile bootstrap was not dispatched before profile resolution"),

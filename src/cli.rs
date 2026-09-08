@@ -127,7 +127,7 @@ pub(crate) enum Command {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ProfileCommand {
-    /// List direct `.devcontainer/*.json` profiles.
+    /// List direct `.devcontainer/*.json` profiles and mark running environments.
     List,
     /// Create a minimal configuration for the selected profile.
     #[command(group(

@@ -78,7 +78,10 @@ dcc run -p ci test
 ```
 
 `dcc profile list` discovers direct `.devcontainer/*.json` files without loading
-their contents or invoking Docker. Add `--format json` for structured output.
+their contents, then uses one best-effort Docker snapshot to append `[running]` to
+profiles with an active runtime container. If Docker status is unavailable, discovery
+still succeeds and reports that status is unknown. Add `--format json` for structured
+`running: true`, `false`, or `null` status.
 
 Each profile gets its own image, container identity, cache, and state directory.
 Profile isolation is the default; artifacts are not shared unless you configure

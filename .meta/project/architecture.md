@@ -336,11 +336,39 @@ impl ProfileName {
 `dcc profile list` scans only direct entries in the workspace's `.devcontainer`
 directory. Exact `.json` files and symlinks to files map to the suffix-stripped profile
 name; directories, broken symlinks, other extensions, and the empty name are ignored.
-The typed result is sorted by name before both renderers run. Text escapes control
-characters and backslashes, prints one name per line, and annotates `devcontainer` as
-`(default)`; JSON emits ordered `name`, `config`, and `default` fields with normal JSON
-escaping. The command dispatches before normal `-p` resolution and never loads
-configuration contents or invokes Docker.
+The typed result is sorted by name before status enrichment and rendering. Text escapes
+control characters and backslashes, prints one name per line, annotates `devcontainer`
+as `(default)`, and independently appends `[running]` to a profile known to have a
+runtime container. JSON emits ordered `name`, `config`, `default`, and tri-state
+`running` fields with normal JSON escaping. The command dispatches before normal `-p`
+resolution and never loads configuration contents.
+
+When discovery is non-empty, listing issues one read-only Docker snapshot query for all
+running containers carrying `dcc.container_id`, then intersects those records with the
+computed `ContainerId` values:
+
+```
+docker ps \
+  --filter label=dcc.container_id \
+  --format '{{.Label "dcc.container_id"}}\t{{.Label "dcc.container_role"}}\t{{.Names}}'
+```
+
+The three fields are parsed as a single trustworthy snapshot. Any process failure,
+non-zero exit, invalid UTF-8, malformed record, or empty container id makes every
+profile's status unknown instead of producing partial false negatives. Text keeps the
+discovered lines, omits `[running]`, and warns once; JSON serializes unknown as
+`running: null`. A valid snapshot with no runtime record produces `running: false`.
+Empty discovery returns before invoking Docker. Global `--dry-run` also skips the
+snapshot; non-empty discovery warns and remains unknown, while empty discovery remains
+silent.
+
+`dcc.container_role=runtime` proves a running profile, while
+`dcc.container_role=build-prep` is excluded. For legacy records without a role, the
+exact generated name `<container-id>-build-prep` is excluded and every other name
+counts as a runtime. An unknown non-empty role makes the matching profile unknown unless
+another record proves it running. Reduction precedence is therefore running, then
+unknown, then not running. This is a point-in-time display snapshot rather than a lock;
+container state may change immediately after the query.
 
 `ContainerId` is derived as `dcc-<12hex>--<profile-name>`, where `<12hex>` is
 derived from the stable workspace identity. It doubles as the image tag produced
@@ -552,11 +580,12 @@ seed manifest (see State Seeding above).
 After the image exists, `dcc build` resolves declared state paths against the
 image environment, **hydrates** them from the image (see State Seeding), then
 starts a temporary build-preparation container with workspace, cache, and
-declared state mounts attached. It runs `onCreateCommand`,
-`updateContentCommand`, and `postCreateCommand` in order; Feature hooks run
-before the project hook for each phase. `dcc build --refresh-only` skips the
-image rebuild and `onCreateCommand`, requires the profile image to exist, and
-runs only `updateContentCommand` and `postCreateCommand`.
+declared state mounts attached. That container carries
+`dcc.container_id=<container-id>` and `dcc.container_role=build-prep`. It runs
+`onCreateCommand`, `updateContentCommand`, and `postCreateCommand` in order; Feature
+hooks run before the project hook for each phase. `dcc build --refresh-only` skips the
+image rebuild and `onCreateCommand`, requires the profile image to exist, and runs only
+`updateContentCommand` and `postCreateCommand`.
 
 ### Runtime Commands
 
@@ -579,8 +608,9 @@ automatic teardown until `dcc stop`.
 
 Lifecycle state — durable/one-shot mode, the active-command set, and the stopping flag —
 is owned by the PID 1 supervisor and held in a container-private tmpfs at `/run/dcc`
-(never host-backed). Docker labels (`dcc.container_id=<container-id>`) are used only for
-stable container lookup. The supervisor scripts (`dcc-supervisor`, `dcc-ctl`,
+(never host-backed). Docker labels (`dcc.container_id=<container-id>` and
+`dcc.container_role=runtime`) provide stable container lookup and distinguish runtime
+containers from build preparation. The supervisor scripts (`dcc-supervisor`, `dcc-ctl`,
 `dcc-exec`) are generated from a single Rust source of truth (`src/supervisor.rs`) and
 **baked into the image** at `/usr/local/share/dcc/` via the build context (decision 0004).
 Every dcc-built image carries them, version-stamped by the `dcc.version` label; the CLI
@@ -619,6 +649,7 @@ When no matching profile container is already running, `dcc` starts the containe
 docker run
   --name <container-name>
   --label dcc.container_id=<container-id>
+  --label dcc.container_role=runtime
   --label devcontainer.local_folder=<workspace-root>
   --label devcontainer.config_file=<config-path>
   --rm
@@ -672,11 +703,14 @@ of ordinary runtime commands; `dcc build` owns them.
 
 `runArgs` are deliberately allowlisted. Safe value-taking flags such as `--add-host`,
 `--dns`, `--hostname`, `--label`, `--tmpfs`, `--shm-size`, `--ulimit`, `--platform`,
-`--cap-drop`, and explicit `--env KEY=VALUE` are passed through. Privileged or
-host-integrating flags (`--privileged`, `--cap-add`, `--security-opt`, `--pid=host`,
-`--ipc=host`, `--network=host`, `--device`, and sensitive mounts/volumes) require
-`--allow-unsafe-runtime`. Unknown flags are rejected. Top-level `privileged`, `capAdd`,
-and `securityOpt` use the same explicit unsafe gate.
+`--cap-drop`, and explicit `--env KEY=VALUE` are passed through. The
+`dcc.container_id` and `dcc.container_role` label keys are reserved and rejected in
+both `--label KEY=VALUE` and `--label=KEY=VALUE` forms so user arguments cannot spoof
+profile identity or runtime classification; other label keys remain allowed.
+Privileged or host-integrating flags (`--privileged`, `--cap-add`, `--security-opt`,
+`--pid=host`, `--ipc=host`, `--network=host`, `--device`, and sensitive mounts/volumes)
+require `--allow-unsafe-runtime`. Unknown flags are rejected. Top-level `privileged`,
+`capAdd`, and `securityOpt` use the same explicit unsafe gate.
 
 `workspaceMount` is parsed but ignored because `dcc` owns the project mount. `overrideCommand`
 is parsed but ignored because `dcc` owns PID 1 (the lifecycle supervisor). `portsAttributes` and
@@ -1172,8 +1206,9 @@ All other commands exit 0 on success and 1 on error.
 - `dcc run --` is accepted syntactically, while direct command execution is tested
   through `dcc exec`
 - `tests/docker_boundary.rs` places an argv-recording fake `docker` first on `PATH`
-  and drives the compiled CLI through version gates, build pull policy, and runtime
-  resource plumbing; this complements, rather than replaces, live Docker smokes
+  and drives the compiled CLI through version gates, build pull policy, runtime
+  resource plumbing, role labels, and batched profile-status snapshot behavior; this
+  complements, rather than replaces, live Docker smokes
 
 Integration tests that require a live Docker daemon are annotated `#[ignore]`.
 `tests/tls_oci_docker_smoke.rs` keeps the private-registry package-to-image boundary in

@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 
 use crate::{
-    cache::CacheDir, cli::OutputFormat, config, dry_run::DryRunReport, workspace::Workspace,
+    cache::CacheDir, cli::OutputFormat, config, docker, dry_run::DryRunReport, workspace::Workspace,
 };
 
 #[derive(Debug, Clone)]
@@ -29,11 +29,33 @@ struct ProfileListEntry {
     config: String,
     #[serde(rename = "default")]
     is_default: bool,
+    running: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 struct ProfileList {
     profiles: Vec<ProfileListEntry>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct RunningContainerView<'a> {
+    container_id: &'a str,
+    role: Option<&'a str>,
+    name: &'a str,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct UnknownContainerRole {
+    profile: String,
+    container_name: String,
+    role: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum RunningStatusAction {
+    SkipEmpty,
+    SkipDryRun,
+    Query,
 }
 
 pub(crate) struct BootstrapOptions<'a> {
@@ -71,12 +93,13 @@ impl ProfileName {
     }
 }
 
-pub(crate) fn list_profiles(
+pub(crate) async fn list_profiles(
     workspace: &Workspace,
     format: OutputFormat,
+    dry_run: bool,
     debug: bool,
 ) -> anyhow::Result<()> {
-    let profiles = discover_profiles(workspace)?;
+    let mut profiles = discover_profiles(workspace)?;
 
     if debug {
         eprintln!("dcc debug: command `profile list`");
@@ -84,16 +107,49 @@ pub(crate) fn list_profiles(
         eprintln!("dcc debug: profiles `{}`", profiles.len());
     }
 
-    match format {
-        OutputFormat::Text => {
-            for profile in profiles {
-                let name = escape_text_profile_name(&profile.name);
-                if profile.is_default {
-                    println!("{name} (default)");
-                } else {
-                    println!("{name}");
+    match running_status_action(profiles.len(), dry_run) {
+        RunningStatusAction::SkipEmpty => {}
+        RunningStatusAction::SkipDryRun => {
+            eprintln!(
+                "warning: profile running status is unknown because --dry-run skipped the Docker status query"
+            );
+        }
+        RunningStatusAction::Query => match docker::running_dcc_containers().await {
+            Ok(containers) => {
+                let records = containers
+                    .iter()
+                    .map(|container| RunningContainerView {
+                        container_id: container.container_id.as_str(),
+                        role: container.role.as_deref(),
+                        name: container.name.as_str(),
+                    })
+                    .collect::<Vec<_>>();
+                let unknown_roles = enrich_running_statuses(workspace, &mut profiles, &records);
+                if !unknown_roles.is_empty() {
+                    eprintln!(
+                        "warning: profile running status is unknown for one or more profiles because Docker reported an unrecognized dcc container role"
+                    );
+                    if debug {
+                        for unknown in unknown_roles {
+                            eprintln!("{}", render_unknown_role_debug(&unknown));
+                        }
+                    }
                 }
             }
+            Err(error) => {
+                eprintln!(
+                    "warning: profile running status is unknown because Docker status could not be queried"
+                );
+                if debug {
+                    eprintln!("{}", render_running_query_failure_debug(&error));
+                }
+            }
+        },
+    }
+
+    match format {
+        OutputFormat::Text => {
+            print!("{}", render_text_profiles(&profiles));
         }
         OutputFormat::Json => {
             let output = ProfileList { profiles };
@@ -104,6 +160,104 @@ pub(crate) fn list_profiles(
     }
 
     Ok(())
+}
+
+fn running_status_action(profile_count: usize, dry_run: bool) -> RunningStatusAction {
+    if profile_count == 0 {
+        RunningStatusAction::SkipEmpty
+    } else if dry_run {
+        RunningStatusAction::SkipDryRun
+    } else {
+        RunningStatusAction::Query
+    }
+}
+
+fn enrich_running_statuses(
+    workspace: &Workspace,
+    profiles: &mut [ProfileListEntry],
+    records: &[RunningContainerView<'_>],
+) -> Vec<UnknownContainerRole> {
+    let mut unresolved_roles = Vec::new();
+
+    for profile in profiles {
+        let profile_name = ProfileName::new(&profile.name);
+        let container_id = ContainerId::new(workspace, &profile_name);
+        let (running, unknown_records) = classify_profile_status(
+            container_id.as_str(),
+            records
+                .iter()
+                .copied()
+                .filter(|record| record.container_id == container_id.as_str()),
+        );
+        profile.running = running;
+
+        if running.is_none() {
+            unresolved_roles.extend(unknown_records.into_iter().map(|record| {
+                UnknownContainerRole {
+                    profile: profile.name.clone(),
+                    container_name: record.name.to_owned(),
+                    role: record.role.unwrap_or_default().to_owned(),
+                }
+            }));
+        }
+    }
+
+    unresolved_roles
+}
+
+fn classify_profile_status<'a>(
+    container_id: &str,
+    records: impl IntoIterator<Item = RunningContainerView<'a>>,
+) -> (Option<bool>, Vec<RunningContainerView<'a>>) {
+    let legacy_build_prep_name = format!("{container_id}-build-prep");
+    let mut unknown_records = Vec::new();
+
+    for record in records {
+        match record.role {
+            Some(docker::CONTAINER_ROLE_RUNTIME) => return (Some(true), Vec::new()),
+            Some(docker::CONTAINER_ROLE_BUILD_PREP) => {}
+            None | Some("") if record.name == legacy_build_prep_name => {}
+            None | Some("") => return (Some(true), Vec::new()),
+            Some(_) => unknown_records.push(record),
+        }
+    }
+
+    if unknown_records.is_empty() {
+        (Some(false), unknown_records)
+    } else {
+        (None, unknown_records)
+    }
+}
+
+fn render_text_profiles(profiles: &[ProfileListEntry]) -> String {
+    let mut output = String::new();
+    for profile in profiles {
+        output.push_str(&escape_one_line(&profile.name));
+        if profile.is_default {
+            output.push_str(" (default)");
+        }
+        if profile.running == Some(true) {
+            output.push_str(" [running]");
+        }
+        output.push('\n');
+    }
+    output
+}
+
+fn render_unknown_role_debug(unknown: &UnknownContainerRole) -> String {
+    format!(
+        "dcc debug: profile `{}` has running container `{}` with unrecognized role `{}`",
+        escape_one_line(&unknown.profile),
+        escape_one_line(&unknown.container_name),
+        escape_one_line(&unknown.role)
+    )
+}
+
+fn render_running_query_failure_debug(error: &anyhow::Error) -> String {
+    format!(
+        "dcc debug: running container query failed: {}",
+        escape_one_line(&format!("{error:#}"))
+    )
 }
 
 pub(crate) fn bootstrap_profile(
@@ -288,6 +442,7 @@ fn discover_profiles(workspace: &Workspace) -> anyhow::Result<Vec<ProfileListEnt
             name: name.to_owned(),
             config: format!(".devcontainer/{file_name}"),
             is_default: name == "devcontainer",
+            running: None,
         });
     }
 
@@ -295,9 +450,9 @@ fn discover_profiles(workspace: &Workspace) -> anyhow::Result<Vec<ProfileListEnt
     Ok(profiles)
 }
 
-fn escape_text_profile_name(name: &str) -> String {
-    let mut escaped = String::with_capacity(name.len());
-    for character in name.chars() {
+fn escape_one_line(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
         if character == '\\' {
             escaped.push_str("\\\\");
         } else if character.is_control() {
@@ -531,16 +686,19 @@ mod tests {
                     name: "alpha".to_string(),
                     config: ".devcontainer/alpha.json".to_string(),
                     is_default: false,
+                    running: None,
                 },
                 ProfileListEntry {
                     name: "devcontainer".to_string(),
                     config: ".devcontainer/devcontainer.json".to_string(),
                     is_default: true,
+                    running: None,
                 },
                 ProfileListEntry {
                     name: "zeta".to_string(),
                     config: ".devcontainer/zeta.json".to_string(),
                     is_default: false,
+                    running: None,
                 },
             ]
         );
@@ -573,6 +731,7 @@ mod tests {
                 name: "shared".to_string(),
                 config: ".devcontainer/shared.json".to_string(),
                 is_default: false,
+                running: None,
             }]
         );
     }
@@ -580,8 +739,173 @@ mod tests {
     #[test]
     fn text_profile_name_escapes_controls_and_backslashes() {
         assert_eq!(
-            escape_text_profile_name("normal/λ\\line\nnext\ttab"),
+            escape_one_line("normal/λ\\line\nnext\ttab"),
             "normal/λ\\\\line\\nnext\\ttab"
+        );
+    }
+
+    #[test]
+    fn running_status_query_policy_skips_empty_and_dry_run_lists() {
+        assert_eq!(
+            running_status_action(0, false),
+            RunningStatusAction::SkipEmpty
+        );
+        assert_eq!(
+            running_status_action(0, true),
+            RunningStatusAction::SkipEmpty
+        );
+        assert_eq!(
+            running_status_action(2, true),
+            RunningStatusAction::SkipDryRun
+        );
+        assert_eq!(running_status_action(2, false), RunningStatusAction::Query);
+    }
+
+    #[test]
+    fn debug_status_details_escape_every_dynamic_value() {
+        let unknown = UnknownContainerRole {
+            profile: "profile\nname".to_string(),
+            container_name: "container\rname".to_string(),
+            role: "future\\role\tvalue".to_string(),
+        };
+        assert_eq!(
+            render_unknown_role_debug(&unknown),
+            "dcc debug: profile `profile\\nname` has running container `container\\rname` with unrecognized role `future\\\\role\\tvalue`"
+        );
+
+        let error = anyhow::anyhow!("daemon\nfailed\\detail");
+        assert_eq!(
+            render_running_query_failure_debug(&error),
+            "dcc debug: running container query failed: daemon\\nfailed\\\\detail"
+        );
+    }
+
+    #[test]
+    fn text_profile_rendering_composes_default_and_running_markers() {
+        let profiles = vec![
+            ProfileListEntry {
+                name: "ci".to_string(),
+                config: ".devcontainer/ci.json".to_string(),
+                is_default: false,
+                running: Some(true),
+            },
+            ProfileListEntry {
+                name: "devcontainer".to_string(),
+                config: ".devcontainer/devcontainer.json".to_string(),
+                is_default: true,
+                running: Some(true),
+            },
+            ProfileListEntry {
+                name: "stopped".to_string(),
+                config: ".devcontainer/stopped.json".to_string(),
+                is_default: false,
+                running: Some(false),
+            },
+            ProfileListEntry {
+                name: "unknown\nprofile".to_string(),
+                config: ".devcontainer/unknown.json".to_string(),
+                is_default: false,
+                running: None,
+            },
+        ];
+
+        assert_eq!(
+            render_text_profiles(&profiles),
+            "ci [running]\ndevcontainer (default) [running]\nstopped\nunknown\\nprofile\n"
+        );
+    }
+
+    #[test]
+    fn json_profile_rendering_keeps_running_field_and_order_for_all_states() {
+        let output = ProfileList {
+            profiles: vec![
+                ProfileListEntry {
+                    name: "running".to_string(),
+                    config: ".devcontainer/running.json".to_string(),
+                    is_default: false,
+                    running: Some(true),
+                },
+                ProfileListEntry {
+                    name: "stopped".to_string(),
+                    config: ".devcontainer/stopped.json".to_string(),
+                    is_default: false,
+                    running: Some(false),
+                },
+                ProfileListEntry {
+                    name: "unknown".to_string(),
+                    config: ".devcontainer/unknown.json".to_string(),
+                    is_default: false,
+                    running: None,
+                },
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_string(&output).unwrap(),
+            r#"{"profiles":[{"name":"running","config":".devcontainer/running.json","default":false,"running":true},{"name":"stopped","config":".devcontainer/stopped.json","default":false,"running":false},{"name":"unknown","config":".devcontainer/unknown.json","default":false,"running":null}]}"#
+        );
+    }
+
+    #[test]
+    fn running_status_classifies_current_and_legacy_roles() {
+        let container_id = "dcc-abc123--ci";
+        let record = |role, name| RunningContainerView {
+            container_id,
+            role,
+            name,
+        };
+
+        assert_eq!(
+            classify_profile_status(container_id, [record(Some("runtime"), "configured-name")]),
+            (Some(true), Vec::new())
+        );
+        assert_eq!(
+            classify_profile_status(
+                container_id,
+                [record(Some("build-prep"), "configured-name")]
+            ),
+            (Some(false), Vec::new())
+        );
+        assert_eq!(
+            classify_profile_status(container_id, [record(None, "dcc-abc123--ci-build-prep")]),
+            (Some(false), Vec::new())
+        );
+        assert_eq!(
+            classify_profile_status(container_id, [record(None, "legacy-runtime")]),
+            (Some(true), Vec::new())
+        );
+    }
+
+    #[test]
+    fn running_status_uses_running_over_unknown_over_not_running_precedence() {
+        let container_id = "dcc-abc123--ci";
+        let unknown = RunningContainerView {
+            container_id,
+            role: Some("future-role"),
+            name: "future-container",
+        };
+        let build_prep = RunningContainerView {
+            container_id,
+            role: Some("build-prep"),
+            name: "prep",
+        };
+        let runtime = RunningContainerView {
+            container_id,
+            role: Some("runtime"),
+            name: "runtime",
+        };
+
+        assert_eq!(
+            classify_profile_status(container_id, [build_prep, unknown]),
+            (None, vec![unknown])
+        );
+        assert_eq!(
+            classify_profile_status(container_id, [unknown, runtime, runtime]),
+            (Some(true), Vec::new())
+        );
+        assert_eq!(
+            classify_profile_status(container_id, [runtime, unknown]),
+            (Some(true), Vec::new())
         );
     }
 
