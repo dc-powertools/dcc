@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0084
+- Next task ID: T-0085
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -102,6 +102,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0081 | Enforce non-publishing least-privilege token permissions for every CI job, including direct and reusable entrypoints, and align the custom-CA CI threat boundary with observed behavior. | Required security correction discovered while verifying parent T-0073 from user-provided CI logs 2026-08-25 / r1 | Done | None | Quick change / High | None | Stop; remediation complete. | `.meta/threat-models/0070-custom-ca-oci.md`; `.meta/quality/0073-tls-oci-docker-smoke-quality.md` | Added workflow-level `contents: read` and set all five CI checkout steps to `persist-credentials: false`. Checksum-verified actionlint 1.7.12, the existing release-workflow contract, exact configuration inspection, and diff checks passed. No release caller or publishing workflow was changed. |
 | T-0082 | Add `dcc profile bootstrap` to exclusively create a minimal valid selected-profile configuration from an image, Dockerfile, or existing valid parent profile. | User request 2026-09-08 / r1 | Done | None | Quick change / Medium | None | Stop; outcome complete. | None | Added an exactly-one source contract for `--image`, `--dockerfile`, or `--extends`; direct `-p/--profile` targeting; valid-parent inheritance; exclusive no-overwrite creation; dry-run/debug support; user documentation; and nine CLI regressions. Counterfactual tests failed because bootstrap was absent, then the focused suite, format, check, all-target Clippy, full suite (555 unit plus 77 runnable integration tests), build, help smoke, diff check, and focused review passed. |
 | T-0083 | Commit the pre-existing removal of the obsolete `.devcontainer/old.json` profile and its lockfile separately from T-0082. | User request 2026-09-08 / r1 | Done | None | Quick change / Low | None | Stop; outcome complete. | None | Confirmed the pending diff contained only the two requested deletions, found no remaining repository references to either file or the obsolete lockfile version, and committed the removals independently. |
+| T-0084 | Design an extension to `dcc profile list` that indicates whether each discovered profile currently has a running dcc container while preserving trustworthy offline behavior and stable text/JSON output. | User request 2026-09-08 / r1 | Done | None | Decide / Medium | None | Stop; implementation-ready design complete. | `.meta/tasks/0084-profile-running-indicator-design.md` | Designed a default best-effort running indicator using one batched, read-only `docker ps` label snapshot; composable `(running)` text; tri-state JSON; truthful Docker-unavailable degradation; explicit runtime/build-prep role labels with legacy fallback; async enrichment without config parsing; and focused, fake-Docker, and live-Docker verification criteria. A focused review corrected unknown future roles to produce unknown status rather than a false stopped result. No production code changed. |
 
 ## Operating Contract
 

@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-08 | Designed a trustworthy, batched running-container indicator for `dcc profile list` (T-0084). | `.meta/tasks/0084-profile-running-indicator-design.md` |
 | 2026-09-08 | Removed and separately committed the obsolete `old` devcontainer profile and lockfile (T-0083). | `.meta/tasks/README.md#tasks` |
 | 2026-09-08 | Added exclusive profile bootstrapping from an image, Dockerfile, or validated parent profile (T-0082). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Completed registry-scoped custom-CA support and verified its TLS OCI package-to-image path through marker execution and exact cleanup (T-0070). | `.meta/quality/0073-tls-oci-docker-smoke-quality.md` |
@@ -72,7 +73,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-08-25
-- Completed repository-changing tasks since that pass: 6
+- Completed repository-changing tasks since that pass: 7
 - Next pass due: 2026-09-24 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
