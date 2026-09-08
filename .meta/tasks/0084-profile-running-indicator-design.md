@@ -3,10 +3,11 @@
 ## Identity And Source
 
 - Task ID: T-0084
-- Initial revision: r1
+- Initial revision: r1; current revision: r2
 - Catalog: `.meta/tasks/README.md`
 - Accepted source: User instruction
-- Source reference and date: Product-owner design request, 2026-09-08
+- Source reference and date: Product-owner design request and square-bracket marker
+  amendment, 2026-09-08
 - Parent or split task IDs: T-0057 established the current `profile list` contract.
 
 ## Goal
@@ -45,11 +46,11 @@ discovery. It does not load, validate, or merge profile configuration.
 
 ### Text
 
-Append an independent `(running)` marker only to profiles known to have a runtime
+Append an independent `[running]` marker only to profiles known to have a runtime
 container. Preserve the existing name and default marker exactly:
 
 ```text
-ci (running)
+ci [running]
 devcontainer (default)
 ```
 
@@ -57,7 +58,7 @@ When the default profile is running, use composable markers rather than changing
 meaning of the existing one:
 
 ```text
-devcontainer (default) (running)
+devcontainer (default) [running]
 ```
 
 Profiles known not to be running retain their current text. If Docker status is
@@ -241,7 +242,7 @@ dedicated test.
 
 ## Acceptance Criteria
 
-- [ ] Text output appends `(running)` exactly for discovered profiles with a current
+- [ ] Text output appends `[running]` exactly for discovered profiles with a current
       runtime container and composes it after `(default)`.
 - [ ] JSON records contain stable `running: true`, `false`, or `null` values.
 - [ ] Durable and live one-shot runtime containers count; build-preparation and stopped
