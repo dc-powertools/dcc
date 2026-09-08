@@ -91,6 +91,8 @@ dcc build                    # build the default profile image
 dcc build -p ci              # build .devcontainer/ci.json
 dcc build --refresh-only     # rerun update/post-create prep hooks
 dcc build --reseed-state     # overwrite declared state with the image seed
+dcc profile bootstrap --image=debian
+dcc profile bootstrap -p ci --extends=devcontainer
 dcc profile list             # list available named profiles
 
 dcc run                      # list named project and Feature commands
