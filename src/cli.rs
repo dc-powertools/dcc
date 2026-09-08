@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "dcc", about = "Dev Container CLI", version)]
@@ -129,4 +129,22 @@ pub(crate) enum Command {
 pub(crate) enum ProfileCommand {
     /// List direct `.devcontainer/*.json` profiles.
     List,
+    /// Create a minimal configuration for the selected profile.
+    #[command(group(
+        ArgGroup::new("source")
+            .required(true)
+            .multiple(false)
+            .args(["image", "dockerfile", "extends"])
+    ))]
+    Bootstrap {
+        /// Base Docker image for the new profile.
+        #[arg(long, value_name = "IMAGE")]
+        image: Option<String>,
+        /// Dockerfile path, relative to the new profile configuration.
+        #[arg(long, value_name = "PATH")]
+        dockerfile: Option<String>,
+        /// Existing profile from which the new profile inherits.
+        #[arg(long, value_name = "PROFILE")]
+        extends: Option<String>,
+    },
 }

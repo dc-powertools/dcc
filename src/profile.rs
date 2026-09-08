@@ -1,12 +1,15 @@
 use std::{
     fmt, fs,
+    io::Write as _,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
 use serde::Serialize;
 
-use crate::{cli::OutputFormat, workspace::Workspace};
+use crate::{
+    cache::CacheDir, cli::OutputFormat, config, dry_run::DryRunReport, workspace::Workspace,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProfileName(String);
@@ -31,6 +34,22 @@ struct ProfileListEntry {
 #[derive(Debug, Serialize)]
 struct ProfileList {
     profiles: Vec<ProfileListEntry>,
+}
+
+pub(crate) struct BootstrapOptions<'a> {
+    pub(crate) image: Option<&'a str>,
+    pub(crate) dockerfile: Option<&'a str>,
+    pub(crate) extends: Option<&'a str>,
+    pub(crate) strict: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) debug: bool,
+    pub(crate) format: OutputFormat,
+}
+
+enum BootstrapSource<'a> {
+    Image(&'a str),
+    Dockerfile(&'a str),
+    Extends(&'a str),
 }
 
 impl ProfileName {
@@ -84,6 +103,144 @@ pub(crate) fn list_profiles(
         }
     }
 
+    Ok(())
+}
+
+pub(crate) fn bootstrap_profile(
+    workspace: &Workspace,
+    profile_arg: &str,
+    opts: BootstrapOptions<'_>,
+) -> anyhow::Result<()> {
+    validate_direct_profile_name(profile_arg, "--profile")?;
+    let profile = ProfileName::new(profile_arg);
+    let config_path = profile.config_path(workspace);
+    ensure_profile_absent(&config_path)?;
+
+    let source = bootstrap_source(&opts)?;
+    let config = match source {
+        BootstrapSource::Image(image) => serde_json::json!({ "image": image }),
+        BootstrapSource::Dockerfile(dockerfile) => {
+            serde_json::json!({ "build": { "dockerfile": dockerfile } })
+        }
+        BootstrapSource::Extends(parent_name) => {
+            validate_direct_profile_name(parent_name, "--extends")?;
+            if parent_name == profile_arg {
+                anyhow::bail!("--extends must name a profile other than the target profile");
+            }
+            let parent = ProfileName::new(parent_name);
+            let parent_path = parent.config_path(workspace);
+            let parent_cache = CacheDir::new(workspace, &parent);
+            config::load_config(&parent_path, workspace, &parent_cache, opts.strict)
+                .with_context(|| format!("failed to validate extended profile `{parent_name}`"))?;
+            serde_json::json!({
+                "customizations": {
+                    "dcc": {
+                        "extends": format!("./{parent_name}.json")
+                    }
+                }
+            })
+        }
+    };
+    let contents = serde_json::to_string_pretty(&config)
+        .context("failed to serialize bootstrapped profile configuration")?;
+    let contents = format!("{contents}\n");
+
+    if opts.debug {
+        eprintln!("dcc debug: command `profile bootstrap`");
+        eprintln!("dcc debug: profile `{}`", profile.as_str());
+        eprintln!("dcc debug: config `{}`", config_path.display());
+    }
+
+    if opts.dry_run {
+        return DryRunReport::new(
+            "profile bootstrap",
+            workspace,
+            &profile,
+            &config_path,
+            vec!["profile source validated", "profile creation planned"],
+            Vec::<String>::new(),
+        )
+        .print(opts.format);
+    }
+
+    create_profile_exclusively(&config_path, contents.as_bytes())?;
+    println!(
+        "created profile `{}` at `{}`",
+        profile.as_str(),
+        config_path.display()
+    );
+    Ok(())
+}
+
+fn bootstrap_source<'a>(opts: &BootstrapOptions<'a>) -> anyhow::Result<BootstrapSource<'a>> {
+    let (flag, value, source) = match (opts.image, opts.dockerfile, opts.extends) {
+        (Some(value), None, None) => ("--image", value, BootstrapSource::Image(value)),
+        (None, Some(value), None) => ("--dockerfile", value, BootstrapSource::Dockerfile(value)),
+        (None, None, Some(value)) => ("--extends", value, BootstrapSource::Extends(value)),
+        _ => anyhow::bail!(
+            "profile bootstrap requires exactly one of --image, --dockerfile, or --extends"
+        ),
+    };
+    if value.trim().is_empty() {
+        anyhow::bail!("{flag} requires a non-empty value");
+    }
+    Ok(source)
+}
+
+fn validate_direct_profile_name(name: &str, flag: &str) -> anyhow::Result<()> {
+    let path = Path::new(name);
+    let direct_name = path
+        .parent()
+        .is_some_and(|parent| parent.as_os_str().is_empty())
+        && path.file_name().is_some_and(|file_name| file_name == name);
+    if name.trim().is_empty() || !direct_name {
+        anyhow::bail!(
+            "{flag} requires a direct profile name, not a path; profiles map to `.devcontainer/<profile>.json`"
+        );
+    }
+    Ok(())
+}
+
+fn ensure_profile_absent(path: &Path) -> anyhow::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => anyhow::bail!("profile configuration `{}` already exists", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("failed to inspect `{}`", path.display())),
+    }
+}
+
+fn create_profile_exclusively(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::bail!("profile configuration `{}` already exists", path.display())
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to create profile configuration `{}`",
+                    path.display()
+                )
+            });
+        }
+    };
+
+    if let Err(write_error) = file.write_all(contents) {
+        drop(file);
+        if let Err(cleanup_error) = fs::remove_file(path) {
+            anyhow::bail!(
+                "failed to write profile configuration `{}`: {write_error}; failed to remove the partial file: {cleanup_error}",
+                path.display()
+            );
+        }
+        return Err(write_error).with_context(|| {
+            format!("failed to write profile configuration `{}`", path.display())
+        });
+    }
     Ok(())
 }
 

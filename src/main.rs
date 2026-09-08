@@ -46,6 +46,29 @@ async fn run() -> anyhow::Result<()> {
     {
         return profile::list_profiles(&workspace, cli.format, cli.debug);
     }
+    if let cli::Command::Profile {
+        command:
+            cli::ProfileCommand::Bootstrap {
+                image,
+                dockerfile,
+                extends,
+            },
+    } = &cli.command
+    {
+        return profile::bootstrap_profile(
+            &workspace,
+            &cli.profile,
+            profile::BootstrapOptions {
+                image: image.as_deref(),
+                dockerfile: dockerfile.as_deref(),
+                extends: extends.as_deref(),
+                strict: cli.strict,
+                dry_run: cli.dry_run,
+                debug: cli.debug,
+                format: cli.format,
+            },
+        );
+    }
 
     let cwd = std::env::current_dir().context("failed to determine current working directory")?;
     let (profile, config_path) = resolve_profile(&cli.profile, &workspace, &cwd)?;
@@ -204,6 +227,9 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Profile {
             command: cli::ProfileCommand::List,
         } => profile::list_profiles(&workspace, cli.format, cli.debug),
+        cli::Command::Profile {
+            command: cli::ProfileCommand::Bootstrap { .. },
+        } => anyhow::bail!("profile bootstrap was not dispatched before profile resolution"),
         cli::Command::Feature { add, remove } => feature::update_features(
             &workspace,
             &profile,

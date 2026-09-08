@@ -24,6 +24,25 @@ configurations must be located within `.devcontainer/`.
 Each profile has its own image, container identity, durable cache, and declared
 state. The default is isolation between profiles.
 
+Create a minimal profile with `dcc profile bootstrap`. The target comes from the
+global `-p/--profile` option and defaults to `devcontainer`:
+
+```sh
+dcc profile bootstrap --image=debian:bookworm-slim
+dcc profile bootstrap -p local --dockerfile=Dockerfile.local
+dcc profile bootstrap -p ci --extends=devcontainer
+```
+
+Exactly one source option is required. `--image` writes an `image` configuration;
+`--dockerfile` writes a minimal `build.dockerfile` configuration, with the path
+interpreted relative to the new profile file; and `--extends` writes
+`customizations.dcc.extends` after confirming that the named parent profile exists
+and resolves to a valid configuration. Bootstrap accepts direct profile names only,
+so its destination is always `.devcontainer/<profile>.json`. It fails without
+changing the file when the destination already exists and never overwrites an
+existing profile. `--dry-run` validates the request and reports the planned creation
+without writing it.
+
 Run `dcc profile list` to discover named profiles:
 
 ```text
@@ -321,7 +340,8 @@ Dev Container absent/default behavior.
 ## Commands
 
 The CLI supports these subcommands: `build`, `run`, `exec`, `start`, `attach`,
-`stop`, `id`, `profile`, and `feature`.
+`stop`, `id`, `profile`, and `feature`. The `profile` command provides the
+`bootstrap` and `list` subcommands.
 
 ### Global Flags
 
