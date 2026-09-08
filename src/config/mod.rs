@@ -11,6 +11,7 @@ use crate::{
     workspace::Workspace,
 };
 
+pub(crate) mod feature_ref;
 pub(crate) mod merge;
 pub(crate) mod registry_ca;
 pub(crate) mod resolve;
@@ -173,6 +174,7 @@ pub(crate) struct Customizations {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawDccConfig {
     pub(crate) extends: Option<String>,
+    pub(crate) default_feature_repository: Option<feature_ref::DefaultFeatureRepository>,
     pub(crate) commands: Option<HashMap<String, String>>,
     pub(crate) state: Option<Vec<StateEntry>>,
     #[serde(rename = "registryCAs")]
@@ -458,6 +460,7 @@ mod tests {
                 "scripts": { "legacy": "cargo check" },
                 "customizations": {
                     "dcc": {
+                        "defaultFeatureRepository": "ghcr.io/dc-powertools/features",
                         "commands": { "build": "cargo build" },
                         "state": [
                             "/home/dev/.cache",
@@ -476,6 +479,13 @@ mod tests {
             .expect("dcc customizations should be parsed");
         assert_eq!(raw.extends.as_deref(), None);
         assert_eq!(dcc.extends.as_deref(), Some("base.json"));
+        assert_eq!(
+            dcc.default_feature_repository
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("ghcr.io/dc-powertools/features")
+        );
         assert_eq!(raw.name.as_deref(), Some("example"));
         assert_eq!(raw.image.as_deref(), Some("rust:latest"));
         let build = raw.build.as_ref().expect("build should be parsed");
@@ -784,6 +794,7 @@ mod tests {
                     "dcc": {
                         "commands": { "test": "cargo test" },
                         "state": [{ "path": "/cache/file", "type": "file" }],
+                        "defaultFeatureRepository": "ghcr.io/dc-powertools/features",
                         "registryCAs": {}
                     },
                     "vscode": { "settings": {} }
@@ -802,6 +813,13 @@ mod tests {
         assert!(dcc
             .registry_cas
             .is_some_and(|registry_cas| registry_cas.0.is_empty()));
+        assert_eq!(
+            dcc.default_feature_repository
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("ghcr.io/dc-powertools/features")
+        );
         assert_eq!(
             dcc.state.as_ref().and_then(|s| s.first()),
             Some(&StateEntry {

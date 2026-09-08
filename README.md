@@ -16,6 +16,7 @@ containers without sharing state between profiles.
 - Keeps a durable per-profile `/cache` mount under `.dcc/<profile>`.
 - Persists declared state paths with `customizations.dcc.state`.
 - Supports local config inheritance with `customizations.dcc.extends`.
+- Supports short Feature names through a project-configured default repository.
 - Supports registry-scoped custom CAs for private OCI Feature registries.
 - Supports named project commands with `customizations.dcc.commands`.
 - Installs devcontainer Features and reads supported Feature metadata.
@@ -46,11 +47,16 @@ A typical devcontainer profile is assembled from a set of [Features](docs/featur
 {
   "image": "debian",
   "features": {
-    "ghcr.io/dc-powertools/features/sudo:latest": {},
-    "ghcr.io/dc-powertools/features/git:latest": {},
-    "ghcr.io/dc-powertools/features/mo:latest": {},
-    "ghcr.io/dc-powertools/features/node:latest": {}
+    "sudo": {},
+    "git": {},
+    "mo": {},
+    "node": {}
   },
+  "customizations": {
+    "dcc": {
+      "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
+    }
+  }
 }
 ```
 
@@ -102,8 +108,8 @@ dcc run                      # list named project and Feature commands
 dcc run test                 # run a named command
 dcc exec cargo test          # run an explicit argv directly in the container
 
-dcc feature -a ghcr.io/devcontainers/features/node:1
-dcc feature -r ghcr.io/devcontainers/features/node:1
+dcc feature -a node:1
+dcc feature -r node:1
 
 dcc start                    # start or promote a durable profile container
 dcc attach                   # run attach hooks, then open a shell

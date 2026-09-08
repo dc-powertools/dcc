@@ -4,11 +4,14 @@ use std::{
 };
 
 use anyhow::Context as _;
+use indexmap::IndexMap;
 
 use crate::{
     config::{
-        merge::merge, parse_config_file, vars, DevcontainerConfig, RawConfig, StateEntry,
-        StateKind, UnsafeRuntimeConfig, DEFAULT_CONTAINER_USER,
+        feature_ref::{normalize_project_feature, DefaultFeatureRepository},
+        merge::merge,
+        parse_config_file, vars, DevcontainerConfig, RawConfig, StateEntry, StateKind,
+        UnsafeRuntimeConfig, DEFAULT_CONTAINER_USER,
     },
     lifecycle::LifecycleHooks,
 };
@@ -28,35 +31,95 @@ pub(crate) fn load_raw(
     }
     visited.insert(canonical);
 
-    let raw = parse_config_file(path, strict)?;
+    let mut raw = parse_config_file(path, strict)?;
 
-    let extends_path = match raw
+    let extends = raw
         .customizations
         .as_ref()
         .and_then(|c| c.dcc.as_ref())
         .and_then(|dcc| dcc.extends.as_ref())
-    {
-        None => return Ok(raw),
-        Some(e) => {
+        .cloned();
+    let parent = match extends {
+        None => None,
+        Some(extends) => {
             let parent_dir = path.parent().with_context(|| {
                 format!(
                     "`{}` has an extends field but no parent directory",
                     path.display()
                 )
             })?;
-            parent_dir.join(e)
+            let parent_path = parent_dir.join(extends);
+            Some(load_raw(&parent_path, visited, strict).with_context(|| {
+                format!(
+                    "failed to load parent config `{}` (extended from `{}`)",
+                    parent_path.display(),
+                    path.display()
+                )
+            })?)
         }
     };
 
-    let parent = load_raw(&extends_path, visited, strict).with_context(|| {
-        format!(
-            "failed to load parent config `{}` (extended from `{}`)",
-            extends_path.display(),
-            path.display()
-        )
-    })?;
+    let effective_default = declared_default_feature_repository(&raw)
+        .cloned()
+        .or_else(|| {
+            parent
+                .as_ref()
+                .and_then(declared_default_feature_repository)
+                .cloned()
+        });
+    normalize_declared_features(&mut raw.features, effective_default.as_ref(), path)?;
 
-    Ok(merge(parent, raw))
+    Ok(match parent {
+        Some(parent) => merge(parent, raw),
+        None => raw,
+    })
+}
+
+fn declared_default_feature_repository(raw: &RawConfig) -> Option<&DefaultFeatureRepository> {
+    raw.customizations
+        .as_ref()
+        .and_then(|customizations| customizations.dcc.as_ref())
+        .and_then(|dcc| dcc.default_feature_repository.as_ref())
+}
+
+/// Loads the declaration-scoped config chain and returns the default Feature
+/// repository effective for declarations in `path`.
+pub(crate) fn effective_default_feature_repository(
+    path: &Path,
+    strict: bool,
+) -> anyhow::Result<Option<DefaultFeatureRepository>> {
+    let raw = load_raw(path, &mut HashSet::new(), strict)?;
+    Ok(declared_default_feature_repository(&raw).cloned())
+}
+
+fn normalize_declared_features(
+    features: &mut Option<IndexMap<String, serde_json::Value>>,
+    default_repository: Option<&DefaultFeatureRepository>,
+    source: &Path,
+) -> anyhow::Result<()> {
+    let Some(declared) = features.take() else {
+        return Ok(());
+    };
+    let mut normalized = IndexMap::with_capacity(declared.len());
+    let mut spellings = std::collections::HashMap::<String, String>::new();
+    for (spelling, options) in declared {
+        let identity =
+            normalize_project_feature(&spelling, default_repository).with_context(|| {
+                format!(
+                    "invalid Feature reference declared in `{}`",
+                    source.display()
+                )
+            })?;
+        if let Some(previous) = spellings.insert(identity.clone(), spelling.clone()) {
+            anyhow::bail!(
+                "`{}` declares equivalent Feature references `{previous}` and `{spelling}` as `{identity}`",
+                source.display()
+            );
+        }
+        normalized.insert(identity, options);
+    }
+    *features = Some(normalized);
+    Ok(())
 }
 
 /// Convert a fully-merged RawConfig to DevcontainerConfig.
@@ -1247,27 +1310,107 @@ mod tests {
     }
 
     #[test]
-    fn test_features_merged() {
+    fn default_feature_repository_is_declaration_scoped_across_extends() {
         let dir = TempDir::new().unwrap();
         write(
             dir.path(),
             "base.json",
-            r#"{ "image": "x:1", "features": { "feat-a": {} } }"#,
+            r#"{
+                "image": "x:1",
+                "features": { "sudo": {}, "ghcr.io/shared/features/tool": { "from": "parent" } },
+                "customizations": { "dcc": {
+                    "defaultFeatureRepository": "ghcr.io/parent/features"
+                } }
+            }"#,
         );
         let child = write(
             dir.path(),
             "child.json",
-            r#"{ "extends": "base.json", "features": { "feat-b": {} } }"#,
+            r#"{
+                "extends": "base.json",
+                "features": {
+                    "git:1": {},
+                    "ghcr.io/shared/features/tool:latest": { "from": "child" }
+                },
+                "customizations": { "dcc": {
+                    "defaultFeatureRepository": "ghcr.io/child/features"
+                } }
+            }"#,
         );
         let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
-        assert!(
-            config.features.contains_key("feat-a"),
-            "feat-a should be present"
+        let keys: Vec<&str> = config.features.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "ghcr.io/parent/features/sudo:latest",
+                "ghcr.io/shared/features/tool:latest",
+                "ghcr.io/child/features/git:1"
+            ]
         );
-        assert!(
-            config.features.contains_key("feat-b"),
-            "feat-b should be present"
+        assert_eq!(
+            config.features["ghcr.io/shared/features/tool:latest"]["from"],
+            "child"
         );
+    }
+
+    #[test]
+    fn child_inherits_default_feature_repository_for_its_declarations() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "base.json",
+            r#"{
+                "image": "x:1",
+                "customizations": { "dcc": {
+                    "defaultFeatureRepository": "ghcr.io/team/features"
+                } }
+            }"#,
+        );
+        let child = write(
+            dir.path(),
+            "child.json",
+            r#"{ "extends": "base.json", "features": { "node": {} } }"#,
+        );
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(config
+            .features
+            .contains_key("ghcr.io/team/features/node:latest"));
+    }
+
+    #[test]
+    fn same_file_equivalent_feature_references_are_rejected() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "x:1",
+                "features": {
+                    "sudo": {},
+                    "ghcr.io/team/features/sudo:latest": {}
+                },
+                "customizations": { "dcc": {
+                    "defaultFeatureRepository": "ghcr.io/team/features"
+                } }
+            }"#,
+        );
+        let error = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("equivalent Feature references"));
+        assert!(rendered.contains("sudo"));
+        assert!(rendered.contains("ghcr.io/team/features/sudo:latest"));
+    }
+
+    #[test]
+    fn short_feature_without_default_is_rejected_before_io() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{ "image": "x:1", "features": { "sudo": {} } }"#,
+        );
+        let error = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        assert!(format!("{error:#}").contains("defaultFeatureRepository"));
     }
 
     #[test]

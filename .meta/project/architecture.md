@@ -38,6 +38,7 @@ src/
   forward.rs          Host-side TCP relay for forwardPorts
   config/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
+    feature_ref.rs    Default-repository validation and canonical Feature identities
     merge.rs          Extends merging algorithm
     registry_ca.rs    Exact-authority parsing and strict custom-CA bundle validation
     resolve.rs        File-level resolution with cycle detection
@@ -134,6 +135,7 @@ struct RawDccConfig {
     extends: Option<String>,
     commands: Option<HashMap<String, String>>,
     state: Option<Vec<StateEntry>>,
+    default_feature_repository: Option<DefaultFeatureRepository>,
     // Custom deserialization rejects duplicate canonical authorities.
     registry_cas: Option<BTreeMap<RegistryAuthority, RegistryCaSource>>,
 }
@@ -200,11 +202,19 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
     bail!("{} closes a circular extends chain", canonical.display())
   visited.insert(canonical)
   raw = parse_jsonc(path, strict)?   // emits warnings or errors for extra fields
-  if raw.extends is None: return raw
-  parent_path = path.parent().join(&raw.extends)
-  parent = load_raw(parent_path, visited, strict)?
+  parent = load_raw(parent_path, visited, strict)? if raw extends another file
+  effective_default = raw.default_feature_repository ?? parent.default_feature_repository
+  canonicalize raw.features with effective_default
   return merge(parent, raw)
 ```
+
+Feature keys are canonicalized before each declaration file is merged. A short key
+such as `sudo` uses that file's effective `defaultFeatureRepository`; an omitted tag
+becomes `latest`. This ordering preserves declaration provenance: changing a default
+in a child does not rebind shorthand inherited from its parent. Equivalent keys in
+one file are rejected, while a canonically equivalent child key overrides the parent
+value without changing the parent's insertion position. Local `./` and `../` paths
+remain literal.
 
 `extends` paths are resolved relative to the file that contains them.
 Relative `customizations.dcc.registryCAs` paths are also anchored to their declaring
@@ -232,6 +242,7 @@ read the replaced parent path.
 | `forward_ports` | Array union; duplicates removed, parent entries first |
 | `ports_attributes` | Map union; child value wins on key conflict |
 | `customizations.dcc.registryCAs` | Exact canonical-authority map union; child path wins on conflict |
+| `customizations.dcc.defaultFeatureRepository` | Child scalar wins; Feature keys were already resolved in their declaring file |
 | `other_ports_attributes`, `override_command`, `update_remote_user_uid`, `workspace_folder`, `workspace_mount` | Child overwrites parent |
 
 Lifecycle hook fields are not merged as arrays; the child value wins for each hook.
@@ -918,9 +929,12 @@ relay result, so cancellation cannot detach a subprocess.
 **Phase 1 — dependency resolution**: Starting from the user's feature list,
 each feature's `devcontainer-feature.json` is read. Features declared in
 `dependsOn` that are not already present are appended to the work queue and
-processed recursively. A `HashSet` of enqueued references prevents re-queueing.
-When a dependency is already present with different options, the existing options
-are kept and a warning is emitted.
+processed recursively. A canonical-reference map of enqueued Features prevents
+re-queueing and retains the first effective options.
+Dependency references are first canonicalized; explicit OCI references without a tag
+use `latest`, local paths remain literal, and project shorthand is rejected in
+downloaded Feature metadata. When a dependency is already present with different
+options, the existing options are kept and a warning is emitted.
 
 **Phase 2 — topological sort** (Kahn's algorithm): A directed graph is
 constructed from `dependsOn` edges (hard) and `installsAfter` edges (soft).
@@ -957,8 +971,9 @@ embedded in the image via `docker build --label`.
 | `init`, `entrypoint` | Parsed and warned as ignored because `dcc` owns PID 1 startup. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings gated by `--allow-unsafe-runtime`. |
 
-Feature `containerUser`, `remoteUser`, and `customizations.dcc.registryCAs` are
-rejected. Registry trust is owned only by the selected project config and cannot be
+Feature `containerUser`, `remoteUser`, `customizations.dcc.registryCAs`, and
+`customizations.dcc.defaultFeatureRepository` are rejected. Registry trust and the
+default Feature source are owned only by the selected project config and cannot be
 contributed by downloaded Feature metadata.
 
 ### OCI Artifact Download (`features/oci.rs`)
@@ -969,6 +984,11 @@ feature reference like `ghcr.io/devcontainers/features/node:1` is parsed as:
 - Registry: `ghcr.io`
 - Repository: `devcontainers/features/node`
 - Tag: `1`
+
+Project-declared single-component names are expanded from the declaration file's
+effective `customizations.dcc.defaultFeatureRepository` before reaching the OCI
+client. All OCI references use an explicit canonical tag internally; an omitted tag
+is normalized to `latest`.
 
 Download steps:
 

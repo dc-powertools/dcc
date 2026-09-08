@@ -30,6 +30,43 @@ Declare Features in `.devcontainer/<profile>.json` under the top-level
 The object key is the Feature reference. The value is the options object passed
 to that Feature. Run `dcc build` after adding, removing, or changing Features.
 
+### Default Feature repository
+
+Set `customizations.dcc.defaultFeatureRepository` to use short names in a project:
+
+```jsonc
+{
+  "image": "rust:1",
+  "features": {
+    "node:1": {},
+    "python": { "version": "3.12" }
+  },
+  "customizations": {
+    "dcc": {
+      "defaultFeatureRepository": "ghcr.io/devcontainers/features"
+    }
+  }
+}
+```
+
+Here `node:1` resolves to `ghcr.io/devcontainers/features/node:1`, and `python`
+resolves to `ghcr.io/devcontainers/features/python:latest`. An omitted tag also
+means `latest` for an explicit OCI reference. Local paths beginning with `./` or
+`../` are unchanged.
+
+The default must be an OCI repository prefix containing a registry authority and
+at least one lowercase repository path component. Do not include a scheme, tag,
+digest, credentials, query, fragment, trailing slash, whitespace, or variable
+expression. This setting is project-local; there is no CLI, environment, or global
+configuration override.
+
+The setting follows `customizations.dcc.extends`, but shorthand is resolved in the
+file where it is declared. A parent Feature therefore keeps the parent's default
+even when a child selects another one. Equivalent spellings in one file, such as
+`python` and `ghcr.io/devcontainers/features/python:latest`, are an error. Across
+files, a child's equivalent Feature overrides the parent's options while retaining
+the parent's position.
+
 ## Editing Features With `dcc feature`
 
 `dcc feature` adds or removes entries in the selected profile's top-level
@@ -42,6 +79,14 @@ dcc feature -a ghcr.io/devcontainers/features/python:1
 dcc feature --remove ghcr.io/devcontainers/features/node:1
 dcc feature -r ghcr.io/devcontainers/features/python:1
 ```
+
+Short names are accepted when the selected profile has an effective
+`defaultFeatureRepository`. The editor stores the spelling you requested, but
+detects existing entries by canonical identity, so adding `node` does not duplicate
+an existing `ghcr.io/devcontainers/features/node:latest`. Removing either spelling
+removes the equivalent entry in the selected file and reports the spelling actually
+removed. It never edits an inherited parent entry. An exact raw removal remains
+available to repair a short entry whose default is missing or invalid.
 
 `--add`/`-a` and `--remove`/`-r` may be repeated in one invocation. Removals are
 applied before additions. The command edits only the selected profile file and
@@ -72,6 +117,11 @@ malformed supplied metadata is a build error.
 missing hard dependencies recursively, while `installsAfter` acts as a soft
 ordering hint for Features that are already in the installation set. Circular
 dependencies are an error.
+
+`dependsOn` entries authored by a Feature must use explicit OCI references or local
+paths. The project's default repository is never applied to downloaded Feature
+metadata, and Feature metadata cannot set `defaultFeatureRepository`. Explicit
+untagged dependency references use `latest`.
 
 Feature references resolve from upstream during `dcc build`. Passing
 `dcc build --no-cache` also passes `docker build --pull` where the build uses an

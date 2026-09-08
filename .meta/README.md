@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-08 | Implemented declaration-scoped configurable default Feature repository resolution and canonical shorthand editing (T-0087). | `.meta/tasks/0087-default-feature-repository-notes.md` |
 | 2026-09-08 | Designed declaration-scoped configurable default Feature repository resolution with contained tool footprint (T-0086). | `.meta/tasks/0086-default-feature-repository-design.md` |
 | 2026-09-08 | Implemented trustworthy running-container status in `dcc profile list`, including `[running]` text and tri-state JSON (T-0085). | `.meta/tasks/0085-profile-running-indicator-notes.md` |
 | 2026-09-08 | Designed a trustworthy, batched running-container indicator for `dcc profile list` (T-0084). | `.meta/tasks/0084-profile-running-indicator-design.md` |
@@ -74,8 +75,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 ## Hygiene
 
-- Last consistency and pruning pass: 2026-08-25
-- Completed repository-changing tasks since that pass: 9
-- Next pass due: 2026-09-24 or after 10 completed repository-changing tasks, whichever
+- Last consistency and pruning pass: 2026-09-08
+- Completed repository-changing tasks since that pass: 0
+- Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
