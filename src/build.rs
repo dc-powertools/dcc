@@ -613,7 +613,15 @@ fn build_prep_container_args(input: BuildPrepContainerArgs<'_>) -> Vec<String> {
     args.extend(["--name".to_string(), input.container_name.to_string()]);
     args.extend([
         "--label".to_string(),
-        format!("dcc.container_id={}", input.container_id),
+        format!("{}={}", docker::CONTAINER_ID_LABEL, input.container_id),
+    ]);
+    args.extend([
+        "--label".to_string(),
+        format!(
+            "{}={}",
+            docker::CONTAINER_ROLE_LABEL,
+            docker::CONTAINER_ROLE_BUILD_PREP
+        ),
     ]);
     args.extend([
         "--label".to_string(),
@@ -949,6 +957,17 @@ mod tests {
             .find(|pair| pair[0] == "--workdir")
             .map(|pair| pair[1].as_str());
         assert_eq!(workdir, Some("/workspace/service"));
+        assert_eq!(
+            &args[..6],
+            [
+                "--name",
+                "dcc-id-build-prep",
+                "--label",
+                "dcc.container_id=dcc-id",
+                "--label",
+                "dcc.container_role=build-prep",
+            ]
+        );
         assert!(args.contains(&"--mount".to_string()));
         assert!(args.contains(
             &"type=bind,src=/workspace/.dcc/dev/state/home/dev/.cargo,dst=/home/dev/.cargo"

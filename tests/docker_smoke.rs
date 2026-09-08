@@ -134,6 +134,16 @@ fn assert_running_container(container_id: &str) {
     let _ = running_container_instance_id(container_id);
 }
 
+fn listed_profile_running(fx: &DockerFixture) -> bool {
+    let output = fx.dcc(&["profile", "list", "--format", "json"]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid profile list JSON: {error}"));
+    report["profiles"][0]["running"]
+        .as_bool()
+        .unwrap_or_else(|| panic!("expected known profile status: {report}"))
+}
+
 fn assert_container_removed(instance_id: &str) {
     let output = docker(&["inspect", instance_id]);
     assert_failure(&output);
@@ -399,6 +409,33 @@ fn durable_and_one_shot_container_modes_behave_differently() {
     assert_success(&fx.dcc(&["run", "--keep", "keep"]));
     assert_running_container(&container_id);
     assert_eq!(fx.read_file("keep.txt"), "keep");
+}
+
+#[test]
+#[ignore]
+fn profile_list_tracks_runtime_container_start_and_stop() {
+    let fx = DockerFixture::new();
+    fx.write_config(&format!(
+        r#"{{
+            "image": "{IMAGE}",
+            "containerUser": "root"
+        }}"#
+    ));
+
+    assert_success(&fx.dcc(&["build"]));
+    assert!(!listed_profile_running(&fx));
+
+    assert_success(&fx.dcc(&["start"]));
+    assert!(listed_profile_running(&fx));
+    let text = fx.dcc(&["profile", "list"]);
+    assert_success(&text);
+    assert_eq!(
+        String::from_utf8_lossy(&text.stdout),
+        "devcontainer (default) [running]\n"
+    );
+
+    assert_success(&fx.dcc(&["stop"]));
+    assert!(!listed_profile_running(&fx));
 }
 
 #[test]

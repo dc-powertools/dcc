@@ -634,13 +634,20 @@ fn profile_list_text_is_sorted_filtered_and_marks_default() {
     }
     std::fs::create_dir(fx.dir.path().join(".devcontainer/nested.json")).unwrap();
 
-    let output = fx.dcc(&["profile", "list"]).output().unwrap();
+    let output = fx
+        .dcc(&["profile", "list"])
+        .env("PATH", fx.dir.path())
+        .output()
+        .unwrap();
     assert_success(&output);
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "alpha\ndevcontainer (default)\nline\\nbreak\nzeta\n"
     );
-    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "warning: profile running status is unknown because Docker status could not be queried\n"
+    );
 }
 
 #[test]
@@ -651,6 +658,7 @@ fn profile_list_json_has_stable_ordered_records() {
 
     let output = fx
         .dcc(&["profile", "list", "--format", "json"])
+        .env("PATH", fx.dir.path())
         .output()
         .unwrap();
     assert_success(&output);
@@ -662,15 +670,21 @@ fn profile_list_json_has_stable_ordered_records() {
                 {
                     "name": "ci",
                     "config": ".devcontainer/ci.json",
-                    "default": false
+                    "default": false,
+                    "running": null
                 },
                 {
                     "name": "devcontainer",
                     "config": ".devcontainer/devcontainer.json",
-                    "default": true
+                    "default": true,
+                    "running": null
                 }
             ]
         })
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "warning: profile running status is unknown because Docker status could not be queried\n"
     );
 }
 
@@ -678,12 +692,18 @@ fn profile_list_json_has_stable_ordered_records() {
 fn profile_list_empty_results_are_successful_in_both_formats() {
     let fx = Fixture::new();
 
-    let text = fx.dcc(&["profile", "list"]).output().unwrap();
+    let text = fx
+        .dcc(&["profile", "list"])
+        .env("PATH", fx.dir.path())
+        .output()
+        .unwrap();
     assert_success(&text);
     assert!(text.stdout.is_empty());
+    assert!(text.stderr.is_empty());
 
     let json = fx
         .dcc(&["--format", "json", "profile", "list"])
+        .env("PATH", fx.dir.path())
         .output()
         .unwrap();
     assert_success(&json);
@@ -703,6 +723,7 @@ fn profile_list_works_from_subdirectory_and_debugs_without_resolving_profile_fla
     let output = fx
         .dcc(&["--debug", "--profile", "./missing.json", "profile", "list"])
         .current_dir(&nested)
+        .env("PATH", fx.dir.path())
         .output()
         .unwrap();
     assert_success(&output);
@@ -713,6 +734,11 @@ fn profile_list_works_from_subdirectory_and_debugs_without_resolving_profile_fla
     assert_stderr_contains(&output, "dcc debug: command `profile list`");
     assert_stderr_contains(&output, "dcc debug: workspace");
     assert_stderr_contains(&output, "dcc debug: profiles `1`");
+    assert_stderr_contains(
+        &output,
+        "warning: profile running status is unknown because Docker status could not be queried",
+    );
+    assert_stderr_contains(&output, "dcc debug: running container query failed:");
 }
 
 #[test]

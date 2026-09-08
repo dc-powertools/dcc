@@ -47,15 +47,34 @@ Run `dcc profile list` to discover named profiles:
 
 ```text
 $ dcc profile list
-ci
+ci [running]
 devcontainer (default)
 ```
 
-The command scans only direct `.devcontainer/*.json` files, does not parse their
-contents, and does not invoke Docker. Results are sorted by profile name. Direct file
-symlinks are included when their targets exist; nested files, directories ending in
-`.json`, broken symlinks, and other extensions are ignored. If no profiles exist, text
-output is empty and the command still succeeds.
+The command scans only direct `.devcontainer/*.json` files and does not parse their
+contents. Results are sorted by profile name. Direct file symlinks are included when
+their targets exist; nested files, directories ending in `.json`, broken symlinks, and
+other extensions are ignored. If no profiles exist, text output is empty, the command
+still succeeds, and Docker is not queried.
+
+After discovery, one best-effort `docker ps` query captures a point-in-time snapshot of
+all running dcc containers, regardless of the number of profiles. `[running]` means the
+snapshot contained a runtime container for that profile. It is independent of the
+existing `(default)` annotation, so a running default profile is printed as
+`devcontainer (default) [running]`. Stopped containers and temporary build-preparation
+containers do not count.
+
+If Docker is missing, unreachable, returns an error, or produces output that cannot be
+interpreted safely, profile discovery still succeeds. Text output omits `[running]`,
+stderr warns once that status is unknown, and JSON reports `null` rather than falsely
+claiming the profiles are stopped. The same unknown result applies to a profile whose
+containers use an unrecognized non-empty role label, unless another container in the
+snapshot already proves that profile has a runtime container. Use `--debug` for the
+underlying Docker or role detail.
+
+Global dry-run behavior is unchanged: `dcc --dry-run profile list` does not invoke
+Docker. For a non-empty list it warns that the status query was skipped and reports
+`running: null`; an empty list remains silent.
 
 Text mode escapes control characters and backslashes in profile names so every record
 remains on one physical line. JSON mode preserves the logical name using JSON escaping.
@@ -68,11 +87,23 @@ Use `dcc profile list --format json` for stable structured output:
     {
       "name": "ci",
       "config": ".devcontainer/ci.json",
-      "default": false
+      "default": false,
+      "running": true
+    },
+    {
+      "name": "devcontainer",
+      "config": ".devcontainer/devcontainer.json",
+      "default": true,
+      "running": false
     }
   ]
 }
 ```
+
+The `running` field is always present. `true` and `false` come from a valid Docker
+snapshot; `null` means container status could not be determined reliably. Treat the
+result as a display snapshot, not a lifecycle lock: container state can change as soon
+as the query completes.
 
 ## Config Inheritance
 
@@ -559,7 +590,9 @@ more opinionated than a general IDE devcontainer implementation:
   browser and preview auto-open behavior is not implemented.
 - `runArgs`, sensitive mounts, `privileged`, `capAdd`, and `securityOpt` are
   gated. Host-integrating or privilege-escalating options require
-  `--allow-unsafe-runtime`; unknown `runArgs` are rejected.
+  `--allow-unsafe-runtime`; unknown `runArgs` are rejected. User-supplied
+  `--label` entries may not set the reserved `dcc.container_id` or
+  `dcc.container_role` keys.
 - `customizations.dcc.state` is the preferred persistence mechanism. It is not an
   arbitrary mount escape hatch.
 
@@ -581,9 +614,12 @@ falling back to the dcc container id. Invalid Docker container-name characters
 are converted to `-` with a warning. Images, caches, and `dcc id` continue to use
 the stable dcc container id.
 
-`dcc run` also attaches standard `devcontainer.local_folder` and
-`devcontainer.config_file` labels, plus `dcc.container_id`, to every container it
-starts.
+Runtime containers carry `dcc.container_id=<id>` and
+`dcc.container_role=runtime`, plus the standard `devcontainer.local_folder` and
+`devcontainer.config_file` labels. Temporary build-preparation containers carry the
+same stable id with `dcc.container_role=build-prep`, allowing profile listing to exclude
+them. For containers created by older dcc versions, a missing role is treated as a
+runtime unless its name is the generated `<id>-build-prep` name.
 
 ## Configuration Reference
 
@@ -604,7 +640,7 @@ as errors.
 | `remoteUser` | Not implemented as a top-level field. Use `containerUser`. |
 | `updateRemoteUserUID` | Boolean, defaults to `true`. On Linux and macOS, remaps a non-root named `containerUser` to the host uid/gid when safe; Windows is a no-op. |
 | `mounts` | Additional bind or volume mounts. Sensitive host sources require `--allow-unsafe-runtime`. |
-| `runArgs` | Conservative allowlist of extra Docker runtime flags. Privileged, host-integrating, or unknown flags are gated or rejected. |
+| `runArgs` | Conservative allowlist of extra Docker runtime flags. Privileged, host-integrating, or unknown flags are gated or rejected; `--label` cannot set the reserved `dcc.container_id` or `dcc.container_role` keys. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the invocation includes `--allow-unsafe-runtime`. |
 | `customizations.dcc.extends` | Local config file to inherit from. |
 | `customizations.dcc.registryCAs` | Exact OCI registry or token-service authorities mapped to private-CA PEM bundle paths. |

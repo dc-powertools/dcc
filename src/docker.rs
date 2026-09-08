@@ -6,6 +6,21 @@ use anyhow::Context as _;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 
+pub(crate) const CONTAINER_ID_LABEL: &str = "dcc.container_id";
+pub(crate) const CONTAINER_ROLE_LABEL: &str = "dcc.container_role";
+pub(crate) const CONTAINER_ROLE_RUNTIME: &str = "runtime";
+pub(crate) const CONTAINER_ROLE_BUILD_PREP: &str = "build-prep";
+
+const RUNNING_DCC_CONTAINERS_FORMAT: &str =
+    r#"{{.Label "dcc.container_id"}}\t{{.Label "dcc.container_role"}}\t{{.Names}}"#;
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct RunningDccContainer {
+    pub(crate) container_id: String,
+    pub(crate) role: Option<String>,
+    pub(crate) name: String,
+}
+
 pub(crate) async fn build(
     tag: &str,
     no_cache: bool,
@@ -340,14 +355,9 @@ pub(crate) async fn kill_container(container: &str) -> anyhow::Result<()> {
 pub(crate) async fn running_container_name_by_id(
     container_id: &str,
 ) -> anyhow::Result<Option<String>> {
+    let filter = format!("label={CONTAINER_ID_LABEL}={container_id}");
     let output = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            &format!("label=dcc.container_id={container_id}"),
-            "--format",
-            "{{.Names}}",
-        ])
+        .args(["ps", "--filter", &filter, "--format", "{{.Names}}"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -375,6 +385,74 @@ pub(crate) async fn running_container_name_by_id(
         );
     }
     Ok(first)
+}
+
+fn running_dcc_containers_args() -> [&'static str; 5] {
+    [
+        "ps",
+        "--filter",
+        "label=dcc.container_id",
+        "--format",
+        RUNNING_DCC_CONTAINERS_FORMAT,
+    ]
+}
+
+/// Returns one point-in-time snapshot of all running containers carrying a dcc
+/// container identity label. Callers decide how current, legacy, and unknown
+/// role values affect their domain-specific status.
+pub(crate) async fn running_dcc_containers() -> anyhow::Result<Vec<RunningDccContainer>> {
+    let output = Command::new("docker")
+        .args(running_dcc_containers_args())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("failed to spawn `docker ps` for running dcc containers")?;
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(command_failure("docker ps", code, &output.stderr));
+    }
+
+    parse_running_dcc_containers(&output.stdout)
+        .context("failed to parse running dcc containers from `docker ps`")
+}
+
+fn parse_running_dcc_containers(stdout: &[u8]) -> anyhow::Result<Vec<RunningDccContainer>> {
+    let stdout = std::str::from_utf8(stdout).context("`docker ps` output was not valid UTF-8")?;
+    stdout
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            let mut fields = line.split('\t');
+            let (Some(container_id), Some(role), Some(name)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                anyhow::bail!(
+                    "record {} must contain exactly three tab-separated fields",
+                    index + 1
+                );
+            };
+            if fields.next().is_some() {
+                anyhow::bail!(
+                    "record {} must contain exactly three tab-separated fields",
+                    index + 1
+                );
+            }
+
+            if container_id.is_empty() {
+                anyhow::bail!("record {} has an empty dcc container id", index + 1);
+            }
+
+            let role = (!role.is_empty()).then(|| role.to_owned());
+            Ok(RunningDccContainer {
+                container_id: container_id.to_owned(),
+                role,
+                name: name.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// Reads the `devcontainer.metadata` label from a local Docker image.
@@ -646,6 +724,83 @@ mod tests {
     #[test]
     fn parse_env_list_empty() {
         assert!(parse_env_list(vec![]).is_empty());
+    }
+
+    #[test]
+    fn running_dcc_containers_args_query_all_labeled_running_containers_once() {
+        assert_eq!(
+            running_dcc_containers_args(),
+            [
+                "ps",
+                "--filter",
+                "label=dcc.container_id",
+                "--format",
+                r#"{{.Label "dcc.container_id"}}\t{{.Label "dcc.container_role"}}\t{{.Names}}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_running_dcc_containers_accepts_current_and_legacy_records() {
+        let records = parse_running_dcc_containers(
+            b"dcc-one\truntime\tone\ndcc-two\tbuild-prep\ttwo\ndcc-old\t\told\n",
+        )
+        .unwrap();
+        assert_eq!(
+            records,
+            vec![
+                RunningDccContainer {
+                    container_id: "dcc-one".to_string(),
+                    role: Some("runtime".to_string()),
+                    name: "one".to_string(),
+                },
+                RunningDccContainer {
+                    container_id: "dcc-two".to_string(),
+                    role: Some("build-prep".to_string()),
+                    name: "two".to_string(),
+                },
+                RunningDccContainer {
+                    container_id: "dcc-old".to_string(),
+                    role: None,
+                    name: "old".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_running_dcc_containers_accepts_empty_snapshot_and_crlf() {
+        assert!(parse_running_dcc_containers(b"").unwrap().is_empty());
+        assert_eq!(
+            parse_running_dcc_containers(b"dcc-one\truntime\tone\r\n").unwrap(),
+            vec![RunningDccContainer {
+                container_id: "dcc-one".to_string(),
+                role: Some("runtime".to_string()),
+                name: "one".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_running_dcc_containers_rejects_malformed_records_without_partial_results() {
+        for malformed in [
+            b"dcc-one\truntime".as_slice(),
+            b"dcc-one\truntime\tone\textra".as_slice(),
+            b"\truntime\tone".as_slice(),
+            b"dcc-one\truntime\tone\n\n".as_slice(),
+        ] {
+            let input = [b"dcc-valid\truntime\tvalid\n".as_slice(), malformed].concat();
+            assert!(
+                parse_running_dcc_containers(&input).is_err(),
+                "expected malformed snapshot to fail: {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_running_dcc_containers_rejects_non_utf8_output() {
+        let err = parse_running_dcc_containers(b"dcc-one\truntime\t\xff").unwrap_err();
+        assert!(err.to_string().contains("valid UTF-8"), "got: {err:#}");
     }
 
     #[test]

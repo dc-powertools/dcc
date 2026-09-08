@@ -416,6 +416,19 @@ impl From<ExecOptions<'_>> for OwnedExecOptions {
     }
 }
 
+fn append_runtime_container_labels(args: &mut Vec<String>, container_id: &str) {
+    args.extend([
+        "--label".to_string(),
+        format!("{}={container_id}", docker::CONTAINER_ID_LABEL),
+        "--label".to_string(),
+        format!(
+            "{}={}",
+            docker::CONTAINER_ROLE_LABEL,
+            docker::CONTAINER_ROLE_RUNTIME
+        ),
+    ]);
+}
+
 impl RuntimePlan {
     async fn prepare(
         workspace: &Workspace,
@@ -597,10 +610,7 @@ impl RuntimePlan {
         let mut args: Vec<String> = Vec::new();
 
         args.extend(["--name".into(), container.as_str().to_owned()]);
-        args.extend([
-            "--label".into(),
-            format!("dcc.container_id={}", container_id.as_str()),
-        ]);
+        append_runtime_container_labels(&mut args, container_id.as_str());
         args.extend([
             "--label".into(),
             format!("devcontainer.local_folder={}", workspace.root.display()),
@@ -1219,16 +1229,15 @@ fn sanitize_run_args(args: &[String], allow_unsafe_runtime: bool) -> anyhow::Res
 
         match arg.as_str() {
             "--cap-add" | "--security-opt" | "--device" | "--pid" | "--ipc" | "--network"
-            | "--mount" | "-v" | "--volume" => {
+            | "--mount" | "-v" | "--volume" | "--label" => {
                 let value = args
                     .get(i + 1)
                     .ok_or_else(|| anyhow::anyhow!("runArgs flag `{arg}` requires a value"))?;
                 handle_run_arg_value(arg, value, arg, allow_unsafe_runtime, &mut out)?;
                 i += 2;
             }
-            "--add-host" | "--dns" | "--dns-search" | "--dns-option" | "--hostname" | "--label"
-            | "--tmpfs" | "--shm-size" | "--ulimit" | "--platform" | "--cap-drop"
-            | "--stop-signal" => {
+            "--add-host" | "--dns" | "--dns-search" | "--dns-option" | "--hostname" | "--tmpfs"
+            | "--shm-size" | "--ulimit" | "--platform" | "--cap-drop" | "--stop-signal" => {
                 let value = args
                     .get(i + 1)
                     .ok_or_else(|| anyhow::anyhow!("runArgs flag `{arg}` requires a value"))?;
@@ -1279,7 +1288,9 @@ fn handle_run_arg_value(
             if value == "host" {
                 require_unsafe_run_arg(original, allow_unsafe_runtime)?;
             } else {
-                anyhow::bail!("unsupported runArgs flag `{original}`; only `host` mode is recognized and requires `--allow-unsafe-runtime`");
+                anyhow::bail!(
+                    "unsupported runArgs flag `{original}`; only `host` mode is recognized and requires `--allow-unsafe-runtime`"
+                );
             }
         }
         "--network" => {
@@ -1302,9 +1313,9 @@ fn handle_run_arg_value(
             }
         }
         "-e" | "--env" => ensure_explicit_env_value(flag, value)?,
-        "--add-host" | "--dns" | "--dns-search" | "--dns-option" | "--hostname" | "--label"
-        | "--tmpfs" | "--shm-size" | "--ulimit" | "--platform" | "--cap-drop" | "--stop-signal" => {
-        }
+        "--label" => ensure_label_not_reserved(value)?,
+        "--add-host" | "--dns" | "--dns-search" | "--dns-option" | "--hostname" | "--tmpfs"
+        | "--shm-size" | "--ulimit" | "--platform" | "--cap-drop" | "--stop-signal" => {}
         _ => {
             anyhow::bail!(
                 "unsupported runArgs flag `{flag}`; dcc only passes a conservative safe subset by default"
@@ -1317,6 +1328,14 @@ fn handle_run_arg_value(
     } else {
         out.push(flag.to_string());
         out.push(value.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_label_not_reserved(value: &str) -> anyhow::Result<()> {
+    let key = value.split_once('=').map_or(value, |(key, _)| key);
+    if key == docker::CONTAINER_ID_LABEL || key == docker::CONTAINER_ROLE_LABEL {
+        anyhow::bail!("runArgs label `{key}` is reserved for dcc container lifecycle metadata");
     }
     Ok(())
 }
@@ -2208,10 +2227,46 @@ mod tests {
             "none".to_string(),
             "-e".to_string(),
             "KEY=value".to_string(),
+            "--label".to_string(),
+            "service=api".to_string(),
+            "--label=owner=dcc".to_string(),
             "--mount".to_string(),
             "type=bind,src=/home/me/project,dst=/project".to_string(),
         ];
         assert_eq!(sanitize_run_args(&args, false).unwrap(), args);
+    }
+
+    #[test]
+    fn runtime_container_labels_include_identity_and_role() {
+        let mut args = Vec::new();
+        append_runtime_container_labels(&mut args, "dcc-id");
+        assert_eq!(
+            args,
+            [
+                "--label",
+                "dcc.container_id=dcc-id",
+                "--label",
+                "dcc.container_role=runtime",
+            ]
+        );
+    }
+
+    #[test]
+    fn sanitize_run_args_rejects_reserved_dcc_labels_in_all_supported_forms() {
+        for args in [
+            vec!["--label".to_string(), "dcc.container_id".to_string()],
+            vec![
+                "--label".to_string(),
+                "dcc.container_role=build-prep".to_string(),
+            ],
+            vec!["--label=dcc.container_id=forged".to_string()],
+            vec!["--label=dcc.container_role".to_string()],
+        ] {
+            for allow_unsafe_runtime in [false, true] {
+                let err = sanitize_run_args(&args, allow_unsafe_runtime).unwrap_err();
+                assert!(err.to_string().contains("reserved"), "got: {err:#}");
+            }
+        }
     }
 
     #[test]

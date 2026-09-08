@@ -40,6 +40,22 @@ if [ "$command_name" = image ] && [ "${2-}" = inspect ]; then
 fi
 
 if [ "$command_name" = ps ]; then
+    profile_status=false
+    for argument in "$@"; do
+        case "$argument" in
+            *dcc.container_role*) profile_status=true ;;
+        esac
+    done
+    if [ "$profile_status" = true ]; then
+        if [ -n "${DCC_FAKE_PROFILE_PS_FAIL-}" ]; then
+            printf '%s\n' 'fake Docker status failure' >&2
+            exit 42
+        fi
+        if [ -f "$DCC_FAKE_PROFILE_STATUS" ]; then
+            cat "$DCC_FAKE_PROFILE_STATUS"
+        fi
+        exit 0
+    fi
     if [ -s "$DCC_FAKE_DOCKER_STATE" ]; then
         cat "$DCC_FAKE_DOCKER_STATE"
         printf '\n'
@@ -93,6 +109,7 @@ struct FakeDockerFixture {
     path: OsString,
     log: PathBuf,
     state: PathBuf,
+    profile_status: PathBuf,
 }
 
 impl FakeDockerFixture {
@@ -116,11 +133,13 @@ impl FakeDockerFixture {
         let path = std::env::join_paths(paths).unwrap();
         let log = fx.dir.path().join("docker-calls.log");
         let state = fx.dir.path().join("docker-state");
+        let profile_status = fx.dir.path().join("profile-status");
         Self {
             fx,
             path,
             log,
             state,
+            profile_status,
         }
     }
 
@@ -129,7 +148,8 @@ impl FakeDockerFixture {
         command
             .env("PATH", &self.path)
             .env("DCC_FAKE_DOCKER_LOG", &self.log)
-            .env("DCC_FAKE_DOCKER_STATE", &self.state);
+            .env("DCC_FAKE_DOCKER_STATE", &self.state)
+            .env("DCC_FAKE_PROFILE_STATUS", &self.profile_status);
         command
     }
 
@@ -166,6 +186,16 @@ impl FakeDockerFixture {
 
     fn set_running(&self, name: &str) {
         std::fs::write(&self.state, name).unwrap();
+    }
+
+    fn set_profile_status(&self, records: &str) {
+        std::fs::write(&self.profile_status, records).unwrap();
+    }
+
+    fn profile_id(&self, profile: &str) -> String {
+        let output = self.dcc(&["--profile", profile, "id"]).output().unwrap();
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
     }
 
     fn calls(&self) -> Vec<Vec<String>> {
@@ -251,6 +281,16 @@ fn run_call(calls: &[Vec<String>]) -> &Vec<String> {
         .expect("expected a docker run call")
 }
 
+fn profile_status_calls(calls: &[Vec<String>]) -> Vec<&Vec<String>> {
+    calls
+        .iter()
+        .filter(|call| {
+            call.first().is_some_and(|arg| arg == "ps")
+                && call.iter().any(|arg| arg.contains("dcc.container_role"))
+        })
+        .collect()
+}
+
 fn tagged_build<'a>(calls: &'a [&Vec<String>], suffix: &str) -> &'a Vec<String> {
     calls
         .iter()
@@ -260,6 +300,195 @@ fn tagged_build<'a>(calls: &'a [&Vec<String>], suffix: &str) -> &'a Vec<String> 
                 .any(|pair| pair[0] == "--tag" && pair[1].ends_with(suffix))
         })
         .unwrap_or_else(|| panic!("no build tagged with suffix {suffix}: {calls:?}"))
+}
+
+#[test]
+fn profile_list_queries_docker_once_and_marks_only_runtime_profiles() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    fx.fx.write_config("alpha.json", "{}");
+    fx.fx.write_config("ci.json", "{}");
+    let alpha_id = fx.profile_id("alpha");
+    let ci_id = fx.profile_id("ci");
+    let default_id = fx.profile_id("devcontainer");
+    fx.set_profile_status(&format!(
+        "{alpha_id}\tbuild-prep\t{alpha_id}-build-prep\n\
+         {ci_id}\truntime\tci-container\n\
+         {default_id}\truntime\tdefault-container\n"
+    ));
+
+    let output = fx.dcc(&["profile", "list"]).output().unwrap();
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "alpha\nci [running]\ndevcontainer (default) [running]\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let calls = fx.calls();
+    assert_eq!(calls.len(), 1, "expected one Docker call: {calls:?}");
+    let status_calls = profile_status_calls(&calls);
+    assert_eq!(status_calls.len(), 1, "missing status query: {calls:?}");
+    assert_eq!(
+        status_calls[0],
+        &[
+            "ps",
+            "--filter",
+            "label=dcc.container_id",
+            "--format",
+            r#"{{.Label "dcc.container_id"}}\t{{.Label "dcc.container_role"}}\t{{.Names}}"#,
+        ]
+    );
+}
+
+#[test]
+fn profile_list_json_reports_true_and_false_from_one_snapshot() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    fx.fx.write_config("ci.json", "{}");
+    let ci_id = fx.profile_id("ci");
+    fx.set_profile_status(&format!("{ci_id}\truntime\tci-container\n"));
+
+    let output = fx
+        .dcc(&["profile", "list", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({
+            "profiles": [
+                {
+                    "name": "ci",
+                    "config": ".devcontainer/ci.json",
+                    "default": false,
+                    "running": true
+                },
+                {
+                    "name": "devcontainer",
+                    "config": ".devcontainer/devcontainer.json",
+                    "default": true,
+                    "running": false
+                }
+            ]
+        })
+    );
+    assert!(output.stderr.is_empty());
+    let calls = fx.calls();
+    assert_eq!(calls.len(), 1, "expected one Docker call: {calls:?}");
+    assert_eq!(profile_status_calls(&calls).len(), 1);
+}
+
+#[test]
+fn profile_list_empty_discovery_does_not_query_docker() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    std::fs::remove_file(fx.fx.dir.path().join(".devcontainer/devcontainer.json")).unwrap();
+
+    let output = fx
+        .dcc(&["profile", "list", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\n  \"profiles\": []\n}\n"
+    );
+    assert!(output.stderr.is_empty());
+    assert!(fx.calls().is_empty(), "empty discovery invoked Docker");
+}
+
+#[test]
+fn profile_list_dry_run_skips_docker_and_reports_unknown_status() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    fx.fx.write_config("ci.json", "{}");
+
+    let output = fx
+        .dcc(&["--dry-run", "--format", "json", "profile", "list"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["running"], serde_json::Value::Null);
+    assert_eq!(report["profiles"][1]["running"], serde_json::Value::Null);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "warning: profile running status is unknown because --dry-run skipped the Docker status query\n"
+    );
+    assert!(
+        fx.calls().is_empty(),
+        "profile list --dry-run invoked Docker"
+    );
+}
+
+#[test]
+fn profile_list_nonzero_docker_status_degrades_to_unknown_once() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    fx.fx.write_config("ci.json", "{}");
+
+    let output = fx
+        .dcc(&["--format", "json", "profile", "list"])
+        .env("DCC_FAKE_PROFILE_PS_FAIL", "1")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["running"], serde_json::Value::Null);
+    assert_eq!(report["profiles"][1]["running"], serde_json::Value::Null);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "warning: profile running status is unknown because Docker status could not be queried\n"
+    );
+    assert_eq!(profile_status_calls(&fx.calls()).len(), 1);
+}
+
+#[test]
+fn profile_list_malformed_docker_status_degrades_to_unknown_once() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    fx.fx.write_config("ci.json", "{}");
+    fx.set_profile_status("malformed-record\n");
+
+    let output = fx.dcc(&["profile", "list"]).output().unwrap();
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "ci\ndevcontainer (default)\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "warning: profile running status is unknown because Docker status could not be queried\n"
+    );
+    assert_eq!(profile_status_calls(&fx.calls()).len(), 1);
+}
+
+#[test]
+fn profile_list_unknown_role_is_unknown_unless_runtime_also_exists() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    fx.fx.write_config("ci.json", "{}");
+    let ci_id = fx.profile_id("ci");
+    let default_id = fx.profile_id("devcontainer");
+    fx.set_profile_status(&format!(
+        "{ci_id}\tfuture-role\tci-future\n\
+         {default_id}\tfuture-role\tdefault-future\n\
+         {default_id}\truntime\tdefault-runtime\n"
+    ));
+
+    let output = fx
+        .dcc(&["--debug", "--format", "json", "profile", "list"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["running"], serde_json::Value::Null);
+    assert_eq!(report["profiles"][1]["running"], true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr
+            .matches("warning: profile running status is unknown for one or more profiles because Docker reported an unrecognized dcc container role")
+            .count(),
+        1
+    );
+    assert!(stderr.contains(
+        "dcc debug: profile `ci` has running container `ci-future` with unrecognized role `future-role`"
+    ));
+    assert!(!stderr.contains("profile `devcontainer` has running container"));
 }
 
 #[test]
@@ -304,6 +533,36 @@ fn patch_compatible_version_reaches_runtime_container_creation() {
     let run = run_call(&calls);
     assert!(run.iter().any(|arg| arg == "--entrypoint"));
     assert!(run.iter().any(|arg| arg == "--mode"));
+    assert!(contains_pair(run, "--label", "dcc.container_role=runtime"));
+}
+
+#[test]
+fn build_preparation_container_has_build_prep_role_label() {
+    let fx = FakeDockerFixture::new(
+        r#"{
+            "image": "debian:bookworm-slim",
+            "containerUser": "root",
+            "postCreateCommand": "true"
+        }"#,
+    );
+    let output = fx.output(&["build"], None);
+    assert_success(&output);
+
+    let calls = fx.calls();
+    let prep = calls
+        .iter()
+        .find(|call| {
+            call.first().is_some_and(|arg| arg == "run")
+                && call
+                    .windows(2)
+                    .any(|pair| pair[0] == "--name" && pair[1].ends_with("-build-prep"))
+        })
+        .expect("expected build-preparation docker run");
+    assert!(contains_pair(
+        prep,
+        "--label",
+        "dcc.container_role=build-prep"
+    ));
 }
 
 #[test]
@@ -424,6 +683,63 @@ fn a_single_explicit_resource_override_retains_the_other_default() {
         let calls = fx.calls();
         assert_resource_limits_before_image(run_call(&calls), expected_memory, expected_cpus);
     }
+}
+
+#[test]
+fn reserved_dcc_run_arg_labels_are_rejected_before_container_creation() {
+    let cases = [
+        (
+            r#"["--label", "dcc.container_id=spoofed"]"#,
+            "dcc.container_id",
+        ),
+        (
+            r#"["--label=dcc.container_role=spoofed"]"#,
+            "dcc.container_role",
+        ),
+    ];
+
+    for (run_args, key) in cases {
+        let config = format!(
+            r#"{{
+                "image": "debian:bookworm-slim",
+                "containerUser": "root",
+                "runArgs": {run_args}
+            }}"#
+        );
+        let fx = FakeDockerFixture::new(&config);
+        let compatible = compatible_patch_version();
+        let output = fx.output(&["start", "--allow-unsafe-runtime"], Some(&compatible));
+        assert_failure(&output);
+        assert_stderr_contains(
+            &output,
+            &format!("runArgs label `{key}` is reserved for dcc container lifecycle metadata"),
+        );
+        assert!(
+            !fx.calls().iter().any(|call| {
+                call.first().is_some_and(|arg| arg == "run")
+                    && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
+            }),
+            "reserved label {key} reached container creation"
+        );
+    }
+}
+
+#[test]
+fn unrelated_run_arg_label_remains_allowed() {
+    let fx = FakeDockerFixture::new(
+        r#"{
+            "image": "debian:bookworm-slim",
+            "containerUser": "root",
+            "runArgs": ["--label=example.owner=test"]
+        }"#,
+    );
+    let compatible = compatible_patch_version();
+    let output = fx.output(&["start"], Some(&compatible));
+    assert_success(&output);
+    let calls = fx.calls();
+    assert!(run_call(&calls)
+        .iter()
+        .any(|arg| arg == "--label=example.owner=test"));
 }
 
 #[test]
