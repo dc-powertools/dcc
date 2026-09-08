@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 
 use crate::{
     config::{
+        feature_ref::{is_local_feature, normalize_feature_dependency},
         resolve::validate_state_entries_allowing_deferred_container_env,
         vars::{apply_container_env_substitution, apply_state_path_substitutions},
         DevcontainerConfig, StateEntry,
@@ -545,6 +546,16 @@ fn validate_feature_meta(
             "feature `{reference}` declares `customizations.dcc.registryCAs`, but Feature metadata cannot configure registry trust"
         );
     }
+    if meta
+        .customizations
+        .dcc
+        .as_ref()
+        .is_some_and(|dcc| dcc.extra.contains_key("defaultFeatureRepository"))
+    {
+        anyhow::bail!(
+            "feature `{reference}` declares `customizations.dcc.defaultFeatureRepository`, but Feature metadata cannot configure Feature sources"
+        );
+    }
 
     let unsafe_runtime = meta.unsafe_runtime();
     if !allow_unsafe_runtime && !unsafe_runtime.is_empty() {
@@ -665,8 +676,9 @@ async fn resolve_features(
             download_oci_feature(client, &reference, &user_options).await?
         };
 
-        let meta = parse_feature_meta(downloaded.feature_json.as_deref())
+        let mut meta = parse_feature_meta(downloaded.feature_json.as_deref())
             .with_context(|| format!("failed to parse metadata for feature `{reference}`"))?;
+        normalize_dependencies(&mut meta, &reference)?;
 
         for (dep_ref, dep_opts) in &meta.depends_on {
             if let Some(existing_opts) = queued.get(dep_ref) {
@@ -698,6 +710,23 @@ async fn resolve_features(
     }
 
     Ok(all)
+}
+
+fn normalize_dependencies(meta: &mut FeatureMeta, feature: &str) -> anyhow::Result<()> {
+    let mut normalized = IndexMap::with_capacity(meta.depends_on.len());
+    let mut spellings = HashMap::<String, String>::new();
+    for (spelling, options) in std::mem::take(&mut meta.depends_on) {
+        let identity = normalize_feature_dependency(&spelling)
+            .with_context(|| format!("feature `{feature}` has an invalid dependsOn reference"))?;
+        if let Some(previous) = spellings.insert(identity.clone(), spelling.clone()) {
+            anyhow::bail!(
+                "feature `{feature}` declares equivalent dependsOn references `{previous}` and `{spelling}` as `{identity}`"
+            );
+        }
+        normalized.insert(identity, options);
+    }
+    meta.depends_on = normalized;
+    Ok(())
 }
 
 async fn download_oci_feature(
@@ -839,12 +868,6 @@ fn json_value_to_string(v: &serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     }
-}
-
-/// Returns true when `reference` is a local path rather than an OCI registry reference.
-/// Local paths start with `./` or `../`, per the devcontainer spec.
-fn is_local_feature(reference: &str) -> bool {
-    reference.starts_with("./") || reference.starts_with("../")
 }
 
 /// Derives a colon-free short identifier for a feature, used as the disambiguation
@@ -1040,6 +1063,44 @@ mod tests {
             meta.lifecycle.post_attach_command,
             Some(crate::lifecycle::LifecycleCommand::Parallel(_))
         ));
+    }
+
+    #[test]
+    fn feature_dependencies_are_explicit_and_canonical() {
+        let mut meta = FeatureMeta {
+            depends_on: IndexMap::from([(
+                "ghcr.io/owner/repo/dep".to_string(),
+                serde_json::json!({}),
+            )]),
+            ..FeatureMeta::default()
+        };
+        normalize_dependencies(&mut meta, "ghcr.io/owner/repo/root:1").unwrap();
+        assert!(meta
+            .depends_on
+            .contains_key("ghcr.io/owner/repo/dep:latest"));
+
+        meta.depends_on = IndexMap::from([("dep:1".to_string(), serde_json::json!({}))]);
+        let error = normalize_dependencies(&mut meta, "ghcr.io/owner/repo/root:1").unwrap_err();
+        assert!(error.to_string().contains("invalid dependsOn reference"));
+        assert!(format!("{error:#}").contains("must use an explicit OCI reference"));
+    }
+
+    #[test]
+    fn feature_dependency_aliases_are_rejected() {
+        let mut meta = FeatureMeta {
+            depends_on: IndexMap::from([
+                ("ghcr.io/owner/repo/dep".to_string(), serde_json::json!({})),
+                (
+                    "ghcr.io/owner/repo/dep:latest".to_string(),
+                    serde_json::json!({}),
+                ),
+            ]),
+            ..FeatureMeta::default()
+        };
+        let error = normalize_dependencies(&mut meta, "ghcr.io/owner/repo/root:1").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("equivalent dependsOn references"));
     }
 
     #[test]
@@ -1491,6 +1552,25 @@ mod tests {
                 .to_string()
                 .contains("cannot configure registry trust"));
         }
+    }
+
+    #[test]
+    fn feature_metadata_cannot_configure_default_repository() {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "id": "untrusted-feature",
+            "customizations": {
+                "dcc": {
+                    "defaultFeatureRepository": "registry.example/feature-controlled"
+                }
+            }
+        }))
+        .unwrap();
+        let meta = parse_feature_meta(Some(&bytes)).unwrap();
+        let error =
+            validate_feature_meta("registry.example/owner/feature:1", &meta, false).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot configure Feature sources"));
     }
 
     #[test]

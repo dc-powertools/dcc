@@ -5,7 +5,14 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::{
-    cli::OutputFormat, config, dry_run::DryRunReport, profile::ProfileName, workspace::Workspace,
+    cli::OutputFormat,
+    config::{
+        self,
+        feature_ref::{normalize_project_feature, DefaultFeatureRepository},
+    },
+    dry_run::DryRunReport,
+    profile::ProfileName,
+    workspace::Workspace,
 };
 
 pub(crate) struct FeatureOptions {
@@ -43,17 +50,25 @@ pub(crate) fn update_features(
         anyhow::bail!("feature requires at least one --add or --remove value");
     }
 
-    config::parse_config_file(config_path, opts.strict).with_context(|| {
-        format!(
-            "failed to validate profile config `{}`",
-            config_path.display()
-        )
-    })?;
-
     let contents = std::fs::read_to_string(config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
-    let (updated, summary) = edit_feature_json(&contents, &add, &remove)
-        .with_context(|| format!("failed to update features in `{}`", config_path.display()))?;
+    let default_repository =
+        config::resolve::effective_default_feature_repository(config_path, opts.strict);
+    let (updated, summary) = match default_repository {
+        Ok(default_repository) => {
+            edit_feature_json(&contents, &add, &remove, default_repository.as_ref())
+        }
+        Err(error) if can_repair_exact_removals(&contents, &add, &remove, &error)? => {
+            edit_feature_json_exact(&contents, &remove)
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "failed to validate profile config `{}`",
+                config_path.display()
+            )
+        }),
+    }
+    .with_context(|| format!("failed to update features in `{}`", config_path.display()))?;
 
     if opts.debug {
         eprintln!("dcc debug: command `feature`");
@@ -115,6 +130,7 @@ fn edit_feature_json(
     contents: &str,
     add: &[String],
     remove: &[String],
+    default_repository: Option<&DefaultFeatureRepository>,
 ) -> anyhow::Result<(String, FeatureEditSummary)> {
     let mut root: Value = json5::from_str(contents).context("failed to parse JSONC")?;
     let object = root
@@ -128,29 +144,110 @@ fn edit_feature_json(
         not_present: Vec::new(),
     };
 
-    for feature in remove {
-        let removed = features_object_mut(object)
-            .and_then(|features| features.remove(feature))
-            .is_some();
-        if removed {
-            summary.removed.push(feature.clone());
+    let mut seen_removals = std::collections::HashSet::new();
+    for requested in remove {
+        let identity = normalize_project_feature(requested, default_repository)?;
+        if !seen_removals.insert(identity.clone()) {
+            continue;
+        }
+        let actual = matching_feature_key(object, requested, &identity, default_repository)?;
+        if let Some(actual) = actual {
+            features_object_mut(object)
+                .expect("matching key came from the features object")
+                .remove(&actual);
+            summary.removed.push(actual);
         } else {
-            summary.not_present.push(feature.clone());
+            summary.not_present.push(requested.clone());
         }
     }
 
     if !add.is_empty() {
-        let features = ensure_features_object(object)?;
-        for feature in add {
-            if features.contains_key(feature) {
-                summary.already_present.push(feature.clone());
+        let mut seen_additions = std::collections::HashSet::new();
+        for requested in add {
+            let identity = normalize_project_feature(requested, default_repository)?;
+            if !seen_additions.insert(identity.clone()) {
+                continue;
+            }
+            if matching_feature_key(object, requested, &identity, default_repository)?.is_some() {
+                summary.already_present.push(requested.clone());
             } else {
-                features.insert(feature.clone(), Value::Object(Map::new()));
-                summary.added.push(feature.clone());
+                ensure_features_object(object)?
+                    .insert(requested.clone(), Value::Object(Map::new()));
+                summary.added.push(requested.clone());
             }
         }
     }
 
+    let json = serde_json::to_string_pretty(&root).context("failed to serialize updated config")?;
+    Ok((format!("{json}\n"), summary))
+}
+
+fn matching_feature_key(
+    object: &Map<String, Value>,
+    requested: &str,
+    identity: &str,
+    default_repository: Option<&DefaultFeatureRepository>,
+) -> anyhow::Result<Option<String>> {
+    let Some(features) = object.get("features").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    if features.contains_key(requested) {
+        return Ok(Some(requested.to_owned()));
+    }
+    for existing in features.keys() {
+        if normalize_project_feature(existing, default_repository)? == identity {
+            return Ok(Some(existing.clone()));
+        }
+    }
+    Ok(None)
+}
+
+fn can_repair_exact_removals(
+    contents: &str,
+    add: &[String],
+    remove: &[String],
+    validation_error: &anyhow::Error,
+) -> anyhow::Result<bool> {
+    if !add.is_empty()
+        || !validation_error.chain().any(|cause| {
+            let message = cause.to_string();
+            message.contains("default Feature repository")
+                || message.contains("short Feature references require")
+        })
+    {
+        return Ok(false);
+    }
+    let root: Value = json5::from_str(contents).context("failed to parse JSONC")?;
+    let Some(features) = root.get("features").and_then(Value::as_object) else {
+        return Ok(false);
+    };
+    Ok(remove.iter().all(|feature| features.contains_key(feature)))
+}
+
+fn edit_feature_json_exact(
+    contents: &str,
+    remove: &[String],
+) -> anyhow::Result<(String, FeatureEditSummary)> {
+    let mut root: Value = json5::from_str(contents).context("failed to parse JSONC")?;
+    let object = root
+        .as_object_mut()
+        .context("devcontainer config must be a JSON object")?;
+    let mut summary = FeatureEditSummary {
+        added: Vec::new(),
+        already_present: Vec::new(),
+        removed: Vec::new(),
+        not_present: Vec::new(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    for feature in remove {
+        if seen.insert(feature.clone())
+            && features_object_mut(object)
+                .and_then(|features| features.remove(feature))
+                .is_some()
+        {
+            summary.removed.push(feature.clone());
+        }
+    }
     let json = serde_json::to_string_pretty(&root).context("failed to serialize updated config")?;
     Ok((format!("{json}\n"), summary))
 }
@@ -215,6 +312,7 @@ mod tests {
             r#"{ "image": "rust:1", "features": { "a": { "version": "1" } } }"#,
             &["b".to_string()],
             &[],
+            Some(&"ghcr.io/example/features".parse().unwrap()),
         )
         .unwrap();
         let json: Value = serde_json::from_str(&updated).unwrap();
@@ -229,6 +327,7 @@ mod tests {
             r#"{ "image": "rust:1", "features": { "a": {}, "b": {} } }"#,
             &["c".to_string()],
             &["a".to_string()],
+            Some(&"ghcr.io/example/features".parse().unwrap()),
         )
         .unwrap();
         let json: Value = serde_json::from_str(&updated).unwrap();
@@ -241,8 +340,13 @@ mod tests {
 
     #[test]
     fn edit_creates_features_object() {
-        let (updated, summary) =
-            edit_feature_json(r#"{ "image": "rust:1" }"#, &["a".to_string()], &[]).unwrap();
+        let (updated, summary) = edit_feature_json(
+            r#"{ "image": "rust:1" }"#,
+            &["a".to_string()],
+            &[],
+            Some(&"ghcr.io/example/features".parse().unwrap()),
+        )
+        .unwrap();
         let json: Value = serde_json::from_str(&updated).unwrap();
         assert_eq!(json["features"]["a"], serde_json::json!({}));
         assert_eq!(summary.added, vec!["a"]);
@@ -254,8 +358,52 @@ mod tests {
             r#"{ "image": "rust:1", "features": [] }"#,
             &["a".to_string()],
             &[],
+            Some(&"ghcr.io/example/features".parse().unwrap()),
         )
         .unwrap_err();
         assert!(err.to_string().contains("`features` must be a JSON object"));
+    }
+
+    #[test]
+    fn edit_compares_aliases_by_canonical_identity_and_preserves_requested_spelling() {
+        let default: DefaultFeatureRepository = "ghcr.io/dc-powertools/features".parse().unwrap();
+        let (updated, summary) = edit_feature_json(
+            r#"{
+                "image": "rust:1",
+                "features": { "ghcr.io/dc-powertools/features/sudo:latest": {} }
+            }"#,
+            &["sudo".to_string()],
+            &[],
+            Some(&default),
+        )
+        .unwrap();
+        let json: Value = serde_json::from_str(&updated).unwrap();
+        assert_eq!(json["features"].as_object().unwrap().len(), 1);
+        assert_eq!(summary.already_present, vec!["sudo"]);
+
+        let (updated, summary) =
+            edit_feature_json(&updated, &[], &["sudo".to_string()], Some(&default)).unwrap();
+        let json: Value = serde_json::from_str(&updated).unwrap();
+        assert!(json["features"].as_object().unwrap().is_empty());
+        assert_eq!(
+            summary.removed,
+            vec!["ghcr.io/dc-powertools/features/sudo:latest"]
+        );
+    }
+
+    #[test]
+    fn exact_removal_repairs_short_reference_without_a_default() {
+        let contents = r#"{ "image": "rust:1", "features": { "sudo": {} } }"#;
+        let validation_error = anyhow::anyhow!(
+            "short Feature references require customizations.dcc.defaultFeatureRepository"
+        );
+        assert!(
+            can_repair_exact_removals(contents, &[], &["sudo".to_string()], &validation_error,)
+                .unwrap()
+        );
+        let (updated, summary) = edit_feature_json_exact(contents, &["sudo".to_string()]).unwrap();
+        let json: Value = serde_json::from_str(&updated).unwrap();
+        assert!(json["features"].as_object().unwrap().is_empty());
+        assert_eq!(summary.removed, vec!["sudo"]);
     }
 }

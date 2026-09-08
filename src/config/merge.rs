@@ -66,6 +66,9 @@ fn merge_dcc(parent: Option<RawDccConfig>, child: Option<RawDccConfig>) -> Optio
         (None, c) => c,
         (Some(p), Some(c)) => Some(RawDccConfig {
             extends: None,
+            default_feature_repository: c
+                .default_feature_repository
+                .or(p.default_feature_repository),
             commands: merge_option_hash_maps(p.commands, c.commands),
             state: merge_option_vecs(p.state, c.state),
             registry_cas: match (p.registry_cas, c.registry_cas) {
@@ -724,6 +727,40 @@ mod tests {
     }
 
     #[test]
+    fn dcc_default_feature_repository_child_wins() {
+        let parent_repository: crate::config::feature_ref::DefaultFeatureRepository =
+            "ghcr.io/parent/features".parse().unwrap();
+        let child_repository: crate::config::feature_ref::DefaultFeatureRepository =
+            "ghcr.io/child/features".parse().unwrap();
+        let parent = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    default_feature_repository: Some(parent_repository),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+        let child = RawConfig {
+            customizations: Some(Customizations {
+                dcc: Some(RawDccConfig {
+                    default_feature_repository: Some(child_repository.clone()),
+                    ..RawDccConfig::default()
+                }),
+                ..Customizations::default()
+            }),
+            ..empty()
+        };
+
+        let repository = merge(parent, child)
+            .customizations
+            .and_then(|customizations| customizations.dcc)
+            .and_then(|dcc| dcc.default_feature_repository);
+        assert_eq!(repository, Some(child_repository));
+    }
+
+    #[test]
     fn dcc_registry_cas_union_by_canonical_authority_with_child_wins() {
         use crate::config::registry_ca::{RawRegistryCas, RegistryAuthority};
 
@@ -947,6 +984,7 @@ mod tests {
                 Customizations {
                     dcc: Some(RawDccConfig {
                         extends: None,
+                        default_feature_repository: None,
                         commands,
                         state,
                         registry_cas: None,
@@ -1107,6 +1145,9 @@ mod tests {
                     (value, None) | (None, value) => value,
                     (Some(parent), Some(child)) => Some(RawDccConfig {
                         extends: None,
+                        default_feature_repository: child
+                            .default_feature_repository
+                            .or(parent.default_feature_repository),
                         commands: expected_option_map(parent.commands, child.commands),
                         state: expected_option_vec(parent.state, child.state),
                         registry_cas: match (parent.registry_cas, child.registry_cas) {

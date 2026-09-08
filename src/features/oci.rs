@@ -6,7 +6,10 @@ use indexmap::IndexMap;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, LOCATION};
 use sha2::{Digest as _, Sha256};
 
-use crate::config::registry_ca::{RegistryAuthority, RegistryCaBundle};
+use crate::config::{
+    feature_ref::OciFeatureReference,
+    registry_ca::{RegistryAuthority, RegistryCaBundle},
+};
 
 const MAX_REDIRECTS: usize = 10;
 
@@ -32,42 +35,6 @@ pub(crate) struct OciClient {
     allow_insecure_http: bool,
     // Key: (registry, requested repository scope).
     token_cache: HashMap<(RegistryAuthority, String), String>,
-}
-
-#[derive(Debug)]
-struct FeatureRef {
-    registry: RegistryAuthority, // e.g. "ghcr.io"
-    repository: String,          // e.g. "devcontainers/features/node"
-    tag: String,                 // e.g. "1"
-}
-
-impl FeatureRef {
-    fn parse(s: &str) -> anyhow::Result<Self> {
-        // Split on last ':' to separate tag
-        let colon = s.rfind(':').ok_or_else(|| {
-            anyhow::anyhow!("feature reference must include a tag (e.g. 'ghcr.io/owner/repo:1')")
-        })?;
-        let tag = s[colon + 1..].to_owned();
-        if tag.is_empty() {
-            bail!("feature reference has an empty tag");
-        }
-        let rest = &s[..colon];
-        // Split on first '/' to separate registry from repository
-        let slash = rest.find('/').ok_or_else(|| {
-            anyhow::anyhow!("feature reference must have the form 'registry/repository:tag'")
-        })?;
-        let registry = RegistryAuthority::parse(&rest[..slash])
-            .context("feature reference has an invalid registry authority")?;
-        let repository = rest[slash + 1..].to_owned();
-        if repository.is_empty() {
-            bail!("feature reference has an empty repository");
-        }
-        Ok(Self {
-            registry,
-            repository,
-            tag,
-        })
-    }
 }
 
 impl OciClient {
@@ -226,7 +193,8 @@ impl OciClient {
         feature_ref: &str,
         user_options: &serde_json::Value,
     ) -> anyhow::Result<DownloadedFeature> {
-        let parsed = FeatureRef::parse(feature_ref).context("invalid feature reference")?;
+        let parsed =
+            OciFeatureReference::parse(feature_ref).context("invalid feature reference")?;
         let manifest = self.fetch_manifest(&parsed).await.with_context(|| {
             format!("failed to fetch manifest from registry {}", parsed.registry)
         })?;
@@ -321,7 +289,10 @@ impl OciClient {
         Ok(token)
     }
 
-    async fn fetch_manifest(&mut self, r: &FeatureRef) -> anyhow::Result<serde_json::Value> {
+    async fn fetch_manifest(
+        &mut self,
+        r: &OciFeatureReference,
+    ) -> anyhow::Result<serde_json::Value> {
         let scope = format!("repository:{}:pull", r.repository);
         let token = self.authenticate(&r.registry, &scope).await?;
         let url = self.registry_url(
@@ -348,7 +319,11 @@ impl OciClient {
             .with_context(|| format!("failed to parse manifest from registry {}", r.registry))
     }
 
-    async fn download_blob(&mut self, r: &FeatureRef, digest: &str) -> anyhow::Result<Vec<u8>> {
+    async fn download_blob(
+        &mut self,
+        r: &OciFeatureReference,
+        digest: &str,
+    ) -> anyhow::Result<Vec<u8>> {
         let scope = format!("repository:{}:pull", r.repository);
         let token = self.authenticate(&r.registry, &scope).await?;
         let url =
@@ -881,31 +856,34 @@ mod tests {
 
     #[test]
     fn feature_ref_parse_valid() {
-        let r = FeatureRef::parse("ghcr.io/devcontainers/features/node:1").unwrap();
+        let r = OciFeatureReference::parse("ghcr.io/devcontainers/features/node:1").unwrap();
         assert_eq!(r.registry.to_string(), "ghcr.io");
         assert_eq!(r.repository, "devcontainers/features/node");
         assert_eq!(r.tag, "1");
     }
 
     #[test]
-    fn feature_ref_parse_missing_tag() {
-        assert!(FeatureRef::parse("ghcr.io/devcontainers/features/node").is_err());
+    fn feature_ref_parse_missing_tag_uses_latest() {
+        let r = OciFeatureReference::parse("ghcr.io/devcontainers/features/node").unwrap();
+        assert_eq!(r.registry.to_string(), "ghcr.io");
+        assert_eq!(r.repository, "devcontainers/features/node");
+        assert_eq!(r.tag, "latest");
     }
 
     #[test]
     fn feature_ref_parse_empty_tag() {
-        assert!(FeatureRef::parse("ghcr.io/devcontainers/features/node:").is_err());
+        assert!(OciFeatureReference::parse("ghcr.io/devcontainers/features/node:").is_err());
     }
 
     #[test]
     fn feature_ref_parse_no_registry() {
-        assert!(FeatureRef::parse("justname:1").is_err());
+        assert!(OciFeatureReference::parse("justname:1").is_err());
     }
 
     #[test]
     fn feature_reference_errors_do_not_echo_user_information_or_query_data() {
         const SECRET: &str = "sentinel-feature-reference-secret";
-        let error = FeatureRef::parse(&format!(
+        let error = OciFeatureReference::parse(&format!(
             "user:{SECRET}@registry.example?query={SECRET}/owner/feature:1"
         ))
         .unwrap_err();
@@ -1927,7 +1905,7 @@ mod tests {
             tag in "[a-z0-9]{1,8}",
         ) {
             let reference = format!("{registry}/{repository}:{tag}");
-            let parsed = FeatureRef::parse(&reference).unwrap();
+            let parsed = OciFeatureReference::parse(&reference).unwrap();
             prop_assert_eq!(parsed.registry.to_string(), registry);
             prop_assert_eq!(parsed.repository, repository);
             prop_assert_eq!(parsed.tag, tag);

@@ -254,3 +254,159 @@ fn feature_existing_add_and_missing_remove_report_noop_without_rewrite() {
     assert!(stdout.contains(&format!("feature not present {missing}")));
     assert!(stdout.contains("profile features unchanged"));
 }
+
+#[test]
+fn feature_short_name_uses_default_repository_and_writes_short_spelling() {
+    let fx = Fixture::new();
+    let config = fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": {
+                "dcc": {
+                    "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
+                }
+            }
+        }"#,
+    );
+
+    let output = fx.dcc(&["feature", "--add", "sudo"]).output().unwrap();
+    assert_success(&output);
+
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    assert_eq!(updated["features"]["sudo"], serde_json::json!({}));
+}
+
+#[test]
+fn feature_editor_matches_short_and_qualified_aliases() {
+    let fx = Fixture::new();
+    let qualified = "ghcr.io/dc-powertools/features/sudo:latest";
+    let config = fx.write_config(
+        "devcontainer.json",
+        &format!(
+            r#"{{
+                "image": "rust:1",
+                "features": {{ "{qualified}": {{ "version": "1" }} }},
+                "customizations": {{
+                    "dcc": {{
+                        "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
+                    }}
+                }}
+            }}"#
+        ),
+    );
+
+    let output = fx
+        .dcc(&["--format", "json", "feature", "--add", "sudo"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["already_present"], serde_json::json!(["sudo"]));
+
+    let output = fx
+        .dcc(&["--format", "json", "feature", "--remove", "sudo"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["removed"], serde_json::json!([qualified]));
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    assert!(updated["features"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn feature_short_name_requires_default_but_exact_remove_can_repair() {
+    let fx = Fixture::new();
+    let config = fx.write_config(
+        "devcontainer.json",
+        r#"{ "image": "rust:1", "features": { "sudo": {} } }"#,
+    );
+
+    let output = fx.dcc(&["feature", "--add", "git"]).output().unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "defaultFeatureRepository");
+
+    let output = fx.dcc(&["feature", "--remove", "sudo"]).output().unwrap();
+    assert_success(&output);
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    assert!(updated["features"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn feature_short_name_uses_inherited_default_repository() {
+    let fx = Fixture::new();
+    fx.write_config(
+        "base.json",
+        r#"{
+            "image": "rust:1",
+            "customizations": { "dcc": {
+                "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
+            } }
+        }"#,
+    );
+    let config = fx.write_config("devcontainer.json", r#"{ "extends": "base.json" }"#);
+
+    let output = fx.dcc(&["feature", "--add", "sudo"]).output().unwrap();
+    assert_success(&output);
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    assert_eq!(updated["features"]["sudo"], serde_json::json!({}));
+}
+
+#[test]
+fn feature_exact_remove_repairs_invalid_default_repository() {
+    let fx = Fixture::new();
+    let config = fx.write_config(
+        "devcontainer.json",
+        r#"{
+            "image": "rust:1",
+            "features": { "sudo": {} },
+            "customizations": { "dcc": {
+                "defaultFeatureRepository": "https://invalid.example/features"
+            } }
+        }"#,
+    );
+
+    let output = fx.dcc(&["feature", "--remove", "sudo"]).output().unwrap();
+    assert_success(&output);
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    assert!(updated["features"].as_object().unwrap().is_empty());
+    assert_eq!(
+        updated["customizations"]["dcc"]["defaultFeatureRepository"],
+        "https://invalid.example/features"
+    );
+}
+
+#[test]
+fn feature_remove_does_not_edit_inherited_parent_entry() {
+    let fx = Fixture::new();
+    let parent = fx.write_config(
+        "base.json",
+        r#"{
+            "image": "rust:1",
+            "features": { "sudo": { "from": "parent" } },
+            "customizations": { "dcc": {
+                "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
+            } }
+        }"#,
+    );
+    let child = fx.write_config("devcontainer.json", r#"{ "extends": "base.json" }"#);
+    let parent_before = std::fs::read_to_string(&parent).unwrap();
+    let child_before = std::fs::read_to_string(&child).unwrap();
+
+    let output = fx
+        .dcc(&["--format", "json", "feature", "--remove", "sudo"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["removed"], serde_json::json!([]));
+    assert_eq!(summary["not_present"], serde_json::json!(["sudo"]));
+    assert_eq!(std::fs::read_to_string(parent).unwrap(), parent_before);
+    assert_eq!(std::fs::read_to_string(child).unwrap(), child_before);
+}
