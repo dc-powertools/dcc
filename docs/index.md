@@ -158,9 +158,11 @@ the matching parent entry, while entries for other authorities are retained. Rel
 CA paths are resolved against the file that declares each entry, so an inherited path
 continues to refer to the parent config's directory.
 
-`customizations.dcc.defaultFeatureRepository` is inherited as a scalar. A child can
-replace it for Features declared in that child and its descendants; already-resolved
-Feature names from a parent retain the parent's repository.
+Short Feature names use `ghcr.io/dc-powertools/features` by default.
+`customizations.dcc.defaultFeatureRepository` supplies a project-local override and is
+inherited as a scalar. A child can replace it for Features declared in that child and
+its descendants; already-resolved Feature names from a parent retain the parent's
+effective repository.
 
 ## Private Feature Registry CAs
 
@@ -647,7 +649,7 @@ as errors.
 | `runArgs` | Conservative allowlist of extra Docker runtime flags. Privileged, host-integrating, or unknown flags are gated or rejected; `--label` cannot set the reserved `dcc.container_id` or `dcc.container_role` keys. |
 | `privileged`, `capAdd`, `securityOpt` | Unsafe runtime settings. Rejected unless the invocation includes `--allow-unsafe-runtime`. |
 | `customizations.dcc.extends` | Local config file to inherit from. |
-| `customizations.dcc.defaultFeatureRepository` | OCI repository prefix used to resolve short project Feature names. |
+| `customizations.dcc.defaultFeatureRepository` | Project-local OCI repository prefix overriding the built-in `ghcr.io/dc-powertools/features` source for short Feature names. |
 | `customizations.dcc.registryCAs` | Exact OCI registry or token-service authorities mapped to private-CA PEM bundle paths. |
 | `customizations.dcc.commands` | Project named shell commands invokable through `dcc run <name>`. |
 | `customizations.dcc.state` | Container paths whose contents are persisted under the profile cache. |

@@ -256,7 +256,7 @@ fn feature_existing_add_and_missing_remove_report_noop_without_rewrite() {
 }
 
 #[test]
-fn feature_short_name_uses_default_repository_and_writes_short_spelling() {
+fn feature_short_name_uses_configured_repository_override_and_writes_short_spelling() {
     let fx = Fixture::new();
     let config = fx.write_config(
         "devcontainer.json",
@@ -264,7 +264,7 @@ fn feature_short_name_uses_default_repository_and_writes_short_spelling() {
             "image": "rust:1",
             "customizations": {
                 "dcc": {
-                    "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
+                    "defaultFeatureRepository": "ghcr.io/example/features"
                 }
             }
         }"#,
@@ -287,12 +287,7 @@ fn feature_editor_matches_short_and_qualified_aliases() {
         &format!(
             r#"{{
                 "image": "rust:1",
-                "features": {{ "{qualified}": {{ "version": "1" }} }},
-                "customizations": {{
-                    "dcc": {{
-                        "defaultFeatureRepository": "ghcr.io/dc-powertools/features"
-                    }}
-                }}
+                "features": {{ "{qualified}": {{ "version": "1" }} }}
             }}"#
         ),
     );
@@ -318,7 +313,7 @@ fn feature_editor_matches_short_and_qualified_aliases() {
 }
 
 #[test]
-fn feature_short_name_requires_default_but_exact_remove_can_repair() {
+fn feature_short_names_use_builtin_default() {
     let fx = Fixture::new();
     let config = fx.write_config(
         "devcontainer.json",
@@ -326,14 +321,14 @@ fn feature_short_name_requires_default_but_exact_remove_can_repair() {
     );
 
     let output = fx.dcc(&["feature", "--add", "git"]).output().unwrap();
-    assert_failure(&output);
-    assert_stderr_contains(&output, "defaultFeatureRepository");
+    assert_success(&output);
 
     let output = fx.dcc(&["feature", "--remove", "sudo"]).output().unwrap();
     assert_success(&output);
     let updated: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
-    assert!(updated["features"].as_object().unwrap().is_empty());
+    assert!(updated["features"].get("sudo").is_none());
+    assert_eq!(updated["features"]["git"], serde_json::json!({}));
 }
 
 #[test]

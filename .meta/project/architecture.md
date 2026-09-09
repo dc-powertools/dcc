@@ -203,18 +203,19 @@ load_raw(path, visited, strict) -> anyhow::Result<RawConfig>:
   visited.insert(canonical)
   raw = parse_jsonc(path, strict)?   // emits warnings or errors for extra fields
   parent = load_raw(parent_path, visited, strict)? if raw extends another file
-  effective_default = raw.default_feature_repository ?? parent.default_feature_repository
+  effective_default = raw.default_feature_repository ?? parent.default_feature_repository ?? builtin_default
   canonicalize raw.features with effective_default
   return merge(parent, raw)
 ```
 
 Feature keys are canonicalized before each declaration file is merged. A short key
-such as `sudo` uses that file's effective `defaultFeatureRepository`; an omitted tag
-becomes `latest`. This ordering preserves declaration provenance: changing a default
-in a child does not rebind shorthand inherited from its parent. Equivalent keys in
-one file are rejected, while a canonically equivalent child key overrides the parent
-value without changing the parent's insertion position. Local `./` and `../` paths
-remain literal.
+such as `sudo` uses that file's configured or inherited `defaultFeatureRepository`, or
+the built-in `ghcr.io/dc-powertools/features` repository when neither exists; an
+omitted tag becomes `latest`. This ordering preserves declaration provenance: changing
+a default in a child does not rebind shorthand inherited from its parent. Equivalent
+keys in one file are rejected, while a canonically equivalent child key overrides the
+parent value without changing the parent's insertion position. Local `./` and `../`
+paths remain literal.
 
 `extends` paths are resolved relative to the file that contains them.
 Relative `customizations.dcc.registryCAs` paths are also anchored to their declaring
@@ -242,7 +243,7 @@ read the replaced parent path.
 | `forward_ports` | Array union; duplicates removed, parent entries first |
 | `ports_attributes` | Map union; child value wins on key conflict |
 | `customizations.dcc.registryCAs` | Exact canonical-authority map union; child path wins on conflict |
-| `customizations.dcc.defaultFeatureRepository` | Child scalar wins; Feature keys were already resolved in their declaring file |
+| `customizations.dcc.defaultFeatureRepository` | Child scalar wins, then inherited value, then built-in fallback; Feature keys were already resolved in their declaring file |
 | `other_ports_attributes`, `override_command`, `update_remote_user_uid`, `workspace_folder`, `workspace_mount` | Child overwrites parent |
 
 Lifecycle hook fields are not merged as arrays; the child value wins for each hook.
@@ -973,8 +974,8 @@ embedded in the image via `docker build --label`.
 
 Feature `containerUser`, `remoteUser`, `customizations.dcc.registryCAs`, and
 `customizations.dcc.defaultFeatureRepository` are rejected. Registry trust and the
-default Feature source are owned only by the selected project config and cannot be
-contributed by downloaded Feature metadata.
+default Feature source are controlled only by dcc and the selected project config;
+downloaded Feature metadata cannot contribute either setting.
 
 ### OCI Artifact Download (`features/oci.rs`)
 
@@ -986,9 +987,9 @@ feature reference like `ghcr.io/devcontainers/features/node:1` is parsed as:
 - Tag: `1`
 
 Project-declared single-component names are expanded from the declaration file's
-effective `customizations.dcc.defaultFeatureRepository` before reaching the OCI
-client. All OCI references use an explicit canonical tag internally; an omitted tag
-is normalized to `latest`.
+configured or inherited `customizations.dcc.defaultFeatureRepository`, falling back to
+`ghcr.io/dc-powertools/features`, before reaching the OCI client. All OCI references
+use an explicit canonical tag internally; an omitted tag is normalized to `latest`.
 
 Download steps:
 

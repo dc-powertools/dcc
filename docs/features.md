@@ -32,7 +32,12 @@ to that Feature. Run `dcc build` after adding, removing, or changing Features.
 
 ### Default Feature repository
 
-Set `customizations.dcc.defaultFeatureRepository` to use short names in a project:
+Short names use `ghcr.io/dc-powertools/features` by default. For example, `sudo`
+resolves to `ghcr.io/dc-powertools/features/sudo:latest` without additional
+configuration.
+
+Set `customizations.dcc.defaultFeatureRepository` to override the built-in repository
+for a project:
 
 ```jsonc
 {
@@ -54,15 +59,16 @@ resolves to `ghcr.io/devcontainers/features/python:latest`. An omitted tag also
 means `latest` for an explicit OCI reference. Local paths beginning with `./` or
 `../` are unchanged.
 
-The default must be an OCI repository prefix containing a registry authority and
-at least one lowercase repository path component. Do not include a scheme, tag,
+An override must be an OCI repository prefix containing a registry authority and at
+least one lowercase repository path component. Do not include a scheme, tag,
 digest, credentials, query, fragment, trailing slash, whitespace, or variable
-expression. This setting is project-local; there is no CLI, environment, or global
-configuration override.
+expression. The override is project-local; there is no CLI, environment, or global
+configuration source.
 
-The setting follows `customizations.dcc.extends`, but shorthand is resolved in the
-file where it is declared. A parent Feature therefore keeps the parent's default
-even when a child selects another one. Equivalent spellings in one file, such as
+An override follows `customizations.dcc.extends`, but shorthand is resolved in the
+file where it is declared. A parent Feature therefore keeps its effective repository
+even when a child selects another one. An omitted or root-level `null` override uses
+the built-in repository. Equivalent spellings in one file, such as
 `python` and `ghcr.io/devcontainers/features/python:latest`, are an error. Across
 files, a child's equivalent Feature overrides the parent's options while retaining
 the parent's position.
@@ -80,13 +86,13 @@ dcc feature --remove ghcr.io/devcontainers/features/node:1
 dcc feature -r ghcr.io/devcontainers/features/python:1
 ```
 
-Short names are accepted when the selected profile has an effective
-`defaultFeatureRepository`. The editor stores the spelling you requested, but
-detects existing entries by canonical identity, so adding `node` does not duplicate
-an existing `ghcr.io/devcontainers/features/node:latest`. Removing either spelling
+Short names use the selected profile's configured or inherited override, otherwise the
+built-in repository. The editor stores the spelling you requested, but detects
+existing entries by canonical identity, so adding `sudo` does not duplicate an
+existing `ghcr.io/dc-powertools/features/sudo:latest`. Removing either spelling
 removes the equivalent entry in the selected file and reports the spelling actually
 removed. It never edits an inherited parent entry. An exact raw removal remains
-available to repair a short entry whose default is missing or invalid.
+available to repair a short entry whose configured override is invalid.
 
 `--add`/`-a` and `--remove`/`-r` may be repeated in one invocation. Removals are
 applied before additions. The command edits only the selected profile file and
