@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-09 | Bumped the project patch version from 0.1.6 to 0.1.7 without triggering release automation (T-0089). | `.meta/tasks/README.md#tasks` |
 | 2026-09-09 | Made `ghcr.io/dc-powertools/features` the built-in repository for short Feature names while retaining project overrides (T-0088). | `.meta/tasks/0088-built-in-default-feature-repository-notes.md` |
 | 2026-09-08 | Implemented declaration-scoped configurable default Feature repository resolution and canonical shorthand editing (T-0087). | `.meta/tasks/0087-default-feature-repository-notes.md` |
 | 2026-09-08 | Designed declaration-scoped configurable default Feature repository resolution with contained tool footprint (T-0086). | `.meta/tasks/0086-default-feature-repository-design.md` |
@@ -48,7 +49,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 | 2026-08-25 | Remediated CI token exposure with read-only workflow permissions and non-persisted checkout credentials (T-0081). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Replaced released-port rebinding with an exact-object listener-lifetime oracle that remains deterministic under concurrent port acquisition (T-0080). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Implemented exact-authority custom-CA trust for private OCI Feature registries without weakening public HTTPS defaults (T-0072). | `.meta/quality/0072-custom-ca-implementation-quality.md` |
-| 2026-08-25 | Kept generated dcc profiles, caches, runtime assets, and state out of Git status with non-destructive managed `.dcc/.gitignore` creation (T-0079). | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -77,7 +77,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 1
+- Completed repository-changing tasks since that pass: 2
 - Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
