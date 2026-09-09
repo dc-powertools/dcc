@@ -59,7 +59,7 @@ pub(crate) fn load_raw(
         }
     };
 
-    let effective_default = declared_default_feature_repository(&raw)
+    let repository_override = declared_default_feature_repository(&raw)
         .cloned()
         .or_else(|| {
             parent
@@ -67,7 +67,7 @@ pub(crate) fn load_raw(
                 .and_then(declared_default_feature_repository)
                 .cloned()
         });
-    normalize_declared_features(&mut raw.features, effective_default.as_ref(), path)?;
+    normalize_declared_features(&mut raw.features, repository_override.as_ref(), path)?;
 
     Ok(match parent {
         Some(parent) => merge(parent, raw),
@@ -82,9 +82,9 @@ fn declared_default_feature_repository(raw: &RawConfig) -> Option<&DefaultFeatur
         .and_then(|dcc| dcc.default_feature_repository.as_ref())
 }
 
-/// Loads the declaration-scoped config chain and returns the default Feature
-/// repository effective for declarations in `path`.
-pub(crate) fn effective_default_feature_repository(
+/// Loads the declaration-scoped config chain and returns the configured Feature
+/// repository override effective for declarations in `path`.
+pub(crate) fn configured_default_feature_repository(
     path: &Path,
     strict: bool,
 ) -> anyhow::Result<Option<DefaultFeatureRepository>> {
@@ -94,7 +94,7 @@ pub(crate) fn effective_default_feature_repository(
 
 fn normalize_declared_features(
     features: &mut Option<IndexMap<String, serde_json::Value>>,
-    default_repository: Option<&DefaultFeatureRepository>,
+    repository_override: Option<&DefaultFeatureRepository>,
     source: &Path,
 ) -> anyhow::Result<()> {
     let Some(declared) = features.take() else {
@@ -104,7 +104,7 @@ fn normalize_declared_features(
     let mut spellings = std::collections::HashMap::<String, String>::new();
     for (spelling, options) in declared {
         let identity =
-            normalize_project_feature(&spelling, default_repository).with_context(|| {
+            normalize_project_feature(&spelling, repository_override).with_context(|| {
                 format!(
                     "invalid Feature reference declared in `{}`",
                     source.display()
@@ -1378,6 +1378,36 @@ mod tests {
     }
 
     #[test]
+    fn child_override_does_not_rebind_parent_builtin_shorthand() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "base.json",
+            r#"{ "image": "x:1", "features": { "sudo": {} } }"#,
+        );
+        let child = write(
+            dir.path(),
+            "child.json",
+            r#"{
+                "extends": "base.json",
+                "features": { "git": {} },
+                "customizations": { "dcc": {
+                    "defaultFeatureRepository": "ghcr.io/team/features"
+                } }
+            }"#,
+        );
+        let config = load_config(&child, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        let keys: Vec<&str> = config.features.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "ghcr.io/dc-powertools/features/sudo:latest",
+                "ghcr.io/team/features/git:latest"
+            ]
+        );
+    }
+
+    #[test]
     fn same_file_equivalent_feature_references_are_rejected() {
         let dir = TempDir::new().unwrap();
         let path = write(
@@ -1402,15 +1432,53 @@ mod tests {
     }
 
     #[test]
-    fn short_feature_without_default_is_rejected_before_io() {
+    fn builtin_default_participates_in_same_file_collision_detection() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "x:1",
+                "features": {
+                    "sudo": {},
+                    "ghcr.io/dc-powertools/features/sudo:latest": {}
+                }
+            }"#,
+        );
+        let error = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
+        assert!(error.to_string().contains("equivalent Feature references"));
+    }
+
+    #[test]
+    fn short_feature_without_override_uses_builtin_default_before_io() {
         let dir = TempDir::new().unwrap();
         let path = write(
             dir.path(),
             "dev.json",
             r#"{ "image": "x:1", "features": { "sudo": {} } }"#,
         );
-        let error = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap_err();
-        assert!(format!("{error:#}").contains("defaultFeatureRepository"));
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(config
+            .features
+            .contains_key("ghcr.io/dc-powertools/features/sudo:latest"));
+    }
+
+    #[test]
+    fn root_null_override_uses_builtin_default() {
+        let dir = TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "dev.json",
+            r#"{
+                "image": "x:1",
+                "features": { "sudo": {} },
+                "customizations": { "dcc": { "defaultFeatureRepository": null } }
+            }"#,
+        );
+        let config = load_config(&path, &stub_workspace(), &stub_cache_dir(), false).unwrap();
+        assert!(config
+            .features
+            .contains_key("ghcr.io/dc-powertools/features/sudo:latest"));
     }
 
     #[test]

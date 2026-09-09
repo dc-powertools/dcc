@@ -5,6 +5,7 @@ use serde::de::Error as _;
 
 use super::registry_ca::RegistryAuthority;
 
+pub(crate) const BUILTIN_DEFAULT_FEATURE_REPOSITORY: &str = "ghcr.io/dc-powertools/features";
 const IMPLICIT_TAG: &str = "latest";
 
 /// A validated OCI prefix used to qualify project-declared short Feature names.
@@ -111,7 +112,7 @@ pub(crate) fn is_local_feature(reference: &str) -> bool {
 /// Resolves a Feature key declared by a project config into its stable identity.
 pub(crate) fn normalize_project_feature(
     reference: &str,
-    default_repository: Option<&DefaultFeatureRepository>,
+    repository_override: Option<&DefaultFeatureRepository>,
 ) -> anyhow::Result<String> {
     if is_local_feature(reference) {
         return Ok(reference.to_owned());
@@ -121,12 +122,13 @@ pub(crate) fn normalize_project_feature(
     }
 
     let (name, tag) = parse_short_reference(reference)?;
-    let default_repository = default_repository.ok_or_else(|| {
-        anyhow::anyhow!(
-            "short Feature references require customizations.dcc.defaultFeatureRepository"
-        )
-    })?;
-    Ok(default_repository.qualify(name, tag))
+    if let Some(repository_override) = repository_override {
+        return Ok(repository_override.qualify(name, tag));
+    }
+    let builtin: DefaultFeatureRepository = BUILTIN_DEFAULT_FEATURE_REPOSITORY
+        .parse()
+        .context("built-in default Feature repository is invalid")?;
+    Ok(builtin.qualify(name, tag))
 }
 
 /// Normalizes a Feature-authored dependency without applying a project default.
@@ -289,13 +291,25 @@ mod tests {
 
     #[test]
     fn project_reference_expands_short_names_and_tags() {
-        let repository = "ghcr.io/dc-powertools/features".parse().unwrap();
+        let repository = "ghcr.io/example/features".parse().unwrap();
         assert_eq!(
             normalize_project_feature("sudo", Some(&repository)).unwrap(),
-            "ghcr.io/dc-powertools/features/sudo:latest"
+            "ghcr.io/example/features/sudo:latest"
         );
         assert_eq!(
             normalize_project_feature("sudo:1", Some(&repository)).unwrap(),
+            "ghcr.io/example/features/sudo:1"
+        );
+    }
+
+    #[test]
+    fn project_reference_uses_builtin_default_when_unconfigured() {
+        assert_eq!(
+            normalize_project_feature("sudo", None).unwrap(),
+            "ghcr.io/dc-powertools/features/sudo:latest"
+        );
+        assert_eq!(
+            normalize_project_feature("sudo:1", None).unwrap(),
             "ghcr.io/dc-powertools/features/sudo:1"
         );
     }
@@ -310,11 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn short_reference_requires_default_and_valid_syntax() {
-        assert!(normalize_project_feature("sudo", None)
-            .unwrap_err()
-            .to_string()
-            .contains("defaultFeatureRepository"));
+    fn malformed_short_references_are_rejected() {
         for value in ["", "sudo:", "Sudo", "sudo@sha256:abc", "sudo::1"] {
             assert!(normalize_project_feature(value, None).is_err(), "{value}");
         }

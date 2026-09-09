@@ -52,11 +52,11 @@ pub(crate) fn update_features(
 
     let contents = std::fs::read_to_string(config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
-    let default_repository =
-        config::resolve::effective_default_feature_repository(config_path, opts.strict);
-    let (updated, summary) = match default_repository {
-        Ok(default_repository) => {
-            edit_feature_json(&contents, &add, &remove, default_repository.as_ref())
+    let repository_override =
+        config::resolve::configured_default_feature_repository(config_path, opts.strict);
+    let (updated, summary) = match repository_override {
+        Ok(repository_override) => {
+            edit_feature_json(&contents, &add, &remove, repository_override.as_ref())
         }
         Err(error) if can_repair_exact_removals(&contents, &add, &remove, &error)? => {
             edit_feature_json_exact(&contents, &remove)
@@ -130,7 +130,7 @@ fn edit_feature_json(
     contents: &str,
     add: &[String],
     remove: &[String],
-    default_repository: Option<&DefaultFeatureRepository>,
+    repository_override: Option<&DefaultFeatureRepository>,
 ) -> anyhow::Result<(String, FeatureEditSummary)> {
     let mut root: Value = json5::from_str(contents).context("failed to parse JSONC")?;
     let object = root
@@ -146,11 +146,11 @@ fn edit_feature_json(
 
     let mut seen_removals = std::collections::HashSet::new();
     for requested in remove {
-        let identity = normalize_project_feature(requested, default_repository)?;
+        let identity = normalize_project_feature(requested, repository_override)?;
         if !seen_removals.insert(identity.clone()) {
             continue;
         }
-        let actual = matching_feature_key(object, requested, &identity, default_repository)?;
+        let actual = matching_feature_key(object, requested, &identity, repository_override)?;
         if let Some(actual) = actual {
             features_object_mut(object)
                 .expect("matching key came from the features object")
@@ -164,11 +164,11 @@ fn edit_feature_json(
     if !add.is_empty() {
         let mut seen_additions = std::collections::HashSet::new();
         for requested in add {
-            let identity = normalize_project_feature(requested, default_repository)?;
+            let identity = normalize_project_feature(requested, repository_override)?;
             if !seen_additions.insert(identity.clone()) {
                 continue;
             }
-            if matching_feature_key(object, requested, &identity, default_repository)?.is_some() {
+            if matching_feature_key(object, requested, &identity, repository_override)?.is_some() {
                 summary.already_present.push(requested.clone());
             } else {
                 ensure_features_object(object)?
@@ -186,7 +186,7 @@ fn matching_feature_key(
     object: &Map<String, Value>,
     requested: &str,
     identity: &str,
-    default_repository: Option<&DefaultFeatureRepository>,
+    repository_override: Option<&DefaultFeatureRepository>,
 ) -> anyhow::Result<Option<String>> {
     let Some(features) = object.get("features").and_then(Value::as_object) else {
         return Ok(None);
@@ -195,7 +195,7 @@ fn matching_feature_key(
         return Ok(Some(requested.to_owned()));
     }
     for existing in features.keys() {
-        if normalize_project_feature(existing, default_repository)? == identity {
+        if normalize_project_feature(existing, repository_override)? == identity {
             return Ok(Some(existing.clone()));
         }
     }
@@ -212,7 +212,6 @@ fn can_repair_exact_removals(
         || !validation_error.chain().any(|cause| {
             let message = cause.to_string();
             message.contains("default Feature repository")
-                || message.contains("short Feature references require")
         })
     {
         return Ok(false);
@@ -392,11 +391,15 @@ mod tests {
     }
 
     #[test]
-    fn exact_removal_repairs_short_reference_without_a_default() {
-        let contents = r#"{ "image": "rust:1", "features": { "sudo": {} } }"#;
-        let validation_error = anyhow::anyhow!(
-            "short Feature references require customizations.dcc.defaultFeatureRepository"
-        );
+    fn exact_removal_repairs_short_reference_with_an_invalid_override() {
+        let contents = r#"{
+            "image": "rust:1",
+            "features": { "sudo": {} },
+            "customizations": { "dcc": {
+                "defaultFeatureRepository": "https://invalid.example/features"
+            } }
+        }"#;
+        let validation_error = anyhow::anyhow!("default Feature repository is invalid");
         assert!(
             can_repair_exact_removals(contents, &[], &["sudo".to_string()], &validation_error,)
                 .unwrap()

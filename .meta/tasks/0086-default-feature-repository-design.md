@@ -9,6 +9,14 @@
 - Source reference and date: Configurable default Feature repository request, 2026-09-08
 - Parent or split task IDs: None
 
+## Contract Amendment
+
+On 2026-09-09, the product owner extended the completed design: when no project
+override is effective, short names use the built-in
+`ghcr.io/dc-powertools/features` repository. This supersedes the original no-built-in
+and rejected-hard-coded-default decisions; validation, declaration provenance, canonical
+identity, explicit dependency, editor, and footprint boundaries remain unchanged.
+
 ## Goal
 
 Allow a profile to name one default OCI Feature repository prefix so short Feature
@@ -86,9 +94,9 @@ Add one optional project-owned field:
 ```
 
 `defaultFeatureRepository` is an OCI repository **prefix**, not a URL and not a
-fallback search service. It has no built-in value: when it is absent, all existing
-explicit OCI and local references keep their behavior, while a short reference fails
-with an error that points to this field.
+fallback search service. When it is absent, short references use the built-in
+`ghcr.io/dc-powertools/features` prefix. Existing explicit OCI and local references
+keep their behavior.
 
 The setting is allowed only in project configuration. A downloaded Feature declaring
 `customizations.dcc.defaultFeatureRepository` is rejected just as one declaring
@@ -222,9 +230,8 @@ resolved to it.
 
 Keep `dcc feature` within its current command and file-editing footprint:
 
-- `dcc feature --add sudo` accepts the shorthand only when the selected file has an
-  effective default through its own setting or `extends`, and writes the requested
-  shorthand spelling with empty options.
+- `dcc feature --add sudo` uses the effective configured/inherited override or the
+  built-in default and writes the requested shorthand spelling with empty options.
 - Add/remove comparison uses normalized identity for keys in the directly edited file,
   so `sudo`, its expanded untagged form, and its expanded `:latest` form do not become
   duplicate direct entries.
@@ -247,7 +254,7 @@ keys.
 | `customizations.dcc.defaultFeatureRepository` | Accept | Explicit, project-local, inheritable, and consistent with existing dcc configuration. |
 | Machine-global config or environment variable | Reject | Makes checked-in profiles machine-dependent and introduces a new config source and precedence model. |
 | CLI-only default flag | Reject | Does not let a checked-in short Feature key resolve consistently across build invocations. |
-| Hard-code `ghcr.io/dc-powertools/features` | Reject | Does not meet configurability and couples dcc to one publisher. |
+| Built-in `ghcr.io/dc-powertools/features` fallback | Accepted by 2026-09-09 amendment | Provides zero-config short names while retaining the project override. |
 | Ordered repository search list | Reject | Adds extra network requests, ambiguity, latency, and dependency-confusion risk. |
 | Arbitrary alias map | Reject for this outcome | Larger syntax and merge surface than the requested one-default, short-name behavior. |
 | Expand after the full `extends` merge | Reject | A child default could silently redirect shorthand inherited from a parent. |
@@ -283,7 +290,8 @@ different identities to the same Feature.
   malformed path, tag/digest, trailing slash, whitespace, and variable cases.
 - `sudo`, `sudo:1`, explicit tagged/untagged OCI, and local references normalize as
   specified.
-- Short input without a default and malformed short names fail before network access.
+- Short input without an override uses the built-in default; malformed short names
+  fail before network access.
 - Untagged explicit and expanded Feature identities use `latest`; explicit empty tags
   still fail.
 - Equivalent spellings in one Feature map are rejected with both source keys named.
@@ -326,7 +334,8 @@ must also fail any implementation that expands only after the full merge.
 ## Acceptance Criteria
 
 - [ ] `customizations.dcc.defaultFeatureRepository` accepts one validated OCI prefix,
-      inherits through `extends`, and has no machine-global override.
+      inherits through `extends`, overrides the built-in default, and has no
+      machine-global override.
 - [ ] With the example value, `sudo` expands to
       `ghcr.io/dc-powertools/features/sudo` and fetches its implicit `latest` tag;
       `sudo:1` retains tag `1`.
