@@ -1,9 +1,18 @@
 # T-0095: Candidate relay placements
 
-- Authority: user architecture examination request, 2026-09-28 / r1.
-- Status: Done; candidates identified, no implementation selected or performed.
+- Authority: user architecture examination request and selection of the existing
+  container supervisor, 2026-09-28 / r2.
+- Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
+
+## Accepted placement (r2)
+
+The user selected option 1: a relay inside the development container, managed by
+its existing PID 1 supervisor. Separate containers are explicitly excluded.
+[Decision 0008](../decisions/0008-relay-in-development-container.md) owns this
+selection and the remaining design boundaries. The candidate comparison below is
+historical examination, not a set of still-open placement choices.
 
 ## Existing boundaries
 
@@ -97,10 +106,9 @@ counts would reintroduce the wrong lifetime.
 
 ## Shortlist and limits
 
-Shortlist the supervisor-managed proxy for lifecycle integration and the per-container
-host helper for transport/compatibility preservation. The sidecar is useful mainly
-if keeping proxy dependencies out of development images is worth another lifecycle.
-No final architecture is accepted by this examination.
+The r1 examination shortlisted the supervisor-managed proxy and per-container host
+helper. The user's r2 selection supersedes that shortlist: only the proxy managed
+by the existing development-container supervisor remains eligible.
 
 Host networking is not a default solution: it changes isolation, conflicts with
 profile port independence, is gated by current `runArgs` policy, and has platform/

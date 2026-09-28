@@ -37,7 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
-| 2026-09-28 | Examined relay placement candidates, shortlisting a supervisor-managed proxy and a per-container host helper (T-0095). | `.meta/tasks/0095-relay-placement.md` |
+| 2026-09-28 | Examined relay placements and recorded the user's selection of a proxy managed by the existing development-container supervisor, excluding separate containers (T-0095). | `.meta/decisions/0008-relay-in-development-container.md` |
 | 2026-09-28 | Diagnosed concurrent foreground sessions colliding over per-process port-forwarding listeners during attach (T-0094); source inspection only. | `.meta/tasks/0094-attach-port-collision.md` |
 | 2026-09-28 | Bumped the patch version from 0.1.8 to 0.1.9 after Feature validation (T-0093). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Added offline Feature publication validation with a pinned schema, upstream-only mode, and shared project/Feature mount parsing that preserves string readonly flags (T-0092). | `.meta/quality/0092-feature-validation.md` |
@@ -62,6 +62,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - UID remap decision: `.meta/decisions/0002-update-remote-user-uid-in-build-stage.md`
 - Remove image fast path decision: `.meta/decisions/0003-remove-image-fast-path.md`
 - Supervisor delivery model decision: `.meta/decisions/0004-embed-supervisor-in-image.md`
+- Relay placement decision: `.meta/decisions/0008-relay-in-development-container.md`
 - Current `containerEnv` substitution decision: `.meta/decisions/0006-require-missing-container-env-default.md`
 - Superseded `containerEnv` compatibility decision: `.meta/decisions/0005-container-env-substitution.md`
 - Rewrite quality record: `.meta/quality/0004-dcc-rewrite-quality.md`
