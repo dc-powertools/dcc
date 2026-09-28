@@ -43,3 +43,15 @@ in that case. Host publication remains limited to localhost.
 This is a conditional design tradeoff, not a requirement to add network isolation
 machinery. The detailed design should explain the chosen exposure and complexity;
 no isolation implementation or product-code change is selected by this clarification.
+
+## Internal Proxy Port Allocation — 2026-09-28
+
+The user accepted deterministic allocation from a documented, configurable internal
+proxy-port range, skipping application target ports declared in `forwardPorts`.
+Only the allocated ports are reserved for the container's lifetime. Projects can
+override the range to avoid their other application ports. Bind failures must be
+reported clearly; elaborate automatic remapping is not required.
+
+The example proxy port 20000 was illustrative. The default range and configuration
+field remain implementation-design details, not selected values. Dynamic allocation
+does not remove the need to reserve ports or coordinate Docker's publication mapping.

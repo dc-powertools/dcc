@@ -1,7 +1,7 @@
 # T-0095: Candidate relay placements
 
 - Authority: user architecture examination request and selection of the existing
-  container supervisor, 2026-09-28 / r2.
+  container supervisor and subsequent isolation/allocation decisions, 2026-09-28 / r3.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -13,6 +13,11 @@ its existing PID 1 supervisor. Separate containers are explicitly excluded.
 [Decision 0008](../decisions/0008-relay-in-development-container.md) owns this
 selection and the remaining design boundaries. The candidate comparison below is
 historical examination, not a set of still-open placement choices.
+
+The r3 discussion accepted a preference for simple isolation with peer-container
+access permissible when isolation is too complex, and deterministic proxy-port
+allocation from a configurable range. Decision 0008 owns these accepted policies;
+the remaining design concerns are still under discussion.
 
 ## Existing boundaries
 
