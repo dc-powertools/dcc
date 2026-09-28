@@ -3,8 +3,9 @@
 - Authority: user architecture examination request and selection of the existing
   container supervisor and subsequent isolation, allocation, readiness, recovery,
   provisioning, environment support, and general configuration-drift decisions,
-  2026-09-28 / r10.
-- Status: Done; placement selected, no implementation performed.
+  2026-09-28 / r11.
+- Status: Done; placement and user-facing behavior selected; detailed implementation
+  design remains pending and no implementation has been performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
 
@@ -52,6 +53,12 @@ The r10 discussion approved required host IPv4 loopback publication, best-effort
 IPv6 loopback publication with a warning on fallback, and no wildcard publication.
 Application connections remain IPv4 loopback. Decision 0008 owns this policy;
 Docker creation-time fallback and platform verification remain design work.
+
+The r11 discussion accepted explicit rebuild/recreation for a minor-version
+supervisor migration, compatibility checks against the actual running image, and
+continued stop access for older containers. Decision 0008 owns this final user-facing
+policy. Detailed implementation design remains pending; the discussion did not
+authorize a release or product-code implementation.
 
 ## Existing boundaries
 

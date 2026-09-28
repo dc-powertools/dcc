@@ -37,7 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
-| 2026-09-28 | Examined relay placements and recorded the user's selection of a proxy managed by the existing development-container supervisor, excluding separate containers (T-0095). | `.meta/decisions/0008-relay-in-development-container.md` |
+| 2026-09-28 | Completed the relay placement and behavior discussion, including supervisor ownership, configuration snapshots, recovery, environment support, and explicit migration (T-0095). | `.meta/decisions/0008-relay-in-development-container.md`; `.meta/decisions/0009-warn-and-defer-running-config-changes.md` |
 | 2026-09-28 | Diagnosed concurrent foreground sessions colliding over per-process port-forwarding listeners during attach (T-0094); source inspection only. | `.meta/tasks/0094-attach-port-collision.md` |
 | 2026-09-28 | Bumped the patch version from 0.1.8 to 0.1.9 after Feature validation (T-0093). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Added offline Feature publication validation with a pinned schema, upstream-only mode, and shared project/Feature mount parsing that preserves string readonly flags (T-0092). | `.meta/quality/0092-feature-validation.md` |

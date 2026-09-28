@@ -1,6 +1,6 @@
 # 0008: Run The Relay Inside The Development Container
 
-Status: Accepted placement; detailed design pending
+Status: Accepted placement and behavior; detailed implementation design pending
 
 Date: 2026-09-28
 
@@ -17,19 +17,20 @@ have the proxy connect to the application's container-loopback address.
 A separate relay container is excluded. The host-helper and host-service
 alternatives examined in T-0095 are not selected.
 
-## Consequences And Remaining Design
+## Implementation Design Boundaries
 
 - Keep relay infrastructure outside the user-command active set so one-shot and
   graceful container teardown remain possible.
 - Enable forwarding for runtime containers only; the shared supervisor also runs
   in build-preparation containers.
-- Define proxy implementation/provisioning, internal port allocation, readiness,
-  failure handling, and shutdown behavior before implementation.
-- Resolve container-network exposure, supported network modes, remote Docker
-  semantics, and configuration changes on existing containers explicitly.
+- Specify the utility integration, readiness handshake, child cleanup, retry limits,
+  internal port range/default and configuration field, and IPv6 creation fallback
+  within the accepted policies below.
+- Explain the isolation/complexity tradeoff and map the accepted network support
+  boundaries to concrete checks and diagnostics.
 - Follow decision 0004 for any host/supervisor protocol change and version boundary.
 
-This records the placement decision, not a completed detailed design or an
+This records the placement and behavioral decisions, not a completed detailed design or an
 instruction to implement. The user's no-reproduction constraint remains in force.
 The candidate examination is in `../tasks/0095-relay-placement.md`.
 
@@ -84,7 +85,7 @@ one-shot container alive. Exact retry limits and delays remain design details.
 
 The user broadened warn-and-defer behavior to all easily detectable configuration
 changes while a container is running. [Decision 0009](0009-warn-and-defer-running-config-changes.md)
-owns that policy and the proposed fingerprint/snapshot mechanism. It applies to
+owns that policy and the accepted fingerprint/snapshot approach. It applies to
 forwarding as well as other configuration; no automatic reconfiguration or restart.
 
 ## Proxy Provisioning — 2026-09-28
@@ -124,3 +125,19 @@ the current destination behavior. Applications listening exclusively on `::1`
 remain outside this change. Docker-managed publication requires a deliberate
 container-creation fallback for unavailable IPv6; its mechanism and verification
 remain implementation-design work.
+
+## Upgrade And Migration — 2026-09-28
+
+The user accepted an explicit migration for the new supervisor capabilities:
+
+- Use a minor-version protocol boundary, currently 0.2.0 from the 0.1.9 baseline.
+- Require explicit image rebuild and container recreation to adopt the new behavior.
+- Refuse incompatible runtime operations with clear migration instructions.
+- Keep `dcc stop` available for older containers.
+- Never replace or modify a running container automatically.
+- Validate against the actual running container's image, not merely the current
+  image tag, which may have been rebuilt independently.
+
+Ordinary configuration drift continues to warn and defer under decision 0009;
+an incompatible supervisor protocol is a separate condition. This accepts the
+migration policy, not an instruction to bump the version or publish a release now.
