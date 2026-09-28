@@ -100,6 +100,29 @@ connection, half-close, and child-process cleanup requirements. Exact package/ve
 support and supervisor integration remain design and verification work; no runtime
 verification has been performed.
 
+### Post-EOF Cutoff Amendment — 2026-09-28
+
+During T-0096, the user explicitly selected a **2-second** cutoff after either
+direction reaches EOF. Forward EOF to the opposite write side, permit remaining
+data to drain for at most that interval, and close sooner if both directions finish.
+This replaces the prior expectation of draining without a fixed deadline.
+It is neither a mandatory delay nor an inactivity/maximum-duration limit on a
+fully open connection. Responses still incomplete at the cutoff may be truncated.
+Keep the initial value fixed in the implementation; no new user setting is required.
+
+Implementation caveat from subsequent source review: socat 1.8.0.3's `-t` resets
+the closing wait on repeated polls while data flows. It does not by itself implement
+the absolute deadline described above. T-0096 is paused for a user choice about
+that simplicity tradeoff; the accepted strict requirement remains in force meanwhile.
+
+### Final Timeout Selection — 2026-09-28
+
+The user resolved that caveat: "Just use the socat behavior with -t 2".
+Use packaged socat with `-t 2`, including its closing-wait reset while traffic
+continues. This supersedes the absolute-deadline interpretation in the preceding
+amendment. Do not add a separate deadline timer, custom relay binary, or timeout
+setting. Ordinary open connections have no new inactivity or duration limit.
+
 ## Supported Environments And Network Modes — 2026-09-28
 
 The user accepted forwarding on local Docker Engine and Docker Desktop using
@@ -141,3 +164,11 @@ The user accepted an explicit migration for the new supervisor capabilities:
 Ordinary configuration drift continues to warn and defer under decision 0009;
 an incompatible supervisor protocol is a separate condition. This accepts the
 migration policy, not an instruction to bump the version or publish a release now.
+
+## Detailed Design Recorded — 2026-09-28
+
+[T-0096](../tasks/0096-container-relay-design.md) now specifies the concrete relay,
+port range, readiness, recovery, shutdown, publication fallback, and migration
+contracts. Its final utility selection is socat with `-t 2`, per the user's explicit
+instruction above. Earlier references to pending detailed design describe the
+decision's initial state. Implementation and platform verification remain future work.

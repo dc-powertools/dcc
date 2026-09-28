@@ -55,3 +55,25 @@ Exact fingerprint boundaries, snapshot storage, treatment of unavailable/invalid
 current configuration, and compatibility with older containers remain design work.
 New host/supervisor protocol must follow decision 0004's compatibility boundary.
 No product-code changes or runtime reproduction are authorized by this record.
+
+## Builds While Running — 2026-09-28
+
+During T-0096, the user selected requiring the profile runtime container to be
+stopped before `build`, including `--refresh-only` and `--reseed-state`, and directed
+that the implementation remain simple. Build preparation runs hooks and hydrates
+shared state, so allowing it while the runtime is running could apply deferred
+configuration through those shared mounts.
+
+Use a read-only running-runtime preflight before image build or preparation side
+effects. If the profile is running, refuse with instructions to stop it first;
+do not stop it automatically. Failure to determine runtime state also stops the
+build. Dry-run continues to avoid Docker calls and reports this check as skipped.
+Do not add a deferred-build queue or pending-preparation state. This preflight is
+not a distributed lock against another client starting the same profile concurrently.
+
+## Detailed Design Recorded — 2026-09-28
+
+[T-0096](../tasks/0096-container-relay-design.md) now specifies the immutable runtime
+snapshot, input fingerprint boundaries, control protocol, frozen reuse flow, invalid
+current-config behavior, build preflight, and verification criteria. Earlier pending
+design references describe this record's initial state; no implementation is implied.

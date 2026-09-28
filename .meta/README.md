@@ -37,22 +37,11 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-28 | Designed the container-owned socat relay, frozen configuration reuse, failure handling, and migration (T-0096); implementation remains separate. | `.meta/tasks/0096-container-relay-design.md`; `.meta/quality/0096-container-relay-design.md` |
 | 2026-09-28 | Completed the relay placement and behavior discussion, including supervisor ownership, configuration snapshots, recovery, environment support, and explicit migration (T-0095). | `.meta/decisions/0008-relay-in-development-container.md`; `.meta/decisions/0009-warn-and-defer-running-config-changes.md` |
 | 2026-09-28 | Diagnosed concurrent foreground sessions colliding over per-process port-forwarding listeners during attach (T-0094); source inspection only. | `.meta/tasks/0094-attach-port-collision.md` |
 | 2026-09-28 | Bumped the patch version from 0.1.8 to 0.1.9 after Feature validation (T-0093). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Added offline Feature publication validation with a pinned schema, upstream-only mode, and shared project/Feature mount parsing that preserves string readonly flags (T-0092). | `.meta/quality/0092-feature-validation.md` |
-| 2026-09-28 | Bumped the project patch version from 0.1.7 to 0.1.8 in a separate local commit after the bootstrap fix (T-0091). | `.meta/tasks/README.md#tasks` |
-| 2026-09-28 | Fixed profile bootstrap in new repositories, with Git-root/current-directory fallback and side-effect-free dry-run (T-0090). | `.meta/tasks/README.md#tasks` |
-| 2026-09-09 | Bumped the project patch version from 0.1.6 to 0.1.7 without triggering release automation (T-0089). | `.meta/tasks/README.md#tasks` |
-| 2026-09-09 | Made `ghcr.io/dc-powertools/features` the built-in repository for short Feature names while retaining project overrides (T-0088). | `.meta/tasks/0088-built-in-default-feature-repository-notes.md` |
-| 2026-09-08 | Implemented declaration-scoped configurable default Feature repository resolution and canonical shorthand editing (T-0087). | `.meta/tasks/0087-default-feature-repository-notes.md` |
-| 2026-09-08 | Designed declaration-scoped configurable default Feature repository resolution with contained tool footprint (T-0086). | `.meta/tasks/0086-default-feature-repository-design.md` |
-| 2026-09-08 | Implemented trustworthy running-container status in `dcc profile list`, including `[running]` text and tri-state JSON (T-0085). | `.meta/tasks/0085-profile-running-indicator-notes.md` |
-| 2026-09-08 | Designed a trustworthy, batched running-container indicator for `dcc profile list` (T-0084). | `.meta/tasks/0084-profile-running-indicator-design.md` |
-| 2026-09-08 | Removed and separately committed the obsolete `old` devcontainer profile and lockfile (T-0083). | `.meta/tasks/README.md#tasks` |
-| 2026-09-08 | Added exclusive profile bootstrapping from an image, Dockerfile, or validated parent profile (T-0082). | `.meta/tasks/README.md#tasks` |
-| 2026-08-25 | Completed registry-scoped custom-CA support and verified its TLS OCI package-to-image path through marker execution and exact cleanup (T-0070). | `.meta/quality/0073-tls-oci-docker-smoke-quality.md` |
-| 2026-08-25 | Remediated CI token exposure with read-only workflow permissions and non-persisted checkout credentials (T-0081). | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -83,7 +72,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 8
+- Completed repository-changing tasks since that pass: 9
 - Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
