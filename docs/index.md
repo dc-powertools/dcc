@@ -258,13 +258,17 @@ For tool caches that can live under `/cache`, set an environment variable:
 }
 ```
 
-For arbitrary Docker mount syntax, use `mounts`:
+For Docker mount strings, use `mounts`:
 
 ```jsonc
 "mounts": [
   "type=bind,src=${localCacheFolder}/target,dst=/workspace/target"
 ]
 ```
+
+Standard object mounts are also accepted. Project and Feature mounts use the
+[same parser](features.md#feature-mounts), including support for string `readonly`
+flags and rejection of object-level `readonly`.
 
 Runtime launches automatically create the host-side source directory for any
 bind mount whose source path lies under `${localCacheFolder}`.
@@ -443,6 +447,10 @@ Build preparation runs `onCreateCommand`, `updateContentCommand`, and
 
 `dcc feature` edits the selected profile's top-level `features` object. See
 [Devcontainer Features](features.md#editing-features-with-dcc-feature).
+
+`dcc feature validate <path>` validates a Feature or collection directory offline
+against the bundled schema and dcc parser. Add `--upstream-only` for upstream
+schema compliance alone. See [publication validation](features.md#validating-features-before-publication).
 
 ### `dcc run`
 

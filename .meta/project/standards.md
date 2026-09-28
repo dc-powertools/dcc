@@ -15,7 +15,7 @@ Record only commands verified by successful execution in this environment.
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-09-28 |
 | Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.8`. | 2026-09-28 |
 | Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-09-28 |
-| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 591 unit tests and 101 runnable integration tests, with 38 tests listed but ignored as designed. | 2026-09-28 |
+| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 592 unit tests and 114 runnable integration tests, with 38 tests listed but ignored as designed. | 2026-09-28 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-09-28 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 | Workflow lint | `actionlint .github/workflows/*.yml` | `actionlint` on `PATH` | Passed for every workflow with no findings using `actionlint 1.7.12`. | 2026-09-09 |

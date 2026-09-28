@@ -110,6 +110,7 @@ dcc exec cargo test          # run an explicit argv directly in the container
 
 dcc feature -a node:1
 dcc feature -r node:1
+dcc feature validate .publish-staging  # offline Feature metadata publication gate
 
 dcc start                    # start or promote a durable profile container
 dcc attach                   # run attach hooks, then open a shell

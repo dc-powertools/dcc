@@ -16,10 +16,12 @@ clap = { version = "4", features = ["derive"] }
 flate2 = "1"
 indexmap = { version = "2", features = ["serde"] }
 json5 = "0.4"
+jsonschema = { version = "0.58.1", default-features = false, features = [] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+serde_path_to_error = { version = "0.1", features = [] }
 sha2 = "0.10"
 tar = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "sync", "time"] }

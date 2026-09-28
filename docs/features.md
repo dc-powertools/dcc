@@ -102,6 +102,89 @@ The command parses JSONC input but rewrites the profile file as formatted JSON.
 Use `--dry-run` to validate and preview the operation without writing. Use
 `--format json` for structured edit summaries.
 
+## Validating Features Before Publication
+
+Use `dcc feature validate` as a local, offline publication gate:
+
+```sh
+dcc feature validate ./my-feature
+dcc feature validate .publish-staging
+dcc feature validate .publish-staging --upstream-only
+```
+
+The path must be a directory. If it contains `devcontainer-feature.json`, dcc
+validates that file. Otherwise it validates metadata in its direct child Feature
+directories, in sorted order. Other files and directories without metadata are
+ignored; an empty collection fails. Discovery is not recursive. Unlike build's
+install-only compatibility, publication validation requires metadata.
+
+The default mode checks the bundled upstream schema plus these explicit dcc
+extensions, then checks compatibility with dcc's metadata and shared mount parser:
+
+- String mounts, including `,readonly` (see below).
+- `remoteEnv` string maps and legacy `scripts` string maps.
+- Typed `customizations.dcc.commands` and `customizations.dcc.state`. Unknown dcc
+  keys are rejected; other tools' customizations are left to those tools.
+
+It also checks dependency reference syntax and state declarations without fetching
+dependencies or resolving image-dependent variables. It does not execute scripts,
+build images, invoke Docker, require a `.devcontainer` workspace, or inspect
+`install.sh`. Validation does not prove installation or runtime success. Docker
+option values, mount source existence, variable values, and dependency availability
+remain runtime concerns. Unsafe runtime declarations still require the normal
+`--allow-unsafe-runtime` opt-in when used; validation grants no runtime permission.
+
+`--upstream-only` checks **only the pinned upstream schema**, without dcc extensions
+or parser checks. It rejects string mounts, `remoteEnv`, and `scripts`. Upstream
+allows arbitrary tool customizations, including `customizations.dcc`; upstream-only
+success does not validate their contents or promise dcc compatibility. Both modes
+use the draft-07 schema pinned at upstream commit
+[`1b2baddb5f1071ca0e8bcb7eb56dbc9d3e4a674f`](https://github.com/devcontainers/spec/blob/1b2baddb5f1071ca0e8bcb7eb56dbc9d3e4a674f/schemas/devContainerFeature.schema.json)
+(2024-01-22). The schema, provenance, license, and dcc extension definitions are
+version-controlled in [`schemas/`](../schemas/README.md) and embedded in the binary.
+
+Errors include the metadata file and JSON Pointer (`file#/mounts/0`); malformed
+JSON includes line and column. Invalid metadata, unreadable input, and collections
+with no Features exit 1. Success exits 0. `--format json` emits `mode`, `valid`,
+`files`, and `errors` with `file`, `location` (a JSON Pointer, empty for the root),
+and `message`. Collections report errors across all discovered metadata files.
+
+The intended publication workflow is:
+
+```sh
+dcc feature validate .publish-staging &&
+devcontainer features publish \
+  --registry ghcr.io \
+  --namespace dc-powertools/features \
+  .publish-staging
+```
+
+dcc provides the validation gate; the official Dev Container CLI still publishes.
+The `validate` subcommand cannot be combined with `--add` or `--remove`.
+
+### Feature Mounts
+
+Project configuration, Feature metadata, and image-label metadata use the same
+mount parser. It accepts standard objects with `type`, `target`, and optional
+`source`, plus Docker mount strings:
+
+```json
+"mounts": [
+  { "type": "volume", "target": "/data" },
+  "type=bind,source=${localEnv:HOME}/.config/tool,target=/tool-config,readonly"
+]
+```
+
+String flags are preserved through build labels and runtime `--mount` arguments.
+Use the string form for read-only mounts; an object-level `readonly` property is
+rejected rather than silently ignored. Objects allow `bind` or `volume`; strings
+also allow `tmpfs`. Both require a nonempty target, and bind mounts require a
+nonempty source. String aliases `src`, `dst`, and `destination` are supported.
+Duplicate structural fields (including aliases), empty comma-separated fields,
+and invalid `readonly`/`ro` booleans are rejected. Other Docker options pass
+through. Quoted CSV strings and object paths containing commas are unsupported.
+Templates are preserved for normal runtime substitution and safety checks.
+
 ## Build Behavior
 
 Each Feature's `install.sh` runs during `dcc build` as `root`, matching the

@@ -21,7 +21,7 @@ mod workspace;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use clap::Parser as _;
+use clap::{CommandFactory as _, Parser as _};
 
 #[tokio::main]
 async fn main() {
@@ -38,6 +38,28 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
+    if let cli::Command::Feature {
+        command:
+            Some(cli::FeatureCommand::Validate {
+                path,
+                upstream_only,
+            }),
+        add,
+        remove,
+    } = &cli.command
+    {
+        // Clap's args_conflicts_with_subcommands also rejects global flags before
+        // `validate`. Limit this conflict to the two profile-editing operations.
+        if !add.is_empty() || !remove.is_empty() {
+            cli::Cli::command()
+                .error(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "feature validate cannot be combined with --add or --remove",
+                )
+                .exit();
+        }
+        return features::validate::validate_path(path, *upstream_only, cli.format);
+    }
     if let cli::Command::Profile {
         command:
             cli::ProfileCommand::Bootstrap {
@@ -233,7 +255,11 @@ async fn run() -> anyhow::Result<()> {
         cli::Command::Profile {
             command: cli::ProfileCommand::Bootstrap { .. },
         } => anyhow::bail!("profile bootstrap was not dispatched before profile resolution"),
-        cli::Command::Feature { add, remove } => feature::update_features(
+        cli::Command::Feature {
+            command: None,
+            add,
+            remove,
+        } => feature::update_features(
             &workspace,
             &profile,
             &config_path,
@@ -246,6 +272,11 @@ async fn run() -> anyhow::Result<()> {
                 format: cli.format,
             },
         ),
+        cli::Command::Feature {
+            command: Some(_), ..
+        } => {
+            anyhow::bail!("feature validation was not dispatched before workspace resolution")
+        }
         cli::Command::Run {
             memory,
             cpus,

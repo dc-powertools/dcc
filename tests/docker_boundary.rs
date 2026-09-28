@@ -842,6 +842,41 @@ fn missing_container_env_fails_build_preparation_lifecycle_hook() {
 }
 
 #[test]
+fn project_and_feature_mount_forms_reach_docker_with_readonly_preserved() {
+    let fx = FakeDockerFixture::new(
+        r#"{
+        "image":"debian:bookworm-slim", "containerUser":"root",
+        "mounts":[
+            "type=volume,source=project-data,target=/project-data,readonly",
+            {"type":"volume","target":"/project-anonymous"}
+        ]
+    }"#,
+    );
+    let metadata = r#"[{"id":"feat","mounts":[
+        "type=volume,source=feature-data,target=/feature-data,readonly",
+        {"type":"volume","target":"/feature-anonymous"}
+    ]}]"#;
+    let output = fx.output_with_metadata(&["start"], Some(&compatible_patch_version()), metadata);
+    assert_success(&output);
+    let calls = fx.calls();
+    let run = calls
+        .iter()
+        .find(|call| {
+            call.first().is_some_and(|arg| arg == "run")
+                && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
+        })
+        .expect("expected profile container creation");
+    for mount in [
+        "type=volume,source=project-data,target=/project-data,readonly",
+        "type=volume,source=feature-data,target=/feature-data,readonly",
+        "type=volume,target=/project-anonymous",
+        "type=volume,target=/feature-anonymous",
+    ] {
+        assert!(contains_pair(run, "--mount", mount), "{run:?}");
+    }
+}
+
+#[test]
 fn missing_container_env_without_default_fails_in_feature_consumers() {
     let cases = [
         (

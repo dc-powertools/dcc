@@ -1,0 +1,53 @@
+{
+  "description": "Version-controlled replacements at JSON Pointers in the pinned upstream Feature schema. String mount structure is also checked by the shared runtime parser.",
+  "replacements": {
+    "/definitions/Feature/properties/mounts/items": {
+      "anyOf": [
+        { "$ref": "#/definitions/Mount" },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "/definitions/Feature/properties/remoteEnv": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "/definitions/Feature/properties/scripts": {
+      "description": "Legacy named commands; prefer customizations.dcc.commands.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "/definitions/Feature/properties/customizations": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "dcc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commands": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "state": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string" },
+                  {
+                    "type": "object",
+                    "required": ["path"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "path": { "type": "string" },
+                      "type": { "enum": ["directory", "file"] }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

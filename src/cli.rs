@@ -103,6 +103,8 @@ pub(crate) enum Command {
         command: ProfileCommand,
     },
     Feature {
+        #[command(subcommand)]
+        command: Option<FeatureCommand>,
         /// Add a Feature reference to the selected profile.
         #[arg(short = 'a', long = "add", value_name = "FEATURE")]
         add: Vec<String>,
@@ -122,6 +124,18 @@ pub(crate) enum Command {
         #[arg(short = 'k', long)]
         keep: bool,
         script: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum FeatureCommand {
+    /// Validate local Feature metadata offline, without Docker or install scripts.
+    Validate {
+        /// Feature directory or collection of direct child Feature directories.
+        path: std::path::PathBuf,
+        /// Check only the pinned upstream schema, without dcc extensions/parser checks.
+        #[arg(long)]
+        upstream_only: bool,
     },
 }
 

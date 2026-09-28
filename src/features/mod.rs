@@ -15,10 +15,12 @@ use crate::{
 };
 
 use self::{context::FeatureContext, oci::OciClient};
+use crate::config::mount::Mount as FeatureMount;
 
 pub(crate) mod context;
 mod local;
 pub(crate) mod oci;
+pub(crate) mod validate;
 
 // ── Feature metadata ──────────────────────────────────────────────────────────
 
@@ -112,30 +114,6 @@ impl FeatureMeta {
             privileged: self.privileged.unwrap_or(false),
             cap_add: self.cap_add.clone(),
             security_opt: self.security_opt.clone(),
-        }
-    }
-}
-
-/// A mount from `devcontainer-feature.json`, in the JSON object form.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct FeatureMount {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    source: String,
-    target: String,
-    #[serde(rename = "type")]
-    mount_type: String,
-}
-
-impl FeatureMount {
-    /// Converts to the `--mount` string form accepted by `docker run`.
-    fn to_mount_string(&self) -> String {
-        if self.mount_type == "volume" && self.source.is_empty() {
-            format!("type=volume,target={}", self.target)
-        } else {
-            format!(
-                "type={},source={},target={}",
-                self.mount_type, self.source, self.target
-            )
         }
     }
 }
@@ -405,7 +383,7 @@ pub(crate) fn parse_runtime_from_label(json: &str) -> anyhow::Result<FeatureRunt
     let mut config = FeatureRuntimeConfig::default();
 
     for entry in &entries {
-        // mounts: collect all; convert JSON objects to --mount template strings
+        // Shared project/Feature parser preserves strings and converts objects.
         if let Some(mounts_val) = entry.get("mounts") {
             let mounts: Vec<FeatureMount> = serde_json::from_value(mounts_val.clone())
                 .context("failed to parse 'mounts' in devcontainer.metadata label")?;
@@ -1120,44 +1098,6 @@ mod tests {
             .contains("invalid devcontainer-feature.json"));
     }
 
-    // --- FeatureMount::to_mount_string ---
-
-    #[test]
-    fn mount_to_string_volume() {
-        let m = FeatureMount {
-            source: "my-volume".to_string(),
-            target: "/data".to_string(),
-            mount_type: "volume".to_string(),
-        };
-        assert_eq!(
-            m.to_mount_string(),
-            "type=volume,source=my-volume,target=/data"
-        );
-    }
-
-    #[test]
-    fn mount_to_string_anonymous_volume_omits_source_field() {
-        let mount = FeatureMount {
-            source: String::new(),
-            target: "/data".to_string(),
-            mount_type: "volume".to_string(),
-        };
-        assert_eq!(mount.to_mount_string(), "type=volume,target=/data");
-    }
-
-    #[test]
-    fn mount_to_string_bind() {
-        let m = FeatureMount {
-            source: "/host/path".to_string(),
-            target: "/container/path".to_string(),
-            mount_type: "bind".to_string(),
-        };
-        assert_eq!(
-            m.to_mount_string(),
-            "type=bind,source=/host/path,target=/container/path"
-        );
-    }
-
     // --- topological_sort ---
 
     fn entry(meta: FeatureMeta) -> FeatureEntry {
@@ -1340,6 +1280,46 @@ mod tests {
             dc_pos < install_pos && feat_pos < install_pos,
             "both containerEnv sources must be set via ENV before the feature install runs, got:\n{dockerfile}"
         );
+    }
+
+    #[tokio::test]
+    async fn feature_mounts_survive_build_label_and_match_project_parser() {
+        let tmp = tempfile::tempdir().unwrap();
+        let metadata = br#"{"mounts":[
+            "type=bind,source=${localCacheFolder}/tool,target=/tool,readonly",
+            {"type":"volume","target":"/anonymous"},
+            {"type":"volume","source":"named","target":"/named"}
+        ]}"#;
+        let config = local_config(tmp.path(), metadata);
+        let output = build_context(&config, tmp.path(), false, None)
+            .await
+            .unwrap();
+        let label = output.metadata_label.unwrap();
+        let runtime = parse_runtime_from_label(&label).unwrap();
+        let project: crate::config::RawConfig = serde_json::from_slice(metadata).unwrap();
+        assert_eq!(runtime.mounts, project.mounts.unwrap());
+        assert_eq!(
+            runtime.mounts,
+            [
+                "type=bind,source=${localCacheFolder}/tool,target=/tool,readonly",
+                "type=volume,target=/anonymous",
+                "type=volume,source=named,target=/named",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_feature_and_label_mount_parsers_reject_the_same_inputs() {
+        for mount in [
+            serde_json::json!({"type":"volume","target":"/data","readonly":true}),
+            serde_json::json!("type=bind,target=/data"),
+            serde_json::json!("type=volume,target=/data,readonly=maybe"),
+        ] {
+            let metadata = serde_json::to_vec(&serde_json::json!({"mounts":[mount]})).unwrap();
+            assert!(serde_json::from_slice::<crate::config::RawConfig>(&metadata).is_err());
+            assert!(parse_feature_meta(Some(&metadata)).is_err());
+            assert!(parse_runtime_from_label(std::str::from_utf8(&metadata).unwrap()).is_err());
+        }
     }
 
     #[tokio::test]

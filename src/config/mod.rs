@@ -13,6 +13,7 @@ use crate::{
 
 pub(crate) mod feature_ref;
 pub(crate) mod merge;
+pub(crate) mod mount;
 pub(crate) mod registry_ca;
 pub(crate) mod resolve;
 pub(crate) mod vars;
@@ -32,6 +33,7 @@ pub(crate) struct RawConfig {
     pub(crate) container_env: Option<HashMap<String, String>>,
     pub(crate) remote_env: Option<HashMap<String, String>>,
     pub(crate) container_user: Option<String>,
+    #[serde(default, deserialize_with = "mount::deserialize_optional_mounts")]
     pub(crate) mounts: Option<Vec<String>>,
     pub(crate) run_args: Option<Vec<String>>,
     pub(crate) privileged: Option<bool>,

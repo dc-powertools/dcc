@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-28 | Added offline Feature publication validation with a pinned schema, upstream-only mode, and shared project/Feature mount parsing that preserves string readonly flags (T-0092). | `.meta/quality/0092-feature-validation.md` |
 | 2026-09-28 | Bumped the project patch version from 0.1.7 to 0.1.8 in a separate local commit after the bootstrap fix (T-0091). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Fixed profile bootstrap in new repositories, with Git-root/current-directory fallback and side-effect-free dry-run (T-0090). | `.meta/tasks/README.md#tasks` |
 | 2026-09-09 | Bumped the project patch version from 0.1.6 to 0.1.7 without triggering release automation (T-0089). | `.meta/tasks/README.md#tasks` |
@@ -77,7 +78,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 4
+- Completed repository-changing tasks since that pass: 5
 - Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.

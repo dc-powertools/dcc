@@ -63,6 +63,8 @@ third level of nesting.
 | `serde` | `derive` | Struct deserialization |
 | `serde_json` | `preserve_order` | JSON value type; used in feature option maps and profile feature edits where object order should remain stable |
 | `json5` | — | JSONC-compatible parsing (trailing commas, `//` comments); devcontainer configs use this format |
+| `jsonschema` | Defaults disabled; no resolution features | Full draft-07 validation against embedded upstream Feature schema and explicit dcc extensions, offline |
+| `serde_path_to_error` | — | JSON locations for Feature runtime parser compatibility errors |
 | `anyhow` | — | Error handling with context |
 | `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container-exists polling (`wait_for_running`) |
 | `reqwest` | `json`, `rustls-tls` | HTTP client for OCI registry; `rustls-tls` avoids OpenSSL for cross-compilation |
@@ -955,7 +957,7 @@ a fatal error.
 **Phase 3 — context assembly**: In topological order, each feature contributes:
 - `containerEnv` → substituted with container-only variables, written to `FeatureContext.container_env` (becomes Dockerfile `ENV`)
 - `remoteEnv` → stored as raw templates in the feature's label entry; substitution is applied at `dcc run` time
-- `mounts` → stored as JSON objects in the feature's label entry; converted to `--mount` template strings and substituted at `dcc run` time
+- `mounts` → shared `config/mount.rs` parser accepts strings and objects for project config, Feature metadata, and image labels; preserves string flags such as `readonly` through labels and `--mount` arguments, converting objects to strings at runtime
 - `customizations.dcc.commands` → stored in the feature's label entry for `dcc run` command resolution; legacy top-level `scripts` is normalized with a warning
 - `customizations.dcc.state` → fixed container path variables are substituted before validation and storage in the feature's label entry; `${containerEnv:...}` remains deferred; mounted before project state at runtime
 - unsafe runtime properties → rejected unless `--allow-unsafe-runtime` is present, then stored in the feature's label entry
@@ -984,6 +986,22 @@ Feature `containerUser`, `remoteUser`, `customizations.dcc.registryCAs`, and
 `customizations.dcc.defaultFeatureRepository` are rejected. Registry trust and the
 default Feature source are controlled only by dcc and the selected project config;
 downloaded Feature metadata cannot contribute either setting.
+
+### Offline publication validation (`features/validate.rs`)
+
+`dcc feature validate` dispatches before workspace discovery and uses only local
+metadata plus embedded schemas. It never calls Feature acquisition/build-context
+code, executes scripts, or initializes an OCI client. The unmodified upstream
+draft-07 schema and separate dcc replacements live in `schemas/`; that directory's
+README owns provenance, licensing, and update instructions. JSON Schema resolution
+features are disabled, and metadata cannot choose an external schema.
+
+Default validation combines the schema with actual `FeatureMeta` deserialization,
+shared mount parsing, dependency reference normalization, and static state checks.
+Upstream-only mode omits extensions and parser checks. Project and Feature mount
+objects reject unknown fields (especially the previously ignored `readonly`);
+strings preserve Docker flags and templates. Detailed CLI semantics and the
+publication workflow belong in `docs/features.md`.
 
 ### OCI Artifact Download (`features/oci.rs`)
 
@@ -1164,6 +1182,7 @@ Commands:
   profile list
   profile bootstrap (--image IMAGE | --dockerfile PATH | --extends PROFILE)
   feature [--add <reference>] [--remove <reference>]
+  feature validate <path> [--upstream-only]
 ```
 
 `--profile` (`-p`), `--strict`, `--dry-run`, `--debug`, and `--format` are clap
