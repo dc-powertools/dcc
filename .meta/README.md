@@ -63,6 +63,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - Remove image fast path decision: `.meta/decisions/0003-remove-image-fast-path.md`
 - Supervisor delivery model decision: `.meta/decisions/0004-embed-supervisor-in-image.md`
 - Relay placement decision: `.meta/decisions/0008-relay-in-development-container.md`
+- Running configuration drift policy: `.meta/decisions/0009-warn-and-defer-running-config-changes.md`
 - Current `containerEnv` substitution decision: `.meta/decisions/0006-require-missing-container-env-default.md`
 - Superseded `containerEnv` compatibility decision: `.meta/decisions/0005-container-env-substitution.md`
 - Rewrite quality record: `.meta/quality/0004-dcc-rewrite-quality.md`

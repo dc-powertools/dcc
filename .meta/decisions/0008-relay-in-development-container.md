@@ -79,3 +79,10 @@ retaining shell access for diagnosis. Existing connections may be lost on a cras
 Application connection failures do not trigger relay restarts. Restart attempts
 stop when container shutdown begins, and relay infrastructure cannot keep a
 one-shot container alive. Exact retry limits and delays remain design details.
+
+## Configuration Drift — 2026-09-28
+
+The user broadened warn-and-defer behavior to all easily detectable configuration
+changes while a container is running. [Decision 0009](0009-warn-and-defer-running-config-changes.md)
+owns that policy and the proposed fingerprint/snapshot mechanism. It applies to
+forwarding as well as other configuration; no automatic reconfiguration or restart.

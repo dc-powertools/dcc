@@ -1,8 +1,8 @@
 # T-0095: Candidate relay placements
 
 - Authority: user architecture examination request and selection of the existing
-  container supervisor and subsequent isolation, allocation, readiness, and recovery
-  decisions, 2026-09-28 / r5.
+  container supervisor and subsequent isolation, allocation, readiness, recovery,
+  and general configuration-drift decisions, 2026-09-28 / r6.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -27,6 +27,12 @@ also records startup-failure diagnostics and retaining the container where possi
 The r5 discussion accepted bounded relay restart attempts while preserving the
 container and user commands after failed recovery. Decision 0008 owns degradation
 reporting and the shutdown boundary for recovery.
+
+The r6 discussion broadened warn-and-defer behavior to all easily detectable running
+configuration changes. Decision 0009 owns this policy, the user's hash suggestion,
+and the proposed distinction between build and launch fingerprints plus a retained
+configuration snapshot. This expands the design beyond forwarding; implementation
+has not begun.
 
 ## Existing boundaries
 
