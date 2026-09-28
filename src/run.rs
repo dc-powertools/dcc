@@ -20,6 +20,20 @@ pub(crate) async fn run(
     script_arg: Option<&str>,
     opts: exec::ExecOptions<'_>,
 ) -> anyhow::Result<()> {
+    if !opts.dry_run {
+        if let Some(name) = script_arg {
+            let status = exec::run_named(workspace, profile, config_path, name, opts).await?;
+            std::process::exit(status.code().unwrap_or(1));
+        }
+        if let Some(runtime) = crate::runtime::reuse(workspace, profile, config_path, opts).await? {
+            for line in
+                format_script_list(&runtime.snapshot.scripts, &runtime.snapshot.feature_scripts)
+            {
+                println!("{line}");
+            }
+            return Ok(());
+        }
+    }
     let cache_dir = CacheDir::new(workspace, profile);
     let config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
         .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
@@ -65,21 +79,12 @@ pub(crate) async fn run(
         })?,
     };
 
-    let Some(arg) = script_arg else {
-        version::ensure_image_version_compatible(image_tag.as_str(), opts.profile_arg, opts.strict)
-            .await?;
-        for line in format_script_list(&config.scripts, &feature_runtime.feature_scripts) {
-            println!("{line}");
-        }
-        return Ok(());
-    };
-
-    let cmd = resolve_script(arg, &config.scripts, &feature_runtime.feature_scripts)
-        .with_context(|| format!("failed to resolve script `{arg}`"))?;
-
-    let exec_args = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()];
-    let status = exec::exec(workspace, profile, config_path, &exec_args, opts).await?;
-    std::process::exit(status.code().unwrap_or(1));
+    version::ensure_image_version_compatible(image_tag.as_str(), opts.profile_arg, opts.strict)
+        .await?;
+    for line in format_script_list(&config.scripts, &feature_runtime.feature_scripts) {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 /// Resolves a script argument to its shell command string.

@@ -4,8 +4,8 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0097
-- Primary task: None
+- Next task ID: T-0098
+- Primary task: T-0097
 - Scheduling: Running
 - Global pause source or reason: None
 
@@ -115,6 +115,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0094 | Diagnose attach failure when a running container has an already-bound forwarded host port, using source inspection without reproduction. | User request and no-reproduction constraint 2026-09-28 / r2 | Done | None | Discover / Low | None | Stop; source-based diagnosis complete. | `.meta/tasks/0094-attach-port-collision.md` | Container reuse still unconditionally acquires per-process forwarding listeners; a concurrent foreground session on the same ports therefore fails before attach hooks or the shell. Running-container state alone is insufficient: start creates no relays and completed sessions release them. Actual listener ownership on the affected host remains unknown. No reproduction or container launch was attempted; preparatory build cancelled. Source/documentation review and diff check passed; no product code changed. |
 | T-0095 | Examine relay placements and settle user-facing behavior for a relay managed inside the development container. | User request and relay/configuration-drift design decisions 2026-09-28 / r11 | Done | None | Discover / Low | None | Stop; placement and behavior discussion complete, detailed implementation design pending. | `.meta/tasks/0095-relay-placement.md`; `.meta/decisions/0008-relay-in-development-container.md`; `.meta/decisions/0009-warn-and-defer-running-config-changes.md` | Accepted existing-supervisor ownership, packaged proxy, configurable internal ports, readiness and bounded recovery, simple isolation tradeoff, general warn-and-defer configuration snapshots, explicit environment/address-family support, and minor-version migration through explicit rebuild/recreation. Documentation consistency and diff checks passed. No reproduction, runtime verification, product-code changes, version bump, or publication. |
 | T-0096 | Design the approved container-managed relay and general configuration snapshot/drift behavior; pause for material complexity or unresolved ambiguity. | User request plus stop-before-build and explicit socat -t 2 selection 2026-09-28 / r4 | Done | T-0095 | Decide / High | None | Stop; design complete, implementation remains separate. | `.meta/tasks/0096-container-relay-design.md` | Designed packaged socat -t 2 under the existing supervisor, deterministic configurable proxy ports, immutable launch snapshots and cheap drift checks, simple stop-before-build guard, bounded recovery and safe creation fallback. Architecture, security, source/policy consistency, local-link and diff reviews passed. Implementation slices and platform qualification matrix recorded; no product implementation, reproduction, runtime tests, version bump or release. |
+
+| T-0097 | Implement the approved container-owned relay and frozen runtime configuration design. | User implementation request 2026-09-28 / r1 | Needs verification | T-0096 | Initiative / High | Required Docker/Desktop/distro matrix cannot run here; user prohibits container launches. | Qualify the live platform matrix in a capable environment before release. | `.meta/tasks/0097-container-relay-implementation.md`; `.meta/quality/0097-container-relay-implementation.md` | Implemented 0.2.0 container-owned socat relays, frozen snapshots, drift warnings, safe creation and build gate. Format, locked check, Clippy, 702 runnable tests, 5 focused local utility tests, and build passed. No containers launched. |
 
 ## Operating Contract
 

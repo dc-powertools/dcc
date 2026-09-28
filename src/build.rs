@@ -70,6 +70,7 @@ pub(crate) async fn build(
             "docker image build",
             "docker image label inspection",
             "build-preparation container start",
+            "running-runtime preflight",
             "build-preparation lifecycle hooks",
         ]
         .into_iter()
@@ -133,6 +134,14 @@ pub(crate) async fn build(
         )
         .print(opts.format);
     }
+
+    if let Some(running) = docker::runtime_by_identity(container_id.as_str()).await? {
+        anyhow::bail!(
+            "profile runtime {} is running; stop it before build, refresh or reseed",
+            running.id
+        );
+    }
+    supervisor::RtDir::prune(workspace, profile).await;
 
     if opts.refresh_only {
         ensure_refresh_image_exists(image_tag.as_str()).await?;
@@ -413,7 +422,7 @@ async fn run_build_preparation(
         return Ok(());
     }
 
-    let rt_dir = supervisor::RtDir::new(workspace, profile);
+    let (rt_dir, _) = supervisor::RtDir::instance(workspace, profile)?;
     rt_dir.materialize()?;
     let rt_mount = rt_dir.mount_arg();
 
@@ -848,6 +857,7 @@ mod tests {
             run_args: Vec::new(),
             unsafe_runtime: config::UnsafeRuntimeConfig::default(),
             forward_ports: Vec::new(),
+            relay_port_range: [20000, 20999],
             ports_attributes: HashMap::new(),
             other_ports_attributes: None,
             override_command: None,

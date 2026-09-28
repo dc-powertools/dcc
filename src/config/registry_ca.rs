@@ -159,7 +159,7 @@ fn canonical_dns_name(host: &str) -> anyhow::Result<String> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct RegistryCaSource {
-    path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]

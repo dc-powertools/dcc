@@ -23,6 +23,8 @@ use crate::{
 pub(crate) struct ResourceLimits<'a> {
     pub(crate) memory: &'a str,
     pub(crate) cpus: &'a str,
+    pub(crate) memory_explicit: bool,
+    pub(crate) cpus_explicit: bool,
 }
 
 /// Behavioral options for a container launch, shared by `dcc exec` and `dcc run`.
@@ -135,42 +137,8 @@ pub(crate) async fn start(
         )?;
         return Ok(());
     }
-    let plan = RuntimePlan::prepare(workspace, profile, config_path, &[], opts).await?;
-    let existing =
-        running_container_name(plan.container_id.as_str(), plan.container.as_str()).await?;
-    if let Some(running) = &existing {
-        // Promote an already-running container to durable via the supervisor.
-        let status = docker::exec(
-            running,
-            &plan.config.container_user,
-            &plan.config.workspace_folder,
-            &[
-                format!("{}/dcc-ctl", supervisor::DCC_SHARE),
-                "mode".to_string(),
-                "durable".to_string(),
-            ],
-        )
-        .await
-        .with_context(|| format!("failed to promote container `{running}` to durable"))?;
-        if !status.success() {
-            anyhow::bail!(
-                "failed to promote container `{running}` to durable: dcc-ctl exited with status {}",
-                status.code().unwrap_or(-1)
-            );
-        }
-        if opts.debug {
-            eprintln!(
-                "dcc debug: container `{running}` already running, promoted to durable for `{}`",
-                plan.container_id.as_str()
-            );
-        }
-        return Ok(());
-    }
-    start_container(&plan).await?;
-    // The supervisor runs postStartCommand hooks internally at startup. Wait for
-    // bootstrap completion so a hook failure surfaces here as a clear error
-    // rather than a hang, and so the container is ready when this returns.
-    wait_ready(&plan, plan.container.as_str()).await
+    acquire_runtime(workspace, profile, config_path, &[], None, opts).await?;
+    Ok(())
 }
 
 pub(crate) fn dry_run_runtime(
@@ -196,6 +164,7 @@ pub(crate) fn dry_run_runtime(
         "devcontainer.metadata feature runtime inspection",
         "state/cache mount preparation",
         "port forwarding",
+        "running snapshot lookup and configuration drift comparison",
     ]);
     dry_run::DryRunReport::new(
         command,
@@ -233,6 +202,67 @@ enum ForegroundKind {
     Attach,
 }
 
+async fn acquire_runtime(
+    workspace: &Workspace,
+    profile: &ProfileName,
+    config_path: &Path,
+    override_args: &[String],
+    named: Option<&str>,
+    opts: ExecOptions<'_>,
+) -> anyhow::Result<crate::runtime::Runtime> {
+    if let Some(runtime) = crate::runtime::reuse(workspace, profile, config_path, opts).await? {
+        return Ok(runtime);
+    }
+    let plan = RuntimePlan::prepare(workspace, profile, config_path, override_args, opts).await?;
+    // Reject invalid named commands before starting a container or running hooks.
+    if let Some(name) = named {
+        crate::run::resolve_script(name, &plan.snapshot.scripts, &plan.snapshot.feature_scripts)?;
+    }
+    match crate::runtime::create(&plan.run_args, plan.container.as_str(), &plan.snapshot).await? {
+        crate::runtime::Created::Winner(container) => {
+            crate::runtime::load(container, workspace, profile, config_path, opts).await
+        }
+        crate::runtime::Created::New(container) => {
+            let ready = docker::control(&container.id, "wait-ready", None).await?;
+            docker::captured_ok(
+                &ready,
+                "container startup (retained for diagnosis where possible)",
+            )?;
+            // Verify the fixed private snapshot can actually be read under Docker's UID mapping.
+            let data = docker::control(&container.id, "snapshot", None).await?;
+            anyhow::ensure!(data.status.success(), "cannot read runtime snapshot under container UID mapping; stop and recreate with supported permissions");
+            let snapshot = crate::runtime_snapshot::RuntimeSnapshot::decode(
+                &data.stdout,
+                &plan.snapshot.identity,
+                &container.image,
+                &plan.snapshot.token,
+            )?;
+            Ok(crate::runtime::Runtime {
+                id: container.id,
+                snapshot,
+                started: true,
+            })
+        }
+    }
+}
+
+pub(crate) async fn run_named(
+    workspace: &Workspace,
+    profile: &ProfileName,
+    path: &Path,
+    name: &str,
+    opts: ExecOptions<'_>,
+) -> anyhow::Result<ExitStatus> {
+    let runtime = acquire_runtime(workspace, profile, path, &[], Some(name), opts).await?;
+    let script = crate::run::resolve_script(
+        name,
+        &runtime.snapshot.scripts,
+        &runtime.snapshot.feature_scripts,
+    )?;
+    let args = vec!["/bin/sh".into(), "-c".into(), script.to_owned()];
+    execute_in_runtime(runtime, args, ForegroundKind::Exec, opts).await
+}
+
 async fn execute_foreground(
     workspace: &Workspace,
     profile: &ProfileName,
@@ -241,117 +271,47 @@ async fn execute_foreground(
     kind: ForegroundKind,
     opts: ExecOptions<'_>,
 ) -> anyhow::Result<ExitStatus> {
-    let plan = RuntimePlan::prepare(workspace, profile, config_path, override_args, opts).await?;
+    let runtime =
+        acquire_runtime(workspace, profile, config_path, override_args, None, opts).await?;
+    let args = runtime.snapshot.explicit_args(override_args)?;
+    execute_in_runtime(runtime, args, kind, opts).await
+}
 
-    let (container_name, started) = async {
-        let existing =
-            running_container_name(plan.container_id.as_str(), plan.container.as_str()).await?;
-        let (container_name, started) = if let Some(running) = existing {
-            if opts.keep {
-                let status = docker::exec(
-                    &running,
-                    &plan.config.container_user,
-                    &plan.config.workspace_folder,
-                    &[
-                        format!("{}/dcc-ctl", supervisor::DCC_SHARE),
-                        "mode".to_string(),
-                        "durable".to_string(),
-                    ],
-                )
+async fn execute_in_runtime(
+    runtime: crate::runtime::Runtime,
+    args: Vec<String>,
+    kind: ForegroundKind,
+    opts: ExecOptions<'_>,
+) -> anyhow::Result<ExitStatus> {
+    let snapshot = &runtime.snapshot;
+    if kind == ForegroundKind::Attach && opts.skip_lifecycle && !snapshot.attach_hooks.is_empty() {
+        eprintln!("warning: skipping postAttachCommand (--skip-lifecycle)");
+    }
+    if kind == ForegroundKind::Attach && !opts.skip_lifecycle {
+        for hook in &snapshot.attach_hooks {
+            lifecycle::run_in_container(hook, &runtime.id, &snapshot.user, &snapshot.workdir)
                 .await
-                .with_context(|| {
-                    format!("failed to promote container `{running}` to durable")
-                })?;
-                if !status.success() {
-                    anyhow::bail!(
-                        "failed to promote container `{running}` to durable: dcc-ctl exited with status {}",
-                        status.code().unwrap_or(-1)
-                    );
-                }
-            }
-            if opts.debug {
-                eprintln!(
-                    "dcc debug: using existing container `{running}` for `{}`",
-                    plan.container_id.as_str()
-                );
-            }
-            (running, false)
-        } else {
-            start_container(&plan).await?;
-            (plan.container.as_str().to_string(), true)
-        };
-        if started {
-            // The supervisor runs postStartCommand hooks internally at startup.
-            // Wait for bootstrap completion so a hook failure surfaces as a
-            // clear error rather than a hang. On reuse, hooks already ran.
-            wait_ready(&plan, &container_name).await?;
+                .map_err(|_| anyhow::anyhow!("frozen postAttachCommand failed"))?;
         }
-        anyhow::Ok((container_name, started))
     }
+    let mut wrapped = vec![format!("{}/dcc-exec", supervisor::DCC_SHARE)];
+    wrapped.extend(args);
+    let status = docker::exec_foreground(
+        &runtime.id,
+        &snapshot.user,
+        &snapshot.workdir,
+        &wrapped,
+        std::io::stdin().is_terminal(),
+    )
     .await?;
-
-    let relay_handles = forward::forward_ports(&container_name, &plan.config.forward_ports)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to set up port forwarding for container `{}`",
-                container_name
-            )
-        })?;
-
-    let command_result = async {
-        if kind == ForegroundKind::Attach {
-            run_runtime_hooks(&plan, &container_name, RuntimeHookPhase::Attach).await?;
-        }
-        // Run the user command through the dcc-exec wrapper so the supervisor can
-        // register/deregister it. The wrapper exits with the command's status.
-        let mut wrapped = vec![format!("{}/dcc-exec", supervisor::DCC_SHARE)];
-        wrapped.extend(plan.command_args.iter().cloned());
-        docker::exec_foreground(
-            &container_name,
-            &plan.config.container_user,
-            &plan.config.workspace_folder,
-            &wrapped,
-            plan.tty,
-        )
-        .await
-        .with_context(|| format!("failed to run command in container `{}`", container_name))
-    }
-    .await;
-
-    relay_handles.shutdown().await;
-
-    let status = command_result?;
-
-    // One-shot containers created by this invocation self-teardown: the supervisor
-    // drains and exits when the active set is empty, and Docker's --rm removes the
-    // container. The host does not manage teardown state. We only wait until Docker's
-    // label-based running-container query goes empty so immediate follow-up commands
-    // and tests observe the same lifecycle boundary that reuse detection uses.
-    if should_wait_for_one_shot_teardown(started, opts.keep) {
-        wait_for_no_running_container(plan.container_id.as_str()).await;
+    if should_wait_for_one_shot_teardown(runtime.started, opts.keep) {
+        wait_for_no_running_container(&snapshot.identity).await;
     }
     Ok(status)
 }
 
 fn should_wait_for_one_shot_teardown(started: bool, keep: bool) -> bool {
     started && !keep
-}
-
-async fn start_container(plan: &RuntimePlan) -> anyhow::Result<()> {
-    if plan.opts.debug {
-        eprintln!(
-            "dcc debug: starting container `{}`",
-            plan.container.as_str()
-        );
-    }
-
-    docker::start_detached(&plan.run_args)
-        .await
-        .with_context(|| format!("failed to start container `{}`", plan.container.as_str()))?;
-    wait_for_running(plan.container.as_str())
-        .await
-        .with_context(|| format!("container `{}` failed to start", plan.container.as_str()))
 }
 
 /// Wait for Docker to stop reporting any running container for this profile label
@@ -376,17 +336,10 @@ fn default_attach_command() -> Vec<String> {
 }
 
 struct RuntimePlan {
-    config: config::DevcontainerConfig,
-    feature_runtime: FeatureRuntimeConfig,
-    container_id: ContainerId,
+    _assets: supervisor::RtDir,
     container: ContainerName,
-    container_env: std::collections::HashMap<String, String>,
-    local_workspace: String,
-    local_cache: String,
     run_args: Vec<String>,
-    command_args: Vec<String>,
-    tty: bool,
-    opts: OwnedExecOptions,
+    snapshot: crate::runtime_snapshot::RuntimeSnapshot,
 }
 
 #[derive(Clone)]
@@ -439,14 +392,16 @@ impl RuntimePlan {
     ) -> anyhow::Result<Self> {
         let opts = OwnedExecOptions::from(opts);
         let cache_dir = CacheDir::new(workspace, profile);
-        let rt_dir = supervisor::RtDir::new(workspace, profile);
 
         let mut config = config::load_config(config_path, workspace, &cache_dir, opts.strict)
             .with_context(|| format!("failed to load config `{}`", config_path.display()))?;
 
+        supervisor::RtDir::prune(workspace, profile).await;
+        let (rt_dir, launch_token) = supervisor::RtDir::instance(workspace, profile)?;
+
         let container_id = ContainerId::new(workspace, profile);
         let container = ContainerName::resolve(config.name.as_deref(), &container_id);
-        let image_tag = container_id.as_image_tag();
+        let image_tag = docker::image_id(container_id.as_image_tag().as_str()).await?;
 
         // Ensure cache directory exists, then create any cache subdirectories
         // referenced as bind-mount sources (e.g. ${localCacheFolder}/node_modules).
@@ -462,12 +417,10 @@ impl RuntimePlan {
         .await?;
 
         // Read runtime contributions from the image's devcontainer.metadata label.
-        let feature_runtime = match docker::inspect_image_label(image_tag.as_str())
-            .await
-            .with_context(|| format!("failed to inspect image `{image_tag}`"))?
-        {
+        let metadata = docker::inspect_image_label(image_tag.as_str()).await?;
+        let feature_runtime = match metadata.as_deref() {
             None => FeatureRuntimeConfig::default(),
-            Some(ref json) => features::parse_runtime_from_label(json).with_context(|| {
+            Some(json) => features::parse_runtime_from_label(json).with_context(|| {
                 format!("failed to parse devcontainer.metadata label from image `{image_tag}`")
             })?,
         };
@@ -489,7 +442,7 @@ impl RuntimePlan {
         // user's HOME/USER and merge them in. Best-effort: a probe failure warns and
         // leaves them absent, so an unguarded HOME/USER reference fails while an
         // explicit default remains available.
-        if references_container_env(override_args, &config, &feature_runtime) {
+        {
             match docker::probe_user_env(image_tag.as_str(), &config.container_user).await {
                 Ok(probed) => container_env.extend(probed),
                 Err(e) => eprintln!(
@@ -540,7 +493,7 @@ impl RuntimePlan {
         // The container command (a `dcc run` script or `dcc exec` args) supports the
         // same substitution (`${localEnv:VAR}`, `${containerEnv:VAR}`, …) as
         // mounts/remoteEnv.
-        let override_args: Vec<String> = override_args
+        let _validated_args: Vec<String> = override_args
             .iter()
             .enumerate()
             .map(|(index, a)| {
@@ -573,6 +526,10 @@ impl RuntimePlan {
         ensure_mounts_safe(&all_mounts, opts.allow_unsafe_runtime)?;
         ensure_cache_mount_sources(&all_mounts, &cache_dir)?;
         let safe_run_args = sanitize_run_args(&config.run_args, opts.allow_unsafe_runtime)?;
+        let ports = forward::plan_ports(&config.forward_ports, config.relay_port_range)?;
+        if !ports.is_empty() {
+            crate::runtime::forwarding_supported(&safe_run_args).await?;
+        }
 
         // Combined remoteEnv (devcontainer.json first, then features), fully resolved:
         // feature values get host/localEnv substitution, then `${containerEnv:…}` is
@@ -611,6 +568,7 @@ impl RuntimePlan {
 
         args.extend(["--name".into(), container.as_str().to_owned()]);
         append_runtime_container_labels(&mut args, container_id.as_str());
+        args.extend(["--label".into(), format!("dcc.launch_token={launch_token}")]);
         args.extend([
             "--label".into(),
             format!("devcontainer.local_folder={}", workspace.root.display()),
@@ -620,7 +578,7 @@ impl RuntimePlan {
             format!("devcontainer.config_file={}", config_path.display()),
         ]);
         args.push("--rm".into());
-        args.push("-dit".into());
+        args.push("-it".into());
         args.extend(["--workdir".into(), config.workspace_folder.clone()]);
         args.extend(["--memory".into(), opts.limits_memory.clone()]);
         args.extend(["--cpus".into(), opts.limits_cpus.clone()]);
@@ -709,6 +667,13 @@ impl RuntimePlan {
                 &feature_runtime.feature_hooks,
                 &config.lifecycle,
             );
+        if opts.skip_lifecycle {
+            for warning in
+                skipped_hook_warnings(&config, &feature_runtime, RuntimeHookPhase::Startup)
+            {
+                eprintln!("warning: {warning}");
+            }
+        }
         if has_start_hooks {
             let substitute = |s: &str| -> anyhow::Result<String> {
                 let s = config::vars::apply_substitution(s, &local_workspace, &local_cache);
@@ -737,186 +702,85 @@ impl RuntimePlan {
             start_hooks_container_path.as_deref(),
         );
 
-        // Allocate a TTY for the foreground command only when our own stdin is a
-        // terminal, so non-interactive use (pipes, CI) still works.
-        let tty = std::io::stdin().is_terminal();
+        let substitute = |s: &str| {
+            let s = config::vars::apply_substitution(s, &local_workspace, &local_cache);
+            config::vars::resolve_container_env(&s, &container_env)
+        };
+        let mut attach_hooks = Vec::new();
+        for (_, hooks) in &feature_runtime.feature_hooks {
+            if let Some(hook) = &hooks.post_attach_command {
+                attach_hooks.push(hook.try_substitute(&substitute)?);
+            }
+        }
+        if let Some(hook) = &config.lifecycle.post_attach_command {
+            attach_hooks.push(
+                hook.try_substitute(&|s| config::vars::resolve_container_env(s, &container_env))?,
+            );
+        }
+        let scripts = config
+            .scripts
+            .iter()
+            .map(|(name, cmd)| Ok((name.clone(), substitute(cmd)?)))
+            .collect::<anyhow::Result<_>>()?;
+        let feature_scripts = feature_runtime
+            .feature_scripts
+            .iter()
+            .map(|(name, scripts)| {
+                let scripts = scripts
+                    .iter()
+                    .map(|(name, cmd)| Ok((name.clone(), substitute(cmd)?)))
+                    .collect::<anyhow::Result<_>>()?;
+                Ok((name.clone(), scripts))
+            })
+            .collect::<anyhow::Result<_>>()?;
+        let fingerprint = match crate::runtime_snapshot::fingerprint(
+            config_path,
+            &workspace.root,
+            &cache_dir.host_path,
+            metadata.as_deref().unwrap_or_default(),
+        ) {
+            Ok(hash) => Some(hash),
+            Err(_) => {
+                eprintln!("warning: launch configuration fingerprint unavailable; later comparisons will be incomplete");
+                None
+            }
+        };
+        let snapshot = crate::runtime_snapshot::RuntimeSnapshot {
+            protocol: 1,
+            identity: container_id.as_str().to_owned(),
+            token: launch_token,
+            image: image_tag.clone(),
+            fingerprint,
+            user: config.container_user.clone(),
+            workdir: config.workspace_folder.clone(),
+            local_workspace: local_workspace.clone(),
+            local_cache: local_cache.clone(),
+            container_env: container_env.clone(),
+            attach_hooks,
+            scripts,
+            feature_scripts,
+            ports,
+            memory: opts.limits_memory.clone(),
+            cpus: opts.limits_cpus.clone(),
+        };
+        rt_dir.write_snapshot(&snapshot)?;
 
-        // Print the fully-resolved launch picture before doing anything irreversible.
         if opts.debug {
-            let mut dbg: Vec<String> = Vec::new();
-            dbg.push(format!("── dcc debug {}", "─".repeat(40)));
-            dbg.push(format!(
-                "container : {}   image: {}",
+            eprintln!(
+                "dcc: creating container {} from {} with {} port mappings",
                 container.as_str(),
-                image_tag.as_str()
-            ));
-            if container.as_str() != container_id.as_str() {
-                dbg.push(format!("container id: {}", container_id.as_str()));
-            }
-            dbg.push(format!(
-                "user: {}   memory: {}   cpus: {}   workdir: {}",
-                config.container_user,
-                opts.limits_memory,
-                opts.limits_cpus,
-                config.workspace_folder
-            ));
-            dbg.push(format!("command   : {}", override_args.join(" ")));
-
-            dbg.push("remoteEnv (-e at runtime):".to_string());
-            if remote_env.is_empty() {
-                dbg.push("  (none)".to_string());
-            } else {
-                for (k, v) in &remote_env {
-                    dbg.push(format!("  {k}={v}"));
-                }
-            }
-
-            dbg.push("containerEnv (baked into image at build):".to_string());
-            let mut cenv: Vec<(&String, &String)> = config.container_env.iter().collect();
-            cenv.sort_by(|a, b| a.0.cmp(b.0));
-            if cenv.is_empty() {
-                dbg.push("  (none)".to_string());
-            } else {
-                for (k, v) in cenv {
-                    dbg.push(format!("  {k}={v}"));
-                }
-            }
-
-            dbg.push("mounts:".to_string());
-            dbg.push(format!(
-                "  bind   {local_workspace} -> {CONTAINER_WORKSPACE}"
-            ));
-            dbg.push(format!("  bind   {local_cache} -> {CONTAINER_CACHE}"));
-            for m in &state_mount_args {
-                dbg.push(format!("  {}", describe_mount(m)));
-            }
-            dbg.push(format!(
-                "  bindro {} -> {}",
-                rt_dir.host_path.display(),
-                supervisor::RT_MOUNT
-            ));
-            dbg.push(format!("  tmpfs  -> {CONTAINER_WORKSPACE}/.dcc"));
-            dbg.push(format!(
-                "  tmpfs  -> {} (supervisor state)",
-                supervisor::STATE_DIR
-            ));
-            for m in &all_mounts {
-                dbg.push(format!("  {}", describe_mount(m)));
-            }
-            dbg.push(format!(
-                "  entry  {}/dcc-supervisor (PID 1 supervisor, mode={mode})",
-                supervisor::DCC_SHARE,
-            ));
-
-            dbg.push(format!(
-                "forwardPorts: {}",
-                if config.forward_ports.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    config
-                        .forward_ports
-                        .iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                }
-            ));
-
-            dbg.push("lifecycle scripts:".to_string());
-            dbg.extend(debug_lifecycle_lines(
-                &config,
-                &feature_runtime,
-                opts.skip_lifecycle,
-            ));
-
-            dbg.push(format!("docker run {}", args.join(" ")));
-            dbg.push(format!(
-                "command runs via docker exec ({}): {}",
-                if tty { "-it" } else { "-i" },
-                override_args.join(" ")
-            ));
-
-            for line in dbg {
-                eprintln!("{line}");
-            }
+                image_tag,
+                snapshot.ports.len()
+            );
         }
 
         Ok(Self {
-            config,
-            feature_runtime,
-            container_id,
+            _assets: rt_dir,
             container,
-            container_env,
-            local_workspace,
-            local_cache,
             run_args: args,
-            command_args: override_args,
-            tty,
-            opts,
+            snapshot,
         })
     }
-}
-
-async fn running_container_name(
-    container_id: &str,
-    fallback_container_name: &str,
-) -> anyhow::Result<Option<String>> {
-    if let Some(name) = docker::running_container_name_by_id(container_id).await? {
-        return Ok(Some(name));
-    }
-    if docker::inspect_running(fallback_container_name).await? {
-        return Ok(Some(fallback_container_name.to_string()));
-    }
-    if fallback_container_name != container_id && docker::inspect_running(container_id).await? {
-        return Ok(Some(container_id.to_string()));
-    }
-    Ok(None)
-}
-
-async fn wait_for_running(container: &str) -> anyhow::Result<()> {
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-    const POLL: std::time::Duration = std::time::Duration::from_millis(100);
-    let deadline = tokio::time::Instant::now() + TIMEOUT;
-    loop {
-        if docker::inspect_running(container).await? {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("timed out after 10 s waiting for container to start");
-        }
-        tokio::time::sleep(POLL).await;
-    }
-}
-
-/// Waits for the supervisor to finish startup (postStartCommand hooks) by running
-/// `dcc-ctl wait-ready` inside the container. Maps a bootstrap failure (exit 252)
-/// to a clear error so a failing hook surfaces here rather than as a hang.
-async fn wait_ready(plan: &RuntimePlan, container: &str) -> anyhow::Result<()> {
-    if plan.opts.skip_lifecycle {
-        // Hooks were skipped; the supervisor writes bootstrap-status=0 immediately.
-        // Still wait so the container is ready, but don't expect hook failures.
-    }
-    let status = docker::exec(
-        container,
-        &plan.config.container_user,
-        &plan.config.workspace_folder,
-        &[
-            format!("{}/dcc-ctl", supervisor::DCC_SHARE),
-            "wait-ready".to_string(),
-        ],
-    )
-    .await
-    .with_context(|| format!("failed to wait for container `{container}` readiness"))?;
-    if !status.success() {
-        if status.code() == Some(supervisor::EXIT_BOOTSTRAP_FAILED) {
-            anyhow::bail!("container `{container}` startup failed: a postStartCommand hook failed");
-        }
-        anyhow::bail!(
-            "container `{container}` startup failed: dcc-ctl wait-ready exited with status {}",
-            status.code().unwrap_or(-1)
-        );
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -939,63 +803,6 @@ impl RuntimeHookPhase {
             Self::Attach => &hooks.post_attach_command,
         }
     }
-}
-
-/// Runs the runtime lifecycle hooks for one phase. Feature-contributed hooks run
-/// first, in feature installation order, followed by the devcontainer hook.
-async fn run_runtime_hooks(
-    plan: &RuntimePlan,
-    container: &str,
-    phase: RuntimeHookPhase,
-) -> anyhow::Result<()> {
-    if plan.opts.skip_lifecycle {
-        for warning in skipped_hook_warnings(&plan.config, &plan.feature_runtime, phase) {
-            eprintln!("warning: {warning}");
-        }
-        return Ok(());
-    }
-
-    // Feature hooks need host/localEnv substitution; `${containerEnv:…}` is then
-    // resolved for both feature and devcontainer.json hooks. devcontainer.json
-    // hooks were already host-substituted at config-load (containerEnv deferred).
-    let substitute = |s: &str| -> anyhow::Result<String> {
-        let s = config::vars::apply_substitution(s, &plan.local_workspace, &plan.local_cache);
-        config::vars::resolve_container_env(&s, &plan.container_env)
-    };
-    let resolve_cenv = |s: &str| config::vars::resolve_container_env(s, &plan.container_env);
-    let name = phase.hook_name();
-
-    for (feature_id, hooks) in &plan.feature_runtime.feature_hooks {
-        if let Some(cmd) = phase.get(hooks) {
-            let cmd = cmd
-                .try_substitute(&substitute)
-                .with_context(|| format!("{name} from feature `{feature_id}`"))?;
-            lifecycle::run_in_container(
-                &cmd,
-                container,
-                &plan.config.container_user,
-                &plan.config.workspace_folder,
-            )
-            .await
-            .with_context(|| format!("{name} from feature `{feature_id}` failed"))?;
-        }
-    }
-
-    if let Some(cmd) = phase.get(&plan.config.lifecycle) {
-        let cmd = cmd
-            .try_substitute(&resolve_cenv)
-            .with_context(|| name.to_string())?;
-        lifecycle::run_in_container(
-            &cmd,
-            container,
-            &plan.config.container_user,
-            &plan.config.workspace_folder,
-        )
-        .await
-        .with_context(|| format!("{name} failed"))?;
-    }
-
-    Ok(())
 }
 
 /// Builds the warning messages for lifecycle hooks skipped under `--skip-lifecycle`,
@@ -1334,7 +1141,10 @@ fn handle_run_arg_value(
 
 fn ensure_label_not_reserved(value: &str) -> anyhow::Result<()> {
     let key = value.split_once('=').map_or(value, |(key, _)| key);
-    if key == docker::CONTAINER_ID_LABEL || key == docker::CONTAINER_ROLE_LABEL {
+    if key == docker::CONTAINER_ID_LABEL
+        || key == docker::CONTAINER_ROLE_LABEL
+        || key == "dcc.launch_token"
+    {
         anyhow::bail!("runArgs label `{key}` is reserved for dcc container lifecycle metadata");
     }
     Ok(())
@@ -1485,46 +1295,6 @@ fn references_container_env(
         .any(|c| has(&describe_lifecycle_command(c)))
 }
 
-/// Renders a `docker --mount` string (`type=bind,src=…,dst=…,opts…`) into a
-/// readable `type  src -> dst  [opts]` line for `--debug` output. Accepts the
-/// `src`/`source` and `dst`/`destination`/`target` key spellings.
-fn describe_mount(mount: &str) -> String {
-    let mut typ = "";
-    let mut src: Option<&str> = None;
-    let mut dst: Option<&str> = None;
-    let mut opts: Vec<&str> = Vec::new();
-    for part in mount.split(',') {
-        let part = part.trim();
-        if let Some(v) = part.strip_prefix("type=") {
-            typ = v;
-        } else if let Some(v) = part
-            .strip_prefix("src=")
-            .or_else(|| part.strip_prefix("source="))
-        {
-            src = Some(v);
-        } else if let Some(v) = part
-            .strip_prefix("dst=")
-            .or_else(|| part.strip_prefix("destination="))
-            .or_else(|| part.strip_prefix("target="))
-        {
-            dst = Some(v);
-        } else if !part.is_empty() {
-            opts.push(part);
-        }
-    }
-    let typ = if typ.is_empty() { "?" } else { typ };
-    let mut line = match (src, dst) {
-        (Some(s), Some(d)) => format!("{typ}  {s} -> {d}"),
-        (None, Some(d)) => format!("{typ}  -> {d}"),
-        (Some(s), None) => format!("{typ}  {s}"),
-        (None, None) => typ.to_string(),
-    };
-    if !opts.is_empty() {
-        line.push_str(&format!("  [{}]", opts.join(", ")));
-    }
-    line
-}
-
 /// Renders a lifecycle command for `--debug` output: a shell string as-is, an
 /// argv joined by spaces, and an object (parallel) form as `name: cmd` entries.
 fn describe_lifecycle_command(cmd: &lifecycle::LifecycleCommand) -> String {
@@ -1544,43 +1314,6 @@ fn describe_lifecycle_command(cmd: &lifecycle::LifecycleCommand) -> String {
     }
 }
 
-/// Builds the `--debug` runtime lifecycle listing in execution order: startup
-/// hooks, then attach hooks. Build-prep hooks and unsupported host hooks stay
-/// out of ordinary runtime commands.
-fn debug_lifecycle_lines(
-    config: &config::DevcontainerConfig,
-    feature_runtime: &FeatureRuntimeConfig,
-    skip_lifecycle: bool,
-) -> Vec<String> {
-    let suffix = if skip_lifecycle {
-        "  (skipped: --skip-lifecycle)"
-    } else {
-        ""
-    };
-    let mut lines = Vec::new();
-    for phase in [RuntimeHookPhase::Startup, RuntimeHookPhase::Attach] {
-        let name = phase.hook_name();
-        for (feature_id, hooks) in &feature_runtime.feature_hooks {
-            if let Some(cmd) = phase.get(hooks) {
-                lines.push(format!(
-                    "  {name} (feature {feature_id}): {}{suffix}",
-                    describe_lifecycle_command(cmd)
-                ));
-            }
-        }
-        if let Some(cmd) = phase.get(&config.lifecycle) {
-            lines.push(format!(
-                "  {name}: {}{suffix}",
-                describe_lifecycle_command(cmd)
-            ));
-        }
-    }
-    if lines.is_empty() {
-        lines.push("  (none)".to_string());
-    }
-    lines
-}
-
 /// Prints a user-facing warning for a value that still contains a `${...}`
 /// reference after substitution. dcc writes user-facing diagnostics straight to
 /// stderr (like the top-level error in `main`) rather than through `tracing`,
@@ -1591,11 +1324,11 @@ fn warn_unresolved_variables(kind: &str, value: &str) {
         return;
     }
     eprintln!(
-        "warning: {kind} `{value}` references unresolved variable(s) {}; \
+        "warning: {kind} contains {} unresolved variable reference(s); \
          dcc substitutes ${{localWorkspaceFolder}}, ${{localCacheFolder}}, \
          ${{containerWorkspaceFolder}}, ${{containerCacheFolder}}, ${{localEnv:VAR}}, \
          and ${{containerEnv:VAR}}",
-        unresolved.join(", ")
+        unresolved.len()
     );
 }
 
@@ -1820,6 +1553,7 @@ mod tests {
             run_args: Vec::new(),
             unsafe_runtime: config::UnsafeRuntimeConfig::default(),
             forward_ports: Vec::new(),
+            relay_port_range: [20000, 20999],
             ports_attributes: HashMap::new(),
             other_ports_attributes: None,
             override_command: None,
@@ -1883,45 +1617,6 @@ mod tests {
         );
     }
 
-    // --- describe_mount ---
-
-    #[test]
-    fn describe_mount_standard_bind() {
-        assert_eq!(
-            describe_mount("type=bind,src=/host,dst=/container"),
-            "bind  /host -> /container"
-        );
-    }
-
-    #[test]
-    fn describe_mount_source_target_synonyms() {
-        assert_eq!(
-            describe_mount("type=bind,source=/h,target=/c"),
-            "bind  /h -> /c"
-        );
-    }
-
-    #[test]
-    fn describe_mount_extra_options() {
-        assert_eq!(
-            describe_mount("type=bind,src=/h,dst=/c,readonly"),
-            "bind  /h -> /c  [readonly]"
-        );
-    }
-
-    #[test]
-    fn describe_mount_tmpfs_has_no_source() {
-        assert_eq!(describe_mount("type=tmpfs,dst=/tmp"), "tmpfs  -> /tmp");
-    }
-
-    #[test]
-    fn describe_mount_volume() {
-        assert_eq!(
-            describe_mount("type=volume,source=vol,target=/data"),
-            "volume  vol -> /data"
-        );
-    }
-
     // --- describe_lifecycle_command ---
 
     #[test]
@@ -1944,60 +1639,6 @@ mod tests {
         assert_eq!(
             describe_lifecycle_command(&LifecycleCommand::Parallel(map)),
             "a: x | b: y z"
-        );
-    }
-
-    // --- debug_lifecycle_lines ---
-
-    #[test]
-    fn debug_lifecycle_lines_empty() {
-        assert_eq!(
-            debug_lifecycle_lines(&empty_config(), &FeatureRuntimeConfig::default(), false),
-            vec!["  (none)".to_string()]
-        );
-    }
-
-    #[test]
-    fn debug_lifecycle_lines_order_feature_then_devcontainer() {
-        let mut config = empty_config();
-        config.initialize_command = Some(LifecycleCommand::Shell("echo init".into()));
-        config.lifecycle.post_start_command = shell("cargo fetch");
-        let mut runtime = FeatureRuntimeConfig::default();
-        runtime.feature_hooks.push((
-            "node".to_string(),
-            LifecycleHooks {
-                post_start_command: shell("npm ci"),
-                ..Default::default()
-            },
-        ));
-        assert_eq!(
-            debug_lifecycle_lines(&config, &runtime, false),
-            vec![
-                "  postStartCommand (feature node): npm ci".to_string(),
-                "  postStartCommand: cargo fetch".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn debug_lifecycle_lines_annotates_skip() {
-        let mut config = empty_config();
-        config.lifecycle.post_attach_command = shell("x");
-        assert_eq!(
-            debug_lifecycle_lines(&config, &FeatureRuntimeConfig::default(), true),
-            vec!["  postAttachCommand: x  (skipped: --skip-lifecycle)".to_string()]
-        );
-    }
-
-    #[test]
-    fn debug_lifecycle_lines_excludes_build_prep_hooks() {
-        let mut config = empty_config();
-        config.lifecycle.on_create_command = shell("create");
-        config.lifecycle.update_content_command = shell("update");
-        config.lifecycle.post_create_command = shell("post-create");
-        assert_eq!(
-            debug_lifecycle_lines(&config, &FeatureRuntimeConfig::default(), false),
-            vec!["  (none)".to_string()]
         );
     }
 

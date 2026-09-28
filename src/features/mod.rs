@@ -601,7 +601,7 @@ pub(crate) fn generated_assets() -> Vec<context::ContextFile> {
     // (`run_planned_hooks` → `lifecycle::run_in_container`), so baked `.sh`
     // files would never be executed (T-0031 removed the vestigial copies).
     let mut assets = crate::supervisor::baked_supervisor_assets();
-    assets.push(crate::forward::baked_connector_asset());
+    assets.extend(crate::forward::baked_relay_assets());
     assets
 }
 
@@ -873,12 +873,12 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn generated_assets_include_executable_port_forward_connector() {
+    fn generated_assets_include_executable_port_relay() {
         let assets = generated_assets();
         let (_, contents, mode) = assets
             .iter()
-            .find(|(path, _, _)| path == ".dcc-generated/dcc-connect")
-            .expect("missing baked port-forward connector");
+            .find(|(path, _, _)| path == ".dcc-generated/dcc-relay")
+            .expect("missing baked port relay");
         assert_eq!(*mode, 0o755);
         assert!(contents.starts_with(b"#!/bin/sh\n"));
     }
@@ -1218,6 +1218,7 @@ mod tests {
             run_args: vec![],
             unsafe_runtime: crate::config::UnsafeRuntimeConfig::default(),
             forward_ports: vec![],
+            relay_port_range: [20000, 20999],
             ports_attributes: HashMap::new(),
             other_ports_attributes: None,
             override_command: None,

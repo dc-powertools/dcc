@@ -7,7 +7,7 @@ while this file captures technical conventions that prevent inconsistent impleme
 ## Scope
 
 - Project/service: `dcc` Rust CLI.
-- Last updated: 2026-07-14
+- Last updated: 2026-09-28
 - Applies to: Rust source, tests, CLI behavior, devcontainer config handling, Docker
   integration, and project documentation.
 - Does not apply to: The reusable framework under `.meta/meta/`, except when explicitly
@@ -57,6 +57,7 @@ while this file captures technical conventions that prevent inconsistent impleme
 | Config resolution | `src/config/` | Preserve cycle detection, merge semantics, variable substitution phases, and strict-mode behavior. | Host-specific variables must not be baked into `containerEnv`. |
 | Docker operations | `src/docker.rs`, `src/build.rs`, `src/run.rs`, `src/exec.rs`, `src/stop.rs` | Wrap Docker CLI calls and keep errors diagnosable. | Real Docker commands can create external state; distinguish tests from runtime workflows. |
 | In-container supervisor | `src/supervisor.rs` | PID 1 owns lifecycle; keep host↔supervisor protocol patch-stable (decision 0004). | Protocol changes require a minor version bump so the semver gate refuses old images. |
+| Forwarding and frozen reuse | `src/runtime.rs`, `src/runtime_snapshot.rs`, `src/forward.rs`, `src/relay*.sh` | Discover before mutable planning; Docker owns loopback publications and PID 1 owns socat relays. | Runtime config changes warn and defer; 0.2 protocol requires explicit migration. Never retry an uncertain container start. |
 | State seeding | `src/seed.rs` | Hydrate declared state from the image on build; record in `.dcc/<profile>.seed.json`. | Seeding runs without state mounts; never mask Feature- or Dockerfile-installed content. |
 | UID remap | `src/uid.rs` | On Linux and macOS, `updateRemoteUserUID` bakes a root RUN remapping the container user to the host uid/gid; Windows is an explicit no-op. | Remap is baked at image build; seeding sees the remapped `/etc/passwd` and re-owns hydrated state for non-root users so pre-remap Dockerfile-owned paths stay writable. |
 | Version compatibility | `src/version.rs` | `dcc.version` label interpreted with semver: equal or patch drift proceeds; major/minor or missing label refuses. | `dcc build` is exempt; runtime commands gate on the label. |

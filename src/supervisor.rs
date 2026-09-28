@@ -13,7 +13,7 @@
 //! version-stamped alongside the image by the `dcc.version` label.
 //!
 //! Startup hooks are delivered as pre-substituted executable scripts written into
-//! `<workspace>/.dcc/<profile>.rt/start-hooks/` on the host, bind-mounted read-only at
+//! `<workspace>/.dcc/<profile>.rt/instances/<token>/payload/start-hooks/` on the host, bind-mounted read-only at
 //! `/usr/local/share/dcc/rt`, and passed to the supervisor via `--start-hooks`. They
 //! are NOT baked, because `postStartCommand` may contain `${localEnv:VAR}` which is only
 //! resolvable at run time from the invoking user's environment (T-0028 Q3).
@@ -39,7 +39,7 @@ use crate::{
 pub(crate) const DCC_SHARE: &str = "/usr/local/share/dcc";
 
 /// Container-side mount point for the read-only startup hooks directory.
-/// Only `start-hooks/` lives here now; the supervisor scripts are baked into
+/// Launch hooks, the port manifest, fingerprint and snapshot live here; scripts are baked into
 /// the image at [`DCC_SHARE`].
 pub(crate) const RT_MOUNT: &str = "/usr/local/share/dcc/rt";
 
@@ -55,10 +55,6 @@ const WAITERS_DIR: &str = "/run/dcc/waiters";
 /// Combined startup-hook output, replayed to the user on failure.
 const HOOK_LOG: &str = "/run/dcc/hook.log";
 
-/// Exit code returned by `wait-ready` when a startup hook failed (distinct from the
-/// `dcc-exec` "shutting down" code 253 and from any user command exit).
-pub(crate) const EXIT_BOOTSTRAP_FAILED: i32 = 252;
-
 /// One-shot orphan reaper: after bootstrap completes, if no command ever registers
 /// within this many seconds, the supervisor exits rather than leaving the container
 /// idle. Only applies to one-shot containers; durable containers never reap.
@@ -69,13 +65,183 @@ const REAPER_SECS: u32 = 10;
 /// both support — covering glibc, Alpine, and all base images `dcc` targets.
 const POLL_MS: u32 = 200;
 
-/// Host-side runtime assets directory: `<workspace>/.dcc/<profile>.rt/`.
+/// Host-side runtime assets directory: `<workspace>/.dcc/<profile>.rt/instances/<token>/payload`.
 #[derive(Debug)]
 pub(crate) struct RtDir {
     pub(crate) host_path: PathBuf,
 }
 
 impl RtDir {
+    /// Only release-marked instances are eligible: a still-planning CLI retains
+    /// its directory even before Docker has a mount to inspect.
+    pub(crate) async fn prune(workspace: &Workspace, profile: &ProfileName) {
+        if Self::prune_checked(workspace, profile).await.is_err() {
+            eprintln!("warning: runtime asset cleanup could not verify Docker references; retaining assets");
+        }
+    }
+
+    async fn prune_checked(workspace: &Workspace, profile: &ProfileName) -> anyhow::Result<()> {
+        let root = Self::new(workspace, profile).host_path.clone();
+        for path in [
+            workspace.root.join(".dcc"),
+            root.clone(),
+            root.join("instances"),
+        ] {
+            match std::fs::symlink_metadata(path) {
+                Ok(meta) => anyhow::ensure!(
+                    meta.is_dir() && !meta.file_type().is_symlink(),
+                    "unsafe runtime asset directory"
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        let mut candidates = Vec::new();
+        for entry in std::fs::read_dir(root.join("instances"))? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && valid_instance_name(&entry.file_name().to_string_lossy())
+                && entry.path().join("released").is_file()
+            {
+                candidates.push(entry.path());
+            }
+        }
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let ids = crate::docker::capture(
+            &[
+                "ps".into(),
+                "--all".into(),
+                "--quiet".into(),
+                "--no-trunc".into(),
+            ],
+            1024 * 1024,
+        )
+        .await?;
+        crate::docker::captured_ok(&ids, "inspect asset references")?;
+        let mut sources = Vec::new();
+        for id in std::str::from_utf8(&ids.stdout)?.lines() {
+            anyhow::ensure!(
+                !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit()),
+                "invalid reference container ID"
+            );
+            let output = crate::docker::capture(
+                &[
+                    "inspect".into(),
+                    "--format".into(),
+                    "{{json .Mounts}}".into(),
+                    id.into(),
+                ],
+                1024 * 1024,
+            )
+            .await?;
+            crate::docker::captured_ok(&output, "inspect asset mounts")?;
+            #[derive(serde::Deserialize)]
+            struct Mount {
+                #[serde(rename = "Source")]
+                source: PathBuf,
+            }
+            let mounts: Vec<Mount> = serde_json::from_slice(&output.stdout)?;
+            sources.extend(mounts.into_iter().map(|m| m.source));
+        }
+        for path in candidates {
+            if !sources
+                .iter()
+                .any(|source| source.starts_with(&path) || path.starts_with(source))
+            {
+                std::fs::remove_dir_all(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A private, immutable launch instance. Reuse never calls this constructor.
+    pub(crate) fn instance(
+        workspace: &Workspace,
+        profile: &ProfileName,
+    ) -> anyhow::Result<(Self, String)> {
+        anyhow::ensure!(
+            cfg!(unix),
+            "private runtime snapshots currently require a Unix host filesystem"
+        );
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = Self::new(workspace, profile).host_path.clone();
+        for path in [
+            workspace.root.join(".dcc"),
+            root.clone(),
+            root.join("instances"),
+        ] {
+            match std::fs::create_dir(&path) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => return Err(e).context("cannot create runtime asset directory"),
+            }
+            let meta = std::fs::symlink_metadata(&path)?;
+            anyhow::ensure!(
+                meta.is_dir() && !meta.file_type().is_symlink(),
+                "unsafe runtime asset directory"
+            );
+        }
+        crate::cache::ensure_managed_root_ignored(&workspace.root.join(".dcc"))?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let token = format!(
+            "{stamp:x}-{:x}-{:x}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let private = root.join("instances").join(&token);
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        builder
+            .create(&private)
+            .context("cannot create private runtime instance")?;
+        let payload = private.join("payload");
+        std::fs::create_dir(&payload)?;
+        set_executable(&payload)?;
+        Ok((Self { host_path: payload }, token))
+    }
+
+    pub(crate) fn write_snapshot(
+        &self,
+        snapshot: &crate::runtime_snapshot::RuntimeSnapshot,
+    ) -> anyhow::Result<()> {
+        use std::io::Write as _;
+        let bytes = serde_json::to_vec(snapshot).context("cannot encode runtime snapshot")?;
+        anyhow::ensure!(
+            bytes.len() <= crate::runtime_snapshot::MAX_BYTES,
+            "runtime snapshot exceeds 16 MiB"
+        );
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        options
+            .open(self.host_path.join("snapshot.json"))?
+            .write_all(&bytes)?;
+        std::fs::write(
+            self.host_path.join("fingerprint"),
+            snapshot.fingerprint.as_deref().unwrap_or("unavailable"),
+        )?;
+        let manifest: String = snapshot
+            .ports
+            .iter()
+            .map(|p| format!("{} {}\n", p.proxy, p.target))
+            .collect();
+        std::fs::write(self.host_path.join("relay-ports"), manifest)?;
+        Ok(())
+    }
+
     pub(crate) fn new(workspace: &Workspace, profile: &ProfileName) -> Self {
         Self {
             host_path: workspace
@@ -191,6 +357,33 @@ impl RtDir {
             "type=bind,source={},target={RT_MOUNT},readonly",
             self.host_path.display()
         )
+    }
+}
+
+fn valid_instance_name(name: &str) -> bool {
+    let parts: Vec<_> = name.split('-').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+impl Drop for RtDir {
+    fn drop(&mut self) {
+        if self
+            .host_path
+            .file_name()
+            .is_some_and(|name| name == "payload")
+        {
+            if let Some(parent) = self.host_path.parent().filter(|p| {
+                p.file_name()
+                    .is_some_and(|name| valid_instance_name(&name.to_string_lossy()))
+            }) {
+                // This marker is outside the immutable container mount. Failure
+                // simply retains the instance for later diagnosis/manual cleanup.
+                let _ = std::fs::write(parent.join("released"), "");
+            }
+        }
     }
 }
 
@@ -411,11 +604,14 @@ done
 
 printf '%s' "$mode" > "$MODE_FILE"
 
+__RELAY_FUNCTIONS__
+
 # --- Bootstrap: run startup hooks, then write bootstrap-status and signal
 # waiters. A failure writes a non-zero status and the failing hook name but
 # does NOT exit — the container stays alive so the harness can observe and
 # report the failure. ---
 bootstrap() {
+    relay_wait_initial
     if [ -n "$start_hooks" ] && [ -d "$start_hooks" ]; then
         : > "$HOOK_LOG" 2>/dev/null || true
         for f in "$start_hooks"/*; do
@@ -464,6 +660,7 @@ active_count() {
 
 # Run bootstrap in the background so the main loop can start polling
 # immediately. bootstrap writes STATUS and signals waiters when done.
+relay_start
 bootstrap &
 bootstrap_done=0
 arrived=0
@@ -472,9 +669,11 @@ arrived=0
 trap 'run_shutdown; exit 0' TERM
 
 run_shutdown() {
+    : > "$STOPPING"
     if [ -x "$SHUTDOWN" ]; then
         "$SHUTDOWN" || true
     fi
+    relay_stop
 }
 
 # Track when bootstrap completed, for the one-shot orphan reaper.
@@ -498,14 +697,14 @@ while true; do
             run_shutdown
             exit 0
         fi
-    elif [ "$mode" = "oneshot" ]; then
+    elif [ "$(cat "$MODE_FILE")" = "oneshot" ]; then
         if [ "$arrived" -eq 1 ] && [ "$n" -eq 0 ]; then
             run_shutdown
             exit 0
         fi
         # Orphan reaper: no command ever registered and bootstrap finished
         # more than REAPER_SECS ago. Only for one-shot containers.
-        if [ "$arrived" -eq 0 ] && [ "$bootstrap_finished" -eq 1 ]; then
+        if [ "$arrived" -eq 0 ] && [ "$bootstrap_finished" -eq 1 ] && [ ! -f "$STATE/relay-start-failed" ]; then
             now=$(date +%s)
             elapsed=$((now - bootstrap_started_sec))
             if [ "$elapsed" -ge "__REAPER_SECS__" ]; then
@@ -518,6 +717,8 @@ while true; do
     sleep __POLL_SECS__
 done
 "#
+    .replace("__RELAY_FUNCTIONS__", include_str!("relay_supervisor.sh"))
+    .replace("__RT_MOUNT__", RT_MOUNT)
     .replace("__STATE_DIR__", STATE_DIR)
     .replace("__DCC_SHARE__", DCC_SHARE)
     .replace("__STATUS__", BOOTSTRAP_STATUS)
@@ -541,6 +742,27 @@ WAITERS="__WAITERS__"
 HOOK_LOG="__HOOK_LOG__"
 
 case "${1:-}" in
+    snapshot)
+        [ "$#" -eq 1 ] || exit 64
+        exec cat "__RT_MOUNT__/snapshot.json"
+        ;;
+    verify-config)
+        [ "$#" -eq 2 ] && [ "${#2}" -eq 64 ] || exit 64
+        case "$2" in *[!0-9a-f]*) exit 64 ;; esac
+        baseline=$(cat "__RT_MOUNT__/fingerprint") || exit 65
+        [ "$baseline" = "$2" ] || exit 3
+        ;;
+    relay-status)
+        result=0
+        for dir in "$STATE"/relay/[0-9]*; do
+            [ -d "$dir" ] || continue
+            read -r state target proxy attempt < "$dir/status" || exit 65
+            if [ "$state" = ready ] && ! kill -0 "$(cat "$dir/runner")" 2>/dev/null; then state=degraded; fi
+            printf '%s %s %s %s\n' "$state" "$target" "$proxy" "$attempt"
+            [ "$state" = ready ] || result=1
+        done
+        exit "$result"
+        ;;
     mode)
         # Promote an already-running container to durable.
         printf '%s' "${2:-durable}" > "$MODE_FILE"
@@ -562,7 +784,7 @@ case "${1:-}" in
             done
         fi
         ;;
-    wait-ready)
+    wait-ready|wait-hooks)
         # Block until the supervisor signals bootstrap completion, then return
         # its status. Registers a per-waiter FIFO BEFORE checking status so a
         # signal cannot be lost. If status already exists (steady state), return
@@ -585,6 +807,27 @@ case "${1:-}" in
         contents=$(cat "$STATUS")
         case "$contents" in
             0)
+                failed=0
+                if [ "$1" = wait-ready ]; then
+                    [ ! -f "$STATE/relay-start-failed" ] || failed=1
+                    for dir in "$STATE"/relay/[0-9]*; do
+                        [ -d "$dir" ] || continue
+                        read -r state rest < "$dir/status"
+                        if [ "$state" != ready ] || ! kill -0 "$(cat "$dir/runner")" 2>/dev/null; then failed=1; fi
+                    done
+                fi
+                if [ "$failed" -eq 1 ]; then
+                    : > "$STATE/relay-start-failed"
+                    echo 'dcc: initial port forwarding failed; container retained for diagnosis' >&2
+                    for dir in "$STATE"/relay/[0-9]*; do
+                        [ -d "$dir" ] || continue
+                        cat "$dir/status" >&2
+                        for log in "$dir"/generation-*/error; do
+                            [ -f "$log" ] && head -c 2048 "$log" >&2
+                        done
+                    done
+                    exit 251
+                fi
                 exit 0
                 ;;
             *)
@@ -605,6 +848,7 @@ case "${1:-}" in
         ;;
 esac
 "#
+    .replace("__RT_MOUNT__", RT_MOUNT)
     .replace("__STATE_DIR__", STATE_DIR)
     .replace("__DCC_SHARE__", DCC_SHARE)
     .replace("__STATUS__", BOOTSTRAP_STATUS)
@@ -655,9 +899,9 @@ trap 'rm -f "$record"; status=143; exit 143' TERM
 
 # Wait for the supervisor to finish bootstrap (hooks) before running the
 # command. The active record is already created, so the supervisor cannot
-# drain out from under us while we wait. wait-ready exits 0 on success, 252
+# drain out from under us while we wait. wait-hooks exits 0 on success, 252
 # if a startup hook failed.
-"$CTL" wait-ready || exit $?
+"$CTL" wait-hooks || exit $?
 
 # Run the command with set -e disabled so a non-zero exit is captured rather than
 # aborting the wrapper before status=$? runs.
@@ -674,6 +918,133 @@ exit "$status"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_instances_are_distinct_and_reject_symlink_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = Workspace {
+            root: tmp.path().into(),
+            identity: "test".into(),
+        };
+        let profile = ProfileName::new("devcontainer");
+        let barrier = std::sync::Barrier::new(4);
+        let paths = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        let (rt, _) = RtDir::instance(&workspace, &profile).unwrap();
+                        rt.host_path.clone()
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|job| job.join().unwrap())
+                .collect::<std::collections::HashSet<_>>()
+        });
+        assert_eq!(paths.len(), 4);
+        let other = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(tmp.path().join(".dcc"), other.path().join(".dcc")).unwrap();
+        let workspace = Workspace {
+            root: other.path().into(),
+            identity: "test".into(),
+        };
+        assert!(RtDir::instance(&workspace, &profile).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relay_failure_does_not_block_hook_only_readiness() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("bootstrap-status"), "0").unwrap();
+        std::fs::write(tmp.path().join("relay-start-failed"), "").unwrap();
+        let ctl = tmp.path().join("ctl");
+        std::fs::write(
+            &ctl,
+            ctl_script().replace(STATE_DIR, tmp.path().to_str().unwrap()),
+        )
+        .unwrap();
+        for (verb, expected) in [("wait-ready", 251), ("wait-hooks", 0)] {
+            let output = std::process::Command::new("sh")
+                .arg(&ctl)
+                .arg(verb)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(expected));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires local socat and setsid; no Docker"]
+    fn relay_does_not_keep_oneshot_supervisor_alive() {
+        use std::{
+            net::TcpListener,
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tmp.path().join("state");
+        let share = tmp.path().join("share");
+        let rt = share.join("rt");
+        std::fs::create_dir_all(&rt).unwrap();
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        std::fs::write(rt.join("relay-ports"), format!("{port} 4173\n")).unwrap();
+        for (name, bytes, _) in baked_supervisor_assets()
+            .into_iter()
+            .chain(crate::forward::baked_relay_assets())
+        {
+            let source = String::from_utf8(bytes)
+                .unwrap()
+                .replace(DCC_SHARE, share.to_str().unwrap())
+                .replace(STATE_DIR, state.to_str().unwrap());
+            write_script(&share, name.rsplit('/').next().unwrap(), source).unwrap();
+        }
+        let mut child = Command::new(share.join("dcc-supervisor"))
+            .args(["--mode", "oneshot"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(12);
+        while !state.join("bootstrap-status").exists() {
+            if Instant::now() >= end {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("bootstrap timed out");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let ready = Command::new(share.join("dcc-ctl"))
+            .arg("wait-ready")
+            .output()
+            .unwrap();
+        assert!(
+            ready.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        assert!(Command::new(share.join("dcc-exec"))
+            .arg("true")
+            .status()
+            .unwrap()
+            .success());
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= end {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("relay prevented one-shot teardown");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(child.wait().unwrap().success());
+        TcpListener::bind(("0.0.0.0", port)).unwrap();
+    }
     use crate::cache::CacheDir;
     use crate::lifecycle::LifecycleCommand;
 
@@ -773,12 +1144,12 @@ mod tests {
         assert!(s.contains(": > \"$ARRIVED\""));
         assert!(s.contains("rm -f \"$record\""));
         assert!(s.contains("\"$@\""));
-        // Must call wait-ready before running the command.
-        let wait_pos = s.find("wait-ready").expect("wait-ready present");
+        // Commands wait for hooks even when relays are degraded.
+        let wait_pos = s.find("\"$CTL\" wait-hooks").expect("wait-hooks present");
         let run_pos = s.find("\"$@\"").expect("command exec present");
         assert!(
             wait_pos < run_pos,
-            "wait-ready must come before the command exec"
+            "wait-hooks must come before the command exec"
         );
     }
 

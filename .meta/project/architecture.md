@@ -35,7 +35,10 @@ src/
   seed.rs             State seeding from the image (hydration, dcc.seed label, ledger)
   stop.rs             dcc stop command (graceful / --now / --kill variants)
   uid.rs              updateRemoteUserUID remap planning (host uid/gid, no-op conditions, Dockerfile block)
-  forward.rs          Host-side TCP relay for forwardPorts
+  forward.rs          Port allocation and baked in-container relay assets
+  runtime.rs          Frozen reuse, forwarding preflight and exact-attempt creation
+  runtime_snapshot.rs Bounded container-side snapshot and configuration fingerprint
+  relay*.sh           In-container socat wrapper, service runner and PID 1 integration
   config/
     mod.rs            RawConfig and DevcontainerConfig structs; top-level parse fn
     feature_ref.rs    Default-repository validation and canonical Feature identities
@@ -66,7 +69,7 @@ third level of nesting.
 | `jsonschema` | Defaults disabled; no resolution features | Full draft-07 validation against embedded upstream Feature schema and explicit dcc extensions, offline |
 | `serde_path_to_error` | — | JSON locations for Feature runtime parser compatibility errors |
 | `anyhow` | — | Error handling with context |
-| `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, TCP listeners for port forwarding, and timer for container-exists polling (`wait_for_running`) |
+| `tokio` | `rt-multi-thread`, `macros`, `process`, `io-util`, `net`, `time` | Async runtime, subprocess management, test sockets, and lifecycle polling |
 | `reqwest` | `json`, `rustls-tls` | HTTP client for OCI registry; `rustls-tls` avoids OpenSSL for cross-compilation |
 | `rustls-pemfile` | `std` | Strict enumeration of configured private-registry CA bundle objects before roots enter the rustls transport |
 | `tar` | — | In-memory tar archive construction for the Docker build context |
@@ -638,15 +641,17 @@ containers from build preparation. The supervisor scripts (`dcc-supervisor`, `dc
 Every dcc-built image carries them, version-stamped by the `dcc.version` label; the CLI
 refuses to drive an image whose major or minor version differs (patch drift is
 compatible). Startup hook scripts are **not** baked — they are host-generated per launch
-into `<workspace>/.dcc/<profile>.rt/start-hooks/`, bind-mounted read-only at
+into `<workspace>/.dcc/<profile>.rt/instances/<token>/payload/start-hooks/`, bind-mounted read-only at
 `/usr/local/share/dcc/rt`, and passed via `--start-hooks`, because `postStartCommand` may
 contain `${localEnv:VAR}` which is only resolvable at run time.
 
 **Phase 1 — pre-flight checks and argument construction**
 
-Before starting or reusing Docker containers, the runtime planner:
+First, `runtime.rs` discovers a running profile by logical identity. Reuse validates
+the actual image and frozen snapshot, warns on drift, and bypasses host preparation.
+Only when no runtime exists does the launch planner:
 
-1. Calls `docker image inspect` on the image tag to read its
+1. Resolves the image tag to its immutable ID and calls `docker image inspect` to read its
    `devcontainer.metadata` label, if present. The label JSON is parsed into a
    `FeatureRuntimeConfig` (mounts, command, remoteEnv). A missing label is
    treated as no feature runtime contributions; a malformed label is a fatal
@@ -665,17 +670,20 @@ Before starting or reusing Docker containers, the runtime planner:
 **Phase 2 — detached container start**
 
 When no matching profile container is already running, `dcc` starts the container with
-`-dit` (detached, interactive, TTY pre-allocated):
+`docker create -it` followed by `docker start`:
 
 ```
-docker run
+docker create
   --name <container-name>
   --label dcc.container_id=<container-id>
   --label dcc.container_role=runtime
+  --label dcc.launch_token=<unique-attempt>
+  --publish 127.0.0.1:<target>:<proxy>/tcp   (for each forwarded port)
+  --publish [::1]:<target>:<proxy>/tcp       (best effort IPv6)
   --label devcontainer.local_folder=<workspace-root>
   --label devcontainer.config_file=<config-path>
   --rm
-  -dit
+  -it
   --workdir <workspaceFolder>  (default: /workspace)
   --memory <memory>            (default: 4g)
   --cpus <cpus>                (default: 2)
@@ -687,7 +695,7 @@ docker run
   --mount <spec> ...         (mounts after variable substitution)
   -v <workspace-root>:/workspace
   -v <host-cache-path>:/cache
-  --mount <host>/.dcc/<profile>.rt:/usr/local/share/dcc/rt:ro  (startup hooks only)
+  --mount <host>/.dcc/<profile>.rt/instances/<token>/payload:/usr/local/share/dcc/rt:ro
   --tmpfs /workspace/.dcc
   --tmpfs /run/dcc:mode=1777  (supervisor lifecycle state; container-private)
   --entrypoint /usr/local/share/dcc/dcc-supervisor  (baked into the image)
@@ -702,17 +710,15 @@ command PID 1 and attaching to it fails for commands that exit quickly (e.g. `ls
 because the container can disappear before readiness polling or attach observes it.
 User commands run via `docker exec` through the `dcc-exec` wrapper (phase 4), which
 registers each command with the supervisor and waits for the readiness signal before
-running it. `dcc` polls `docker inspect` at 100 ms intervals (up to 10 s) until the
-container reports as running (`wait_for_running`); this detects total launch failure
-(bad image, invalid mount) but is not a readiness check — readiness is the
-supervisor's `bootstrap-status` handshake (phase 4).
+running it. `dcc` inspects the exact created ID and checks publications before waiting on
+`dcc-ctl wait-ready` for initial relay and hook readiness.
 
 `initializeCommand` is parsed for devcontainer compatibility but is not executed,
 because `dcc` does not run devcontainer-defined commands on the host. When a new
 container starts, `postStartCommand` runs **inside the supervisor** (PID 1), not via
 a host-side `docker exec`. The host pre-substitutes each hook (resolving
 `${localEnv:…}`, `${containerEnv:…}`, etc. using the image's baked environment) into
-an executable script in `.dcc/<profile>.rt/start-hooks/`, named `NN-<source>` so
+an executable script in `.dcc/<profile>.rt/instances/<token>/payload/start-hooks/`, named `NN-<source>` so
 lexical order is execution order; feature hooks run before the project hook. The
 directory is passed to the supervisor via `--start-hooks`. When it finishes, the
 supervisor writes `/run/dcc/bootstrap-status` (`0` on success, `<exit-code>
@@ -739,18 +745,13 @@ is parsed but ignored because `dcc` owns PID 1 (the lifecycle supervisor). `port
 `otherPortsAttributes` are parsed for compatibility; browser/preview auto-open behavior is
 not implemented.
 
-Note that `forwardPorts` no longer translates to `-p` flags. Publishing ports
-with Docker's `-p` mechanism routes traffic through the Docker bridge network,
-so the container application sees connections as coming from the bridge gateway
-IP rather than `127.0.0.1`. Port forwarding is handled separately in phase 3.
+Forwarded ports are published by Docker to supervisor-owned in-container relays.
 
-**Phase 3 — port forwarding**
+**Phase 3 — readiness**
 
-For each port in `forwardPorts`, `dcc run`, `dcc exec`, and `dcc attach` bind a `TcpListener` on
-`127.0.0.1:<port>` on the host and spawns a Tokio task (see Port Forwarding
-below). The listeners are bound before the foreground command runs so that ports are
-ready as soon as the session begins. `dcc start` currently starts only the durable
-container; it does not leave a background host-side port-forwarding process behind.
+The initiating client waits for relay listeners and startup hooks. Forwarding
+continues across client exits and simultaneous sessions, including `dcc start`.
+See Port Forwarding below.
 
 **Phase 4 — foreground command**
 
@@ -767,7 +768,7 @@ CI) still works. The exit status is propagated via `std::process::exit`.
 
 The `dcc-exec` wrapper first **registers** its command with the supervisor (writing a
 record to `/run/dcc/active/<id>`) and then **waits for readiness** by running
-`dcc-ctl wait-ready`. The wait is event-driven: `wait-ready` creates a per-waiter FIFO
+`dcc-ctl wait-hooks`. The wait is event-driven: the control script creates a per-waiter FIFO
 in `/run/dcc/waiters/<id>` *before* checking `bootstrap-status`, so a signal cannot be
 lost; if the status file already exists (steady state) it returns immediately. When
 the supervisor finishes bootstrap it writes `bootstrap-status` atomically and signals
@@ -778,7 +779,7 @@ the host maps to a clear error. Only after readiness does `dcc-exec` run the use
 command and deregister on exit. `dcc start` (which runs no command) calls
 `dcc-ctl wait-ready` host-side so a hook failure surfaces immediately.
 
-`dcc attach` first runs `postAttachCommand` hooks **host-side**, with Feature hooks
+`dcc attach` first runs frozen `postAttachCommand` hooks **inside the container through Docker exec**, with Feature hooks
 before the project hook. On a cold start, the host first waits for the supervisor's
 readiness signal (`wait-ready`) so `postStartCommand` always completes before
 `postAttachCommand`. With no explicit attach command, it executes:
@@ -789,8 +790,7 @@ readiness signal (`wait-ready`) so `postStartCommand` always completes before
 
 **Phase 5 — teardown**
 
-After the foreground command returns, all relay task handles for that invocation are
-aborted. The `dcc-exec` wrapper deregisters the command from the supervisor (via an
+The container retains its relays after foreground commands return. The `dcc-exec` wrapper deregisters the command from the supervisor (via an
 `EXIT` trap) as the command exits. The supervisor's drain decision keys off an
 in-process `arrived` shell variable (set to `1` the moment any command ever registers),
 the active-command count `n`, and — for one-shot containers only — a 10 s orphan
@@ -834,100 +834,71 @@ stop` falls back to `docker stop` and points the user at `--kill`.
 
 ## Port Forwarding
 
-The devcontainer spec distinguishes between *publishing* and *forwarding* ports.
-Docker's `-p HOST:CONTAINER` flag *publishes* a port: traffic arrives at the
-container via the Docker bridge network and the application sees the source
-address as the bridge gateway (e.g. `172.17.0.1`), not `127.0.0.1`. An
-application that binds only to `localhost` rejects such connections.
-
-*Forwarding* means routing traffic through the container's own loopback
-interface so the application sees the source address as `127.0.0.1`. `dcc`
-implements this using a host-side TCP relay (`forward.rs`) and a baked connector
-wrapper running inside the container.
-
-### Relay architecture (`forward.rs`)
-
-For each port in `forwardPorts`, `dcc run` requires a `TcpListener` on
-`127.0.0.1:<port>` and also binds `[::1]:<port>` when IPv6 loopback is
-available. IPv6 bind failure degrades explicitly to IPv4-only forwarding. All
-requested listeners are acquired before relay tasks start, so a later bind
-collision releases earlier listeners without leaving background tasks.
-
-Each listener owns a long-running Tokio task. For each accepted connection the
-listener retains a short-lived connection-handler in a task set and immediately
-resumes accepting. Shutdown aborts and joins the listener tasks; dropping each
-task set cancels its active connectors, so no detached relay survives the
-foreground `dcc` command.
-
-`handle_connection` opens a tunnel by spawning:
+Forwarding belongs to the container lifecycle. `forward.rs` allocates a sorted,
+deduplicated mapping from application ports to unused internal proxy ports in
+`customizations.dcc.relayPortRange` (default `[20000, 20999]`). Target ports are
+excluded from this range; exhaustion fails before container creation.
 
 ```
-docker exec -i <container-name> /usr/local/share/dcc/dcc-connect 127.0.0.1 <port>
+daemon host 127.0.0.1:target → Docker publication → container proxy:port
+                                                    ↓ socat -t 2
+                                              127.0.0.1:target
 ```
 
-`dcc-connect` selects a known compatible TCP client and connects to
-`127.0.0.1:<port>` on the container's own loopback interface. `docker exec -i`
-pipes the process's stdin/stdout back to the host. The handler copies both
-directions concurrently:
+`runtime.rs` requires Docker Engine 28+ and NAT bridge networking when ports are
+configured. It creates exact IPv4 loopback publications and tries IPv6 loopback
+publications too. It checks actual Docker bindings after start. A failed attempt
+may be removed and retried once with IPv4 only when its launch token and inspection
+prove it never started. An uncertain start is never retried, so hooks cannot replay.
+A competing running creator is rediscovered and reused; its container is never removed.
+Remote Docker publishes on the daemon host's localhost.
 
-```
-host TCP socket  ←→  docker exec -i dcc-connect  ←→  app (127.0.0.1:<port> inside container)
-```
+`relay.sh` is the fixed numeric interface to socat. Image builds provision socat
+and util-linux through apt/apk/yum/dnf when needed, then check required capabilities.
+The invocation is `socat -t 2 TCP4-LISTEN:proxy,bind=0.0.0.0,reuseaddr,fork
+TCP4:127.0.0.1:target`. Socat's closing wait applies after EOF and follows its native
+behavior as data continues to flow. There is no fully-open connection idle timeout.
 
-Because `nc` connects from within the container, the application sees the
-connection as originating from `127.0.0.1`, not from the Docker bridge.
+PID 1 starts one `relay_service.sh` runner per mapping, outside the active-command
+set. Each generation has a retained session leader, listener, and forked workers.
+Readiness matches the listening socket inode to the listener's procfs file
+descriptors within five seconds; the application need not exist yet. Initial
+failure fails `wait-ready`, retains the container for diagnosis, and does not retry.
+Later crashes get at most three restarts with one-second backoff. Old process
+groups receive TERM, then KILL after two seconds, before replacement. Output is
+bounded per generation. A degraded relay warns on reuse without blocking commands.
+Stop disables restarts while healthy forwarding continues during command drain.
+Final teardown cleans relay groups before PID 1 exits.
 
-When client input reaches EOF, the relay flushes and drops the child stdin pipe
-immediately so `docker exec` can observe EOF while stdout continues to drain.
-The wrapper then half-closes the application-facing socket. This allows a client
-to finish a request with a write half-close and still receive the complete
-response. Once both directions finish (or either copy fails), the connector is
-reaped and the handler task exits.
+### Frozen runtime configuration
 
-### Connector compatibility
+Runtime discovery precedes configuration loading and mutable host preparation.
+A compatible running container supplies a bounded, validated snapshot through
+root `dcc-ctl snapshot`: identity, immutable image ID, launch token, user/workdir,
+substitution context, scripts, attach hooks, limits and port plan. This DTO cannot
+supply host hooks or mounts. Named commands and attach hooks use the frozen values;
+explicit command arguments use current localEnv with the frozen container context.
 
-Netcat command-line and EOF behavior are not uniform. OpenBSD netcat needs `-N`
-to half-close its network socket after stdin EOF; Nmap Ncat performs the needed
-half-close by default and does not accept OpenBSD's short flag; BusyBox and
-traditional netcat do not expose the required interface.
+Each launch has a private `.dcc/<profile>.rt/instances/<token>/payload` directory.
+The enclosing directory is 0700, payload is mounted read-only, and snapshot JSON is
+0600. Hooks, a numeric mapping manifest, and fingerprint are also fixed at launch.
+Build-prep gets a separate instance with no relay manifest. Release markers outside
+the mount identify abandoned instances; a later launch/build prunes them only after
+successful inspection of all Docker containers proves their paths are unreferenced.
+Inspection failure retains files; abrupt host termination can leave unmarked assets
+for manual cleanup. Live launch plans retain their ownership guard through creation.
 
-The POSIX `dcc-connect` wrapper is baked at `/usr/local/share/dcc/dcc-connect`
-and owns this variant boundary. Its selection order is:
+A versioned SHA-256 fingerprint covers inherited config bytes, referenced localEnv
+values (including absent versus empty), and directly named bounded inputs such as
+Dockerfile/ignore files, local Feature metadata/install scripts, lockfiles and CA
+bundles. Current comparison errors warn and permit frozen reuse. A moved image tag
+or explicit resource-limit change also warns. No runtime reload occurs. Build,
+refresh and reseed require stopping the matching runtime first.
 
-1. `nc.openbsd -N HOST PORT`;
-2. an executable identifying itself as Nmap `ncat`, invoked without `-N`;
-3. generic `nc -N HOST PORT`, only when `nc -h` advertises standalone `-N`;
-4. a clear unsupported-connector error.
-
-The wrapper also provides `--check`, validates its fixed loopback host and port,
-and executes a selected program with direct arguments rather than shell
-evaluation.
-
-For non-empty `forwardPorts`, the generated Dockerfile copies the wrapper after
-Feature installation and runs `dcc-connect --check`. A compatible client from
-the base image or a Feature requires no installation. Otherwise the build tries
-the following packages and runs `--check` again:
-
-| Package manager | Package installed |
-|---|---|
-| `apt-get` (Debian/Ubuntu) | `netcat-openbsd` |
-| `apk` (Alpine) | `netcat-openbsd` |
-| `yum` (RHEL/CentOS) | `nmap-ncat` |
-| `dnf` (Fedora/RHEL 8+) | `nmap-ncat` |
-
-An arbitrary pre-existing `nc` no longer short-circuits provisioning. Unsupported
-BusyBox or traditional variants therefore lead to installation of a compatible
-client when a supported package manager is available, or a build-time error.
-If future variants make help-text probing too fragile, a small compiled connector
-is the bounded fallback; the fixed host-side executable boundary would not change.
-
-### Handle lifetime and cleanup
-
-Each listener has an explicit shutdown channel and retained `JoinHandle`.
-Connections are retained in that listener's `JoinSet`; shutdown stops
-acceptance, aborts active handlers, and joins them before returning. Connector
-processes use `kill_on_drop` and are explicitly killed and waited on after a
-relay result, so cancellation cannot detach a subprocess.
+Protocol 0.2 adds `snapshot`, `verify-config`, `relay-status`, and `wait-hooks`.
+`wait-ready` checks initial relay readiness plus hooks, while `wait-hooks` allows
+commands on a runtime whose relay is degraded. Older images require explicit stop,
+build and recreate; legacy stop stays best effort.
 
 ---
 
@@ -1098,12 +1069,12 @@ RUN <updateRemoteUserUID remap: sed-rewrite /etc/passwd + /etc/group,
 COPY .dcc-generated/ /usr/local/share/dcc/
 RUN chmod +x /usr/local/share/dcc/dcc-*
 # Only present when forwardPorts is non-empty (see Port Forwarding below):
-RUN ( /usr/local/share/dcc/dcc-connect --check >/dev/null 2>&1 \
- || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends netcat-openbsd) \
- || (command -v apk     >/dev/null 2>&1 && apk add --no-cache netcat-openbsd) \
- || (command -v yum     >/dev/null 2>&1 && yum install -y nmap-ncat) \
- || (command -v dnf     >/dev/null 2>&1 && dnf install -y nmap-ncat) ) \
- && /usr/local/share/dcc/dcc-connect --check
+RUN ( /usr/local/share/dcc/dcc-relay --check >/dev/null 2>&1 \
+ || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends socat util-linux) \
+ || (command -v apk     >/dev/null 2>&1 && apk add --no-cache socat util-linux) \
+ || (command -v yum     >/dev/null 2>&1 && yum install -y socat util-linux) \
+ || (command -v dnf     >/dev/null 2>&1 && dnf install -y socat util-linux) ) \
+ && /usr/local/share/dcc/dcc-relay --check
 ```
 
 The devcontainer.json `containerEnv` `ENV` directives appear immediately after

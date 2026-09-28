@@ -11,6 +11,8 @@ mod forward;
 mod lifecycle;
 mod profile;
 mod run;
+mod runtime;
+mod runtime_snapshot;
 mod seed;
 mod stop;
 mod supervisor;
@@ -21,7 +23,7 @@ mod workspace;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use clap::{CommandFactory as _, Parser as _};
+use clap::{CommandFactory as _, FromArgMatches as _};
 
 #[tokio::main]
 async fn main() {
@@ -37,7 +39,15 @@ async fn main() {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let cli = cli::Cli::parse();
+    let matches = cli::Cli::command().get_matches();
+    let cli = cli::Cli::from_arg_matches(&matches)?;
+    let (memory_explicit, cpus_explicit) = match matches.subcommand() {
+        Some(("exec" | "start" | "attach" | "run", args)) => (
+            args.value_source("memory") == Some(clap::parser::ValueSource::CommandLine),
+            args.value_source("cpus") == Some(clap::parser::ValueSource::CommandLine),
+        ),
+        _ => (false, false),
+    };
     if let cli::Command::Feature {
         command:
             Some(cli::FeatureCommand::Validate {
@@ -136,6 +146,8 @@ async fn run() -> anyhow::Result<()> {
                 &args,
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
+                        memory_explicit,
+                        cpus_explicit,
                         memory: &memory,
                         cpus: &cpus,
                     },
@@ -163,6 +175,8 @@ async fn run() -> anyhow::Result<()> {
                 &config_path,
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
+                        memory_explicit,
+                        cpus_explicit,
                         memory: &memory,
                         cpus: &cpus,
                     },
@@ -192,6 +206,8 @@ async fn run() -> anyhow::Result<()> {
                 &args,
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
+                        memory_explicit,
+                        cpus_explicit,
                         memory: &memory,
                         cpus: &cpus,
                     },
@@ -291,6 +307,8 @@ async fn run() -> anyhow::Result<()> {
                 script.as_deref(),
                 exec::ExecOptions {
                     limits: exec::ResourceLimits {
+                        memory_explicit,
+                        cpus_explicit,
                         memory: &memory,
                         cpus: &cpus,
                     },
@@ -330,6 +348,14 @@ fn resolve_profile(
     if is_path_arg(arg) {
         let raw = cwd.join(arg);
         let config_path = std::fs::canonicalize(&raw)
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    if let (Some(parent), Some(name)) = (raw.parent(), raw.file_name()) {
+                        return std::fs::canonicalize(parent).map(|parent| parent.join(name));
+                    }
+                }
+                Err(e)
+            })
             .with_context(|| format!("failed to resolve config path `{}`", raw.display()))?;
         let name = profile::path_to_profile_name(&config_path, workspace);
         Ok((name, config_path))

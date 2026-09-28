@@ -13,6 +13,8 @@ containers without sharing state between profiles.
 - Runs one-shot commands or durable profile containers.
 - Reuses the same running profile container for `run`, `exec`, `attach`, and
   `start`.
+- Keeps forwarded ports available across sessions for the container's lifetime.
+- Warns and defers configuration changes until the running container is recreated.
 - Keeps a durable per-profile `/cache` mount under `.dcc/<profile>`.
 - Persists declared state paths with `customizations.dcc.state`.
 - Supports local config inheritance with `customizations.dcc.extends`.
@@ -29,6 +31,7 @@ For the detailed user guide, see [docs/index.md](docs/index.md).
 Linux and macOS.
 
 Docker must be installed and running for real build and runtime workflows.
+Port forwarding requires Docker Engine 28+ with NAT bridge networking.
 
 ## Installation
 

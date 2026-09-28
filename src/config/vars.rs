@@ -23,6 +23,7 @@ pub(crate) fn apply_substitutions(
     let local_cache = cache_dir.host_path.to_string_lossy().into_owned();
 
     DevcontainerConfig {
+        relay_port_range: config.relay_port_range,
         name: config.name,
         image: config.image,
         build: config.build,

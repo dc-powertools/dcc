@@ -20,6 +20,8 @@ set -eu
 } >> "$DCC_FAKE_DOCKER_LOG"
 
 command_name=${1-}
+if [ "$command_name" = version ]; then printf '%s\n' "${DCC_FAKE_ENGINE_VERSION-28.0.0}"; exit 0; fi
+if [ "$command_name" = network ]; then printf '%s\n' '[{"Driver":"bridge","Options":{}}]'; exit 0; fi
 if [ "$command_name" = build ]; then
     cat >/dev/null
     exit 0
@@ -30,6 +32,7 @@ if [ "$command_name" = image ] && [ "${2-}" = inspect ]; then
         exit 0
     fi
     case "${4-}" in
+        *'.Id'*) printf '%s\n' 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
         *dcc.version*) printf '%s\n' "${DCC_FAKE_VERSION_LABEL-<no value>}" ;;
         *devcontainer.metadata*) printf '%s\n' "${DCC_FAKE_METADATA-<no value>}" ;;
         *Config.Env*) printf '%s\n' "${DCC_FAKE_IMAGE_ENV-[]}" ;;
@@ -40,6 +43,21 @@ if [ "$command_name" = image ] && [ "${2-}" = inspect ]; then
 fi
 
 if [ "$command_name" = ps ]; then
+    for argument in "$@"; do
+        if [ "$argument" = --all ]; then
+            if [ -f "$DCC_FAKE_DOCKER_STATE.inspect" ]; then printf '%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; fi
+            exit 0
+        fi
+    done
+    for argument in "$@"; do
+        case "$argument" in
+            *'{{.ID}}'*)
+                if [ -f "$DCC_FAKE_DOCKER_STATE.inspect" ] && [ -s "$DCC_FAKE_DOCKER_STATE" ]; then
+                    printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\truntime\n'
+                fi
+                exit 0 ;;
+        esac
+    done
     profile_status=false
     for argument in "$@"; do
         case "$argument" in
@@ -63,7 +81,50 @@ if [ "$command_name" = ps ]; then
     exit 0
 fi
 
+if [ "$command_name" = container ] && [ "${2-}" = inspect ]; then
+    if [ -f "$DCC_FAKE_DOCKER_STATE.inspect" ]; then cat "$DCC_FAKE_DOCKER_STATE.inspect"; exit 0; fi
+    echo 'Error: No such container' >&2
+    exit 1
+fi
+if [ "$command_name" = create ]; then
+    previous= name= identity= token= payload=
+    for argument in "$@"; do
+        case "$previous" in
+            --name) name=$argument ;;
+            --label) case "$argument" in dcc.container_id=*) identity=${argument#*=} ;; dcc.launch_token=*) token=${argument#*=} ;; esac ;;
+            --mount) case "$argument" in *instances*payload*) payload=${argument#*source=}; payload=${payload%%,*} ;; esac ;;
+        esac
+        previous=$argument
+    done
+    printf '%s' "$name" > "$DCC_FAKE_DOCKER_STATE"
+    printf '%s' "$payload" > "$DCC_FAKE_DOCKER_STATE.payload"
+    bindings=${DCC_FAKE_BINDINGS-'{}'}
+    printf '[{"Id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","Image":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Config":{"Labels":{"dcc.container_id":"%s","dcc.container_role":"runtime","dcc.launch_token":"%s"}},"State":{"Status":"created","StartedAt":"0001-01-01T00:00:00Z"},"NetworkSettings":{"Ports":%s}}]\n' "$identity" "$token" "$bindings" > "$DCC_FAKE_DOCKER_STATE.inspect"
+    printf '%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    exit 0
+fi
+if [ "$command_name" = start ]; then
+    if [ -n "${DCC_FAKE_START_FAIL-}" ] && [ ! -f "$DCC_FAKE_DOCKER_STATE.failed" ]; then
+        touch "$DCC_FAKE_DOCKER_STATE.failed"
+        if [ "$DCC_FAKE_START_FAIL" = uncertain ]; then
+            sed 's/"created"/"exited"/;s/0001-01-01/2026-09-28/' "$DCC_FAKE_DOCKER_STATE.inspect" > "$DCC_FAKE_DOCKER_STATE.tmp"
+            mv "$DCC_FAKE_DOCKER_STATE.tmp" "$DCC_FAKE_DOCKER_STATE.inspect"
+        fi
+        echo 'simulated start failure' >&2
+        exit 1
+    fi
+    sed 's/"created"/"running"/;s/0001-01-01/2026-09-28/' "$DCC_FAKE_DOCKER_STATE.inspect" > "$DCC_FAKE_DOCKER_STATE.tmp"
+    mv "$DCC_FAKE_DOCKER_STATE.tmp" "$DCC_FAKE_DOCKER_STATE.inspect"
+    exit 0
+fi
+if [ "$command_name" = rm ]; then rm -f "$DCC_FAKE_DOCKER_STATE.inspect" "$DCC_FAKE_DOCKER_STATE"; exit 0; fi
+
 if [ "$command_name" = inspect ]; then
+    if [ "${2-}" = --format ] && [ "${3-}" = '{{json .Mounts}}' ]; then
+        [ -z "${DCC_FAKE_MOUNT_INSPECT_FAIL-}" ] || exit 1
+        printf '[{"Source":"%s"}]\n' "$(cat "$DCC_FAKE_DOCKER_STATE.payload")"
+        exit 0
+    fi
     if [ -s "$DCC_FAKE_DOCKER_STATE" ]; then
         printf '%s\n' true
         exit 0
@@ -88,10 +149,17 @@ if [ "$command_name" = run ]; then
 fi
 
 if [ "$command_name" = exec ]; then
+    previous=
     for argument in "$@"; do
         case "$argument" in
             stop|stop-now) rm -f "$DCC_FAKE_DOCKER_STATE" ;;
+            snapshot) cat "$(cat "$DCC_FAKE_DOCKER_STATE.payload")/snapshot.json"; exit 0 ;;
+            relay-status) printf '%s\n' "${DCC_FAKE_RELAY_STATUS-}"; exit "${DCC_FAKE_RELAY_CODE-0}" ;;
         esac
+        if [ "$previous" = verify-config ]; then
+            [ "$argument" = "$(cat "$(cat "$DCC_FAKE_DOCKER_STATE.payload")/fingerprint")" ] || exit 3
+        fi
+        previous=$argument
     done
     exit 0
 fi
@@ -277,7 +345,11 @@ fn build_calls(calls: &[Vec<String>]) -> Vec<&Vec<String>> {
 fn run_call(calls: &[Vec<String>]) -> &Vec<String> {
     calls
         .iter()
-        .find(|call| call.first().is_some_and(|arg| arg == "run"))
+        .find(|call| {
+            call.first()
+                .is_some_and(|arg| arg == "run" || arg == "create")
+                && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
+        })
         .expect("expected a docker run call")
 }
 
@@ -716,7 +788,8 @@ fn reserved_dcc_run_arg_labels_are_rejected_before_container_creation() {
         );
         assert!(
             !fx.calls().iter().any(|call| {
-                call.first().is_some_and(|arg| arg == "run")
+                call.first()
+                    .is_some_and(|arg| arg == "run" || arg == "create")
                     && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
             }),
             "reserved label {key} reached container creation"
@@ -792,7 +865,8 @@ fn missing_container_env_without_default_fails_in_every_runtime_consumer() {
         assert_stderr_contains(&output, "${containerEnv:MISSING}");
         assert!(
             !fx.calls().iter().any(|call| {
-                call.first().is_some_and(|arg| arg == "run")
+                call.first()
+                    .is_some_and(|arg| arg == "run" || arg == "create")
                     && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
             }),
             "{context} failure must occur before profile container creation"
@@ -819,7 +893,8 @@ fn container_env_default_and_present_empty_reach_runtime_environment() {
     let run = calls
         .iter()
         .find(|call| {
-            call.first().is_some_and(|arg| arg == "run")
+            call.first()
+                .is_some_and(|arg| arg == "run" || arg == "create")
                 && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
         })
         .expect("expected profile container creation");
@@ -862,7 +937,8 @@ fn project_and_feature_mount_forms_reach_docker_with_readonly_preserved() {
     let run = calls
         .iter()
         .find(|call| {
-            call.first().is_some_and(|arg| arg == "run")
+            call.first()
+                .is_some_and(|arg| arg == "run" || arg == "create")
                 && call.iter().any(|arg| arg.ends_with("/dcc-supervisor"))
         })
         .expect("expected profile container creation");
@@ -905,4 +981,239 @@ fn missing_container_env_without_default_fails_in_feature_consumers() {
         assert_stderr_contains(&output, context);
         assert_stderr_contains(&output, "variable `MISSING` is missing");
     }
+}
+
+#[test]
+fn reuse_warns_and_defers_config_edits_without_recreating_or_rewriting_assets() {
+    let fx = FakeDockerFixture::new(
+        r#"{"image":"debian","containerUser":"root","postAttachCommand":"echo old-hook","customizations":{"dcc":{"commands":{"check":"echo old-command"}}}}"#,
+    );
+    let version = compatible_patch_version();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    let payload = std::fs::read_to_string(fx.state.with_extension("payload")).unwrap();
+    let snapshot = std::fs::read(format!("{payload}/snapshot.json")).unwrap();
+    fx.fx.write_config("devcontainer.json", r#"{"image":"debian","containerUser":"different","postAttachCommand":"echo new-hook","forwardPorts":[4173],"customizations":{"dcc":{"commands":{"check":"echo new-command"}}}}"#);
+    let output = fx.output(&["run", "--keep", "check"], Some(&version));
+    assert_success(&output);
+    assert_stderr_contains(&output, "configuration changed");
+    let calls = fx.calls();
+    assert_eq!(calls.iter().filter(|c| c[0] == "create").count(), 1);
+    assert!(calls
+        .iter()
+        .any(|c| c.iter().any(|s| s == "echo old-command")));
+    assert!(!calls
+        .iter()
+        .any(|c| c.iter().any(|s| s == "echo new-command")));
+    assert_eq!(
+        std::fs::read(format!("{payload}/snapshot.json")).unwrap(),
+        snapshot
+    );
+    fx.fx.write_config("devcontainer.json", "{broken");
+    let output = fx.output(&["exec", "--keep", "true"], Some(&version));
+    assert_success(&output);
+    assert_stderr_contains(&output, "comparison is unavailable");
+    std::fs::remove_file(fx.fx.dir.path().join(".devcontainer/devcontainer.json")).unwrap();
+    assert_success(&fx.output(&["exec", "--keep", "true"], Some(&version)));
+}
+
+#[test]
+fn running_runtime_blocks_build_refresh_and_reseed_before_mutation() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let version = compatible_patch_version();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    for args in [
+        vec!["build"],
+        vec!["build", "--refresh-only"],
+        vec!["build", "--reseed-state"],
+    ] {
+        let output = fx.output(&args, Some(&version));
+        assert_failure(&output);
+        assert_stderr_contains(&output, "stop it before build");
+    }
+    assert!(build_calls(&fx.calls()).is_empty());
+}
+
+const FORWARDED: &str = r#"{"image":"debian","containerUser":"root","forwardPorts":[4173]}"#;
+const IPV4_BINDING: &str = r#"{"20000/tcp":[{"HostIp":"127.0.0.1","HostPort":"4173"}]}"#;
+#[test]
+fn ipv6_retry_requires_proof_that_startup_never_ran() {
+    for failure in ["safe", "uncertain"] {
+        let fx = FakeDockerFixture::new(FORWARDED);
+        let output = fx
+            .dcc(&["start"])
+            .env("DCC_FAKE_VERSION_LABEL", compatible_patch_version())
+            .env("DCC_FAKE_BINDINGS", IPV4_BINDING)
+            .env("DCC_FAKE_START_FAIL", failure)
+            .output()
+            .unwrap();
+        let calls = fx.calls();
+        let creates: Vec<_> = calls.iter().filter(|c| c[0] == "create").collect();
+        assert!(contains_pair(
+            creates[0],
+            "--publish",
+            "[::1]:4173:20000/tcp"
+        ));
+        if failure == "safe" {
+            assert_success(&output);
+            assert_eq!(creates.len(), 2);
+            assert!(contains_pair(
+                creates[1],
+                "--publish",
+                "127.0.0.1:4173:20000/tcp"
+            ));
+            assert!(!creates[1].iter().any(|s| s.contains("[::1]")));
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|c| c.iter().any(|s| s == "wait-ready"))
+                    .count(),
+                1
+            );
+        } else {
+            assert_failure(&output);
+            assert_eq!(creates.len(), 1);
+            assert!(!calls.iter().any(|c| c[0] == "rm"));
+        }
+    }
+}
+
+#[test]
+fn forwarding_rejects_old_engines_before_creation_and_unsafe_actual_bindings_after_start() {
+    let fx = FakeDockerFixture::new(FORWARDED);
+    let output = fx
+        .dcc(&["start"])
+        .env("DCC_FAKE_VERSION_LABEL", compatible_patch_version())
+        .env("DCC_FAKE_ENGINE_VERSION", "27.5.1")
+        .output()
+        .unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "Engine 28+");
+    assert!(!fx.calls().iter().any(|c| c[0] == "create"));
+    let output = fx
+        .dcc(&["start"])
+        .env("DCC_FAKE_VERSION_LABEL", compatible_patch_version())
+        .env(
+            "DCC_FAKE_BINDINGS",
+            IPV4_BINDING.replace("127.0.0.1", "0.0.0.0"),
+        )
+        .output()
+        .unwrap();
+    assert_failure(&output);
+    assert_stderr_contains(&output, "unexpected forwarding publication");
+    assert!(fx.calls().iter().any(|c| c[0] == "stop"));
+}
+
+#[test]
+fn degraded_forwarding_allows_frozen_commands_and_does_not_recreate() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let version = compatible_patch_version();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    let output = fx
+        .dcc(&["exec", "--keep", "true"])
+        .env("DCC_FAKE_VERSION_LABEL", version)
+        .env("DCC_FAKE_RELAY_CODE", "1")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_stderr_contains(&output, "forwarding is degraded");
+    assert_eq!(fx.calls().iter().filter(|c| c[0] == "create").count(), 1);
+}
+
+#[test]
+fn fingerprint_distinguishes_absent_empty_and_changed_local_environment() {
+    let fx = FakeDockerFixture::new(
+        r#"{"image":"debian","containerUser":"root","remoteEnv":{"VALUE":"${localEnv:DCC_TEST_FROZEN_ENV:default}"}}"#,
+    );
+    let version = compatible_patch_version();
+    assert_success(
+        &fx.dcc(&["start"])
+            .env("DCC_FAKE_VERSION_LABEL", &version)
+            .env_remove("DCC_TEST_FROZEN_ENV")
+            .output()
+            .unwrap(),
+    );
+    for value in ["", "changed"] {
+        let output = fx
+            .dcc(&[
+                "exec",
+                "--keep",
+                "echo",
+                "${localEnv:DCC_TEST_FROZEN_ENV:default}",
+            ])
+            .env("DCC_FAKE_VERSION_LABEL", &version)
+            .env("DCC_TEST_FROZEN_ENV", value)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        assert_stderr_contains(&output, "configuration changed");
+        assert!(fx.calls().last().unwrap().iter().any(|arg| arg == value));
+    }
+}
+
+#[test]
+fn explicit_resource_changes_warn_but_omitted_defaults_do_not() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let version = compatible_patch_version();
+    assert_success(&fx.output(&["start", "--memory", "8g"], Some(&version)));
+    let output = fx.output(&["start"], Some(&version));
+    assert_success(&output);
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("configuration changed"));
+    let output = fx.output(&["start", "--memory", "4g"], Some(&version));
+    assert_success(&output);
+    assert_stderr_contains(&output, "configuration changed");
+}
+
+#[test]
+fn immutable_assets_prune_only_released_unreferenced_instances() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let version = compatible_patch_version();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    let original =
+        PathBuf::from(std::fs::read_to_string(fx.state.with_extension("payload")).unwrap());
+    assert!(original.parent().unwrap().join("released").exists());
+    use std::os::unix::fs::PermissionsExt as _;
+    assert_eq!(
+        std::fs::metadata(original.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        std::fs::metadata(original.join("snapshot.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    // A stopped container still references the original payload.
+    std::fs::remove_file(&fx.state).unwrap();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    assert!(original.exists());
+    // Uncertain inspection retains even the now-unreferenced original.
+    std::fs::remove_file(&fx.state).unwrap();
+    let output = fx
+        .dcc(&["start"])
+        .env("DCC_FAKE_VERSION_LABEL", &version)
+        .env("DCC_FAKE_MOUNT_INSPECT_FAIL", "1")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_stderr_contains(&output, "retaining assets");
+    assert!(original.exists());
+    std::fs::remove_file(&fx.state).unwrap();
+    std::fs::remove_file(fx.state.with_extension("inspect")).unwrap();
+    // An in-progress launch has no release marker and must survive an empty Docker list.
+    let pending = original
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("abc-def-123");
+    std::fs::create_dir(&pending).unwrap();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    assert!(!original.exists());
+    assert!(pending.exists());
 }

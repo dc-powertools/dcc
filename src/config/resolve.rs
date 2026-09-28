@@ -151,7 +151,13 @@ pub(crate) fn raw_to_config(raw: RawConfig, source: &Path) -> anyhow::Result<Dev
                 source.display()
             )
         })?;
+    let relay_port_range = dcc.relay_port_range.unwrap_or([20000, 20999]);
+    crate::forward::plan_ports(
+        raw.forward_ports.as_deref().unwrap_or_default(),
+        relay_port_range,
+    )?;
     Ok(DevcontainerConfig {
+        relay_port_range,
         name: raw.name,
         image: raw.image,
         build: raw.build,

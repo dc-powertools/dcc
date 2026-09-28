@@ -126,3 +126,19 @@ the resulting commit identity through autotag, CI, tagging, and release.
 
 Do not push or publish a release unless the project owner explicitly asks for
 that action.
+
+### Local relay checks without Docker
+
+On Linux with distro `socat`, `setsid`, and procfs available, the focused relay
+suite exercises listeners, EOF handling, bounded restarts, process-group cleanup,
+and one-shot teardown without launching containers:
+
+```sh
+cargo test --test relay_local -- --ignored --nocapture
+cargo test --bin dcc supervisor::tests::relay_does_not_keep_oneshot_supervisor_alive -- --ignored --exact --nocapture
+```
+
+These checks supplement the Docker suite. Qualify forwarding on Docker Engine
+28+ (including IPv4-only/dual-loopback publication and port conflicts), Docker
+Desktop, and Debian/Ubuntu, Alpine, and Fedora-family images before release. Local
+socket tests do not validate Docker publication or bind-mount UID behavior.

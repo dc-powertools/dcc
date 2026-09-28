@@ -65,6 +65,7 @@ fn merge_dcc(parent: Option<RawDccConfig>, child: Option<RawDccConfig>) -> Optio
         (p, None) => p,
         (None, c) => c,
         (Some(p), Some(c)) => Some(RawDccConfig {
+            relay_port_range: c.relay_port_range.or(p.relay_port_range),
             extends: None,
             default_feature_repository: c
                 .default_feature_repository
@@ -983,6 +984,7 @@ mod tests {
             |(commands, state, other)| {
                 Customizations {
                     dcc: Some(RawDccConfig {
+                        relay_port_range: None,
                         extends: None,
                         default_feature_repository: None,
                         commands,
@@ -1144,6 +1146,7 @@ mod tests {
                     (None, None) => None,
                     (value, None) | (None, value) => value,
                     (Some(parent), Some(child)) => Some(RawDccConfig {
+                        relay_port_range: child.relay_port_range.or(parent.relay_port_range),
                         extends: None,
                         default_feature_repository: child
                             .default_feature_repository

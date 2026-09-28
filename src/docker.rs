@@ -243,31 +243,17 @@ fn exec_args(
 }
 
 /// Spawns `docker <args>` with stdio inherited and waits for it to finish.
-async fn spawn_inherit(
-    args: &[String],
-    container: &str,
-    argv: &[String],
-) -> anyhow::Result<ExitStatus> {
+async fn spawn_inherit(args: &[String], container: &str) -> anyhow::Result<ExitStatus> {
     Command::new("docker")
         .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .with_context(|| {
-            format!(
-                "failed to spawn `docker exec {container} {}`",
-                argv.join(" ")
-            )
-        })?
+        .with_context(|| format!("failed to spawn docker exec for container {container}"))?
         .wait()
         .await
-        .with_context(|| {
-            format!(
-                "failed to wait for `docker exec {container} {}`",
-                argv.join(" ")
-            )
-        })
+        .with_context(|| format!("failed to wait for docker exec for container {container}"))
 }
 
 /// Runs `argv` inside `container` as `user` from `workdir` via `docker exec`,
@@ -281,7 +267,6 @@ pub(crate) async fn exec(
     spawn_inherit(
         &exec_args(container, user, workdir, argv, false, false),
         container,
-        argv,
     )
     .await
 }
@@ -300,7 +285,6 @@ pub(crate) async fn exec_foreground(
     spawn_inherit(
         &exec_args(container, user, workdir, argv, true, tty),
         container,
-        argv,
     )
     .await
 }
@@ -1003,4 +987,202 @@ mod tests {
     fn parse_user_env_empty() {
         assert!(parse_user_env("").is_empty());
     }
+}
+
+/// Bounded capture for runtime control. Neither snapshots nor command argv are logged.
+pub(crate) async fn capture(args: &[String], limit: usize) -> anyhow::Result<std::process::Output> {
+    use tokio::io::AsyncReadExt as _;
+    let mut child = Command::new("docker")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to start Docker runtime operation")?;
+    let stdout = child.stdout.take().context("Docker stdout missing")?;
+    let stderr = child.stderr.take().context("Docker stderr missing")?;
+    async fn read<R: tokio::io::AsyncRead + Unpin>(
+        reader: R,
+        limit: usize,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        reader
+            .take((limit + 1) as u64)
+            .read_to_end(&mut bytes)
+            .await?;
+        anyhow::ensure!(
+            bytes.len() <= limit,
+            "Docker control output exceeds size limit"
+        );
+        Ok(bytes)
+    }
+    let result = tokio::try_join!(read(stdout, limit), read(stderr, 16384));
+    match result {
+        Ok((stdout, stderr)) => Ok(std::process::Output {
+            status: child.wait().await?,
+            stdout,
+            stderr,
+        }),
+        Err(e) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            Err(e)
+        }
+    }
+}
+
+pub(crate) fn captured_ok(output: &std::process::Output, operation: &str) -> anyhow::Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(command_failure(
+        operation,
+        output.status.code().unwrap_or(-1),
+        &output.stderr,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct ContainerInspect {
+    pub(crate) id: String,
+    pub(crate) image: String,
+    pub(crate) config: ContainerConfig,
+    pub(crate) state: ContainerState,
+    pub(crate) network_settings: ContainerNetwork,
+}
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct ContainerConfig {
+    pub(crate) labels: HashMap<String, String>,
+}
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct ContainerState {
+    pub(crate) status: String,
+    pub(crate) started_at: String,
+}
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct ContainerNetwork {
+    #[serde(default)]
+    pub(crate) ports: HashMap<String, Option<Vec<PortBinding>>>,
+}
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct PortBinding {
+    #[serde(rename = "HostIp")]
+    pub(crate) host_ip: String,
+    #[serde(rename = "HostPort")]
+    pub(crate) host_port: String,
+}
+
+pub(crate) async fn inspect_container(name: &str) -> anyhow::Result<Option<ContainerInspect>> {
+    let output = capture(
+        &["container".into(), "inspect".into(), name.into()],
+        crate::runtime_snapshot::MAX_BYTES,
+    )
+    .await?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        if error.contains("No such container") || error.contains("No such object") {
+            return Ok(None);
+        }
+        captured_ok(&output, "container inspect")?;
+    }
+    let mut records: Vec<ContainerInspect> =
+        serde_json::from_slice(&output.stdout).context("invalid Docker container inspection")?;
+    anyhow::ensure!(
+        records.len() == 1,
+        "expected exactly one inspected container"
+    );
+    Ok(records.pop())
+}
+
+pub(crate) async fn runtime_by_identity(
+    identity: &str,
+) -> anyhow::Result<Option<ContainerInspect>> {
+    let output = capture(
+        &[
+            "ps".into(),
+            "--filter".into(),
+            format!("label={CONTAINER_ID_LABEL}={identity}"),
+            "--format".into(),
+            "{{.ID}}\t{{.Label \"dcc.container_role\"}}".into(),
+        ],
+        65536,
+    )
+    .await?;
+    captured_ok(&output, "runtime lookup")?;
+    let text = std::str::from_utf8(&output.stdout).context("invalid runtime lookup output")?;
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let (id, role) = line
+            .split_once('\t')
+            .context("invalid runtime lookup record")?;
+        if role == CONTAINER_ROLE_BUILD_PREP {
+            continue;
+        }
+        anyhow::ensure!(
+            role.is_empty() || role == CONTAINER_ROLE_RUNTIME,
+            "unrecognized dcc container role"
+        );
+        anyhow::ensure!(
+            !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit()),
+            "invalid container ID"
+        );
+        names.push(id);
+    }
+    anyhow::ensure!(
+        names.len() <= 1,
+        "multiple runtime containers match this profile; stop the extra instances explicitly"
+    );
+    match names.first() {
+        None => Ok(None),
+        Some(name) => inspect_container(name).await,
+    }
+}
+
+pub(crate) async fn image_id(image: &str) -> anyhow::Result<String> {
+    let output = capture(
+        &[
+            "image".into(),
+            "inspect".into(),
+            "--format".into(),
+            "{{.Id}}".into(),
+            image.into(),
+        ],
+        4096,
+    )
+    .await?;
+    captured_ok(&output, "image identity inspection")?;
+    let id = std::str::from_utf8(&output.stdout)?.trim();
+    anyhow::ensure!(
+        id.starts_with("sha256:")
+            && id.len() == 71
+            && id[7..].bytes().all(|b| b.is_ascii_hexdigit()),
+        "invalid immutable image ID"
+    );
+    Ok(id.to_owned())
+}
+
+pub(crate) async fn control(
+    container: &str,
+    verb: &str,
+    argument: Option<&str>,
+) -> anyhow::Result<std::process::Output> {
+    let mut args = vec![
+        "exec".into(),
+        "-u".into(),
+        "0".into(),
+        "-w".into(),
+        "/".into(),
+        container.into(),
+        format!("{}/dcc-ctl", crate::supervisor::DCC_SHARE),
+        verb.into(),
+    ];
+    if let Some(value) = argument {
+        args.push(value.into());
+    }
+    capture(&args, crate::runtime_snapshot::MAX_BYTES).await
 }

@@ -210,9 +210,7 @@ fn forwarded_port_reaches_container_loopback_service() {
     assert_success(&fx.dcc(&["build"]));
 
     let service = format!(
-        "rm -f /tmp/dcc-forward-fifo; mkfifo /tmp/dcc-forward-fifo; \
-         (printf container-response > /tmp/dcc-forward-fifo) & \
-         nc -l 127.0.0.1 {port} < /tmp/dcc-forward-fifo > /workspace/forwarded-request.txt"
+        "socat -t 2 TCP4-LISTEN:{port},bind=127.0.0.1,reuseaddr SYSTEM:'cat > /workspace/forwarded-request.txt; printf container-response'"
     );
     let mut command = fx.fx.dcc(&["exec", "/bin/sh", "-lc", &service]);
     let mut child = command

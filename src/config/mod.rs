@@ -175,6 +175,7 @@ pub(crate) struct Customizations {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawDccConfig {
+    pub(crate) relay_port_range: Option<[u16; 2]>,
     pub(crate) extends: Option<String>,
     pub(crate) default_feature_repository: Option<feature_ref::DefaultFeatureRepository>,
     pub(crate) commands: Option<HashMap<String, String>>,
@@ -227,6 +228,7 @@ impl<'de> Deserialize<'de> for StateEntry {
 
 #[derive(Debug)]
 pub(crate) struct DevcontainerConfig {
+    pub(crate) relay_port_range: [u16; 2],
     pub(crate) name: Option<String>,
     pub(crate) image: Option<String>,
     pub(crate) build: Option<BuildConfig>,

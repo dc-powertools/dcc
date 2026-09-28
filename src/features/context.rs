@@ -24,7 +24,7 @@ pub(crate) fn build_context(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
-    provision_connector: bool,
+    provision_relay: bool,
     generated_assets: &[ContextFile],
     remap: Option<&crate::uid::RemapPlan>,
 ) -> anyhow::Result<Vec<u8>> {
@@ -33,7 +33,7 @@ pub(crate) fn build_context(
         devcontainer_env,
         features,
         container_user,
-        provision_connector,
+        provision_relay,
         !generated_assets.is_empty(),
         remap,
     );
@@ -82,15 +82,15 @@ fn generate_dockerfile(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
-    provision_connector: bool,
+    provision_relay: bool,
 ) -> String {
     generate_dockerfile_inner(
         image,
         devcontainer_env,
         features,
         container_user,
-        provision_connector,
-        provision_connector,
+        provision_relay,
+        provision_relay,
         None,
     )
 }
@@ -100,7 +100,7 @@ fn generate_dockerfile_inner(
     devcontainer_env: &[(String, String)],
     features: &[FeatureContext],
     container_user: &str,
-    provision_connector: bool,
+    provision_relay: bool,
     install_generated_assets: bool,
     remap: Option<&crate::uid::RemapPlan>,
 ) -> String {
@@ -115,7 +115,7 @@ fn generate_dockerfile_inner(
         "LABEL dcc.version={}",
         shell_quote(env!("CARGO_PKG_VERSION"))
     ));
-    if !features.is_empty() || provision_connector {
+    if !features.is_empty() || provision_relay {
         // Suppress debconf's Dialog→Readline→Teletype→Noninteractive fallback
         // warnings that appear when apt-get runs without a controlling terminal.
         // ARG (unlike ENV) is not baked into the final image, so interactive
@@ -194,23 +194,23 @@ fn generate_dockerfile_inner(
         lines.push("COPY .dcc-generated/ /usr/local/share/dcc/".to_string());
         lines.push("RUN chmod +x /usr/local/share/dcc/dcc-*".to_string());
     }
-    // Validate the baked port-forward connector after features have run. A compatible
+    // Validate the baked port relay after features have run. A compatible
     // tool supplied by the base image or a feature needs no package installation;
-    // otherwise try the distro-specific OpenBSD netcat/Nmap Ncat packages in turn.
-    if provision_connector {
+    // otherwise try the distro-specific socat and session-support packages in turn.
+    if provision_relay {
         lines.push(
-            "RUN ( /usr/local/share/dcc/dcc-connect --check >/dev/null 2>&1 \
+            "RUN ( /usr/local/share/dcc/dcc-relay --check >/dev/null 2>&1 \
              \\\n || (command -v apt-get >/dev/null 2>&1 \
              && apt-get update -qq \
-             && apt-get install -y --no-install-recommends netcat-openbsd) \
+             && apt-get install -y --no-install-recommends socat util-linux) \
              \\\n || (command -v apk >/dev/null 2>&1 \
-             && apk add --no-cache netcat-openbsd) \
+             && apk add --no-cache socat util-linux) \
              \\\n || (command -v yum >/dev/null 2>&1 \
-             && yum install -y nmap-ncat) \
+             && yum install -y socat util-linux) \
              \\\n || (command -v dnf >/dev/null 2>&1 \
-             && dnf install -y nmap-ncat) \
-             \\\n || (printf '%s\\n' 'dcc: unable to install a compatible port-forward connector' >&2; false) ) \
-             \\\n && /usr/local/share/dcc/dcc-connect --check"
+             && dnf install -y socat util-linux) \
+             \\\n || (printf '%s\\n' 'dcc: unable to install a compatible port relay' >&2; false) ) \
+             \\\n && /usr/local/share/dcc/dcc-relay --check"
                 .to_string(),
         );
     }
@@ -393,36 +393,36 @@ mod tests {
             &[feature],
             "root",
             true,
-            &[crate::forward::baked_connector_asset()],
+            &crate::forward::baked_relay_assets(),
             None,
         )
         .unwrap();
         let mut archive = tar::Archive::new(std::io::Cursor::new(&context));
         let mut paths = Vec::new();
         let mut dockerfile = String::new();
-        let mut connector_mode = None;
+        let mut relay_mode = None;
         for entry in archive.entries().unwrap() {
             let mut entry = entry.unwrap();
             let path = entry.path().unwrap().to_string_lossy().into_owned();
             if path == "Dockerfile" {
                 std::io::Read::read_to_string(&mut entry, &mut dockerfile).unwrap();
-            } else if path == ".dcc-generated/dcc-connect" {
-                connector_mode = Some(entry.header().mode().unwrap());
+            } else if path == ".dcc-generated/dcc-relay" {
+                relay_mode = Some(entry.header().mode().unwrap());
             }
             paths.push(path);
         }
         assert!(paths.contains(&".dcc-features/matrix-feature/install.sh".to_string()));
-        assert!(paths.contains(&".dcc-generated/dcc-connect".to_string()));
-        assert_eq!(connector_mode, Some(0o755));
+        assert!(paths.contains(&".dcc-generated/dcc-relay".to_string()));
+        assert_eq!(relay_mode, Some(0o755));
         assert_eq!(dockerfile.lines().next(), Some("FROM alpine:3"));
         assert!(dockerfile
             .lines()
             .any(|line| line.starts_with("LABEL dcc.version=")));
         assert!(dockerfile.contains("COPY .dcc-generated/ /usr/local/share/dcc/"));
         let feature_pos = dockerfile.find("matrix-feature/install.sh").unwrap();
-        let connector_pos = dockerfile.find("dcc-connect --check").unwrap();
+        let relay_pos = dockerfile.find("dcc-relay --check").unwrap();
         assert!(
-            feature_pos < connector_pos,
+            feature_pos < relay_pos,
             "Feature installation must precede fallback package installation: {dockerfile}"
         );
     }
@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn dockerfile_debian_frontend_set_when_provisioning_connector() {
+    fn dockerfile_debian_frontend_set_when_provisioning_relay() {
         let df = generate_dockerfile("rust:1", &[], &[], "root", true);
         assert!(
             df.contains("ARG DEBIAN_FRONTEND=noninteractive"),
@@ -724,47 +724,49 @@ mod tests {
         };
         let df = generate_dockerfile("rust:1", &[], &[feature], "root", true);
         assert_eq!(
-            df.matches("/usr/local/share/dcc/dcc-connect --check")
-                .count(),
+            df.matches("/usr/local/share/dcc/dcc-relay --check").count(),
             2,
-            "connector must be checked before and after fallbacks: {df}"
+            "relay must be checked before and after fallbacks: {df}"
         );
         assert!(
             !df.contains("RUN command -v nc"),
             "an arbitrary nc must not bypass capability checks: {df}"
         );
         assert!(
-            df.contains("netcat-openbsd"),
+            df.contains("socat util-linux"),
             "apt/apk package should be named"
         );
-        assert!(df.contains("nmap-ncat"), "yum/dnf package should be named");
+        assert!(
+            df.contains("socat util-linux"),
+            "yum/dnf package should be named"
+        );
         let feature_pos = df.find("ordering-fixture/install.sh").unwrap();
         let copy_pos = df.find("COPY .dcc-generated/").unwrap();
-        let connector_pos = df.find("dcc-connect --check").unwrap();
+        let relay_pos = df.find("dcc-relay --check").unwrap();
         let apt_pos = df.find("command -v apt-get").unwrap();
         assert!(
-            feature_pos < copy_pos && copy_pos < connector_pos && connector_pos < apt_pos,
-            "features and the baked wrapper must precede connector provisioning: {df}"
+            feature_pos < copy_pos && copy_pos < relay_pos && relay_pos < apt_pos,
+            "features and the baked wrapper must precede relay provisioning: {df}"
         );
     }
 
     #[test]
-    fn dockerfile_provisions_connector_after_user_creation() {
+    fn dockerfile_provisions_relay_after_user_creation() {
         let df = generate_dockerfile("rust:1", &[], &[], "dev", true);
         let user_pos = df.find("id 'dev'").unwrap();
-        let connector_pos = df.find("dcc-connect --check").unwrap();
+        let relay_pos = df.find("dcc-relay --check").unwrap();
         assert!(
-            connector_pos > user_pos,
-            "connector provisioning should appear after user creation"
+            relay_pos > user_pos,
+            "relay provisioning should appear after user creation"
         );
     }
 
     #[test]
-    fn dockerfile_omits_connector_provisioning_when_not_requested() {
+    fn dockerfile_omits_relay_provisioning_when_not_requested() {
         let df = generate_dockerfile("rust:1", &[], &[], "root", false);
         assert!(
-            !df.contains("dcc-connect --check"),
-            "connector provisioning should be absent"
+            !df.contains("dcc-relay --check"),
+            "relay provisioning should be absent"
         );
     }
 

@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `.meta/tasks/README.md`
-- Primary task: None
-- Primary details: None
+- Primary task: T-0097
+- Primary details: `.meta/tasks/0097-container-relay-implementation.md`
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.

@@ -518,7 +518,7 @@ idempotent and promotes it to durable mode.
 supplied, `dcc` chooses an interactive shell in this order: executable absolute
 `$SHELL`, `/bin/bash`, then `/bin/sh`.
 
-`dcc attach` runs collected `postAttachCommand` hooks host-side before the shell
+`dcc attach` runs collected `postAttachCommand` hooks inside the container via Docker exec before the shell
 or explicit attach command. If it starts a new container, it first waits for
 `postStartCommand` to finish.
 
@@ -549,7 +549,7 @@ on the host.
 | `updateContentCommand` | `dcc build`, `dcc build --refresh-only` | Runtime commands, `--dry-run` | Runs in the build-preparation container. |
 | `postCreateCommand` | `dcc build`, `dcc build --refresh-only` | Runtime commands, `--dry-run` | Runs in the build-preparation container after `updateContentCommand`. |
 | `postStartCommand` | `dcc start`, `dcc run`, `dcc exec`, or `dcc attach` only when that invocation starts a new profile container | Reusing an already-running container, `dcc exec --skip-lifecycle`, `--dry-run` | Runs inside the PID 1 supervisor. The host pre-substitutes each hook into a script and bind-mounts the startup hook directory for the supervisor. Foreground commands and attach hooks wait for readiness before proceeding. |
-| `postAttachCommand` | `dcc attach` | `dcc run`, `dcc exec`, `dcc start`, `dcc build`, `--dry-run` | Runs host-side immediately before the attach shell or explicit attach command. |
+| `postAttachCommand` | `dcc attach` | `dcc run`, `dcc exec`, `dcc start`, `dcc build`, `--dry-run` | Runs inside the container via Docker exec immediately before the attach shell or explicit attach command. |
 
 `dcc id` and `dcc stop` do not trigger lifecycle hooks.
 
@@ -603,16 +603,15 @@ more opinionated than a general IDE devcontainer implementation:
   change where the project is mounted.
 - `containerUser` controls the user for hooks and foreground commands. Top-level
   `remoteUser` is not implemented; in strict mode it is an unknown field.
-- `forwardPorts` uses a host-side relay into the container's `127.0.0.1`, not
-  Docker `-p` publishing. `dcc start` starts the durable container but does not
-  leave background port-forwarding processes running.
+- `forwardPorts` uses Docker localhost publications and supervisor-owned in-container
+  relays that continue across sessions and after `dcc start` returns.
 - `portsAttributes` and `otherPortsAttributes` are parsed for compatibility, but
   browser and preview auto-open behavior is not implemented.
 - `runArgs`, sensitive mounts, `privileged`, `capAdd`, and `securityOpt` are
   gated. Host-integrating or privilege-escalating options require
   `--allow-unsafe-runtime`; unknown `runArgs` are rejected. User-supplied
   `--label` entries may not set the reserved `dcc.container_id` or
-  `dcc.container_role` keys.
+  `dcc.container_role` or `dcc.launch_token` keys.
 - `customizations.dcc.state` is the preferred persistence mechanism. It is not an
   arbitrary mount escape hatch.
 
@@ -674,3 +673,48 @@ as errors.
 | `workspaceMount` | Parsed for schema compatibility, but ignored because `dcc` owns workspace mounting. |
 | `initializeCommand` | Parsed for schema compatibility and warned as unsupported. It is not executed. |
 | `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand` | Supported lifecycle hooks. See [Lifecycle Hooks](#lifecycle-hooks). |
+
+## Container-Owned Port Forwarding and Configuration Reuse
+
+`forwardPorts` remains available for the lifetime of a running container, including
+containers launched with `dcc start`. Simultaneous `attach`, `exec`, and `run`
+sessions reuse the same forwarding. Docker publishes each port on the daemon
+host's `127.0.0.1`, with IPv6 localhost attempted where supported. An in-container
+socat relay connects to the application's `127.0.0.1`, so applications can bind only
+to loopback. With remote Docker, these are the remote daemon host's ports.
+Other containers on the same bridge can reach the internal proxy listeners.
+
+Forwarding requires Docker Engine 28 or newer and ordinary NAT bridge networking.
+Host, container-shared, routed, and unprotected network modes are unsupported for
+forwarding. A host port conflict fails startup. IPv6 failure can fall back to IPv4
+only when Docker proves startup never ran; uncertain failures require diagnosis.
+
+The proxy ports inside the container default to `20000..20999`, excluding all
+application target ports. To avoid a conflict with another in-container listener:
+
+```json
+{"customizations":{"dcc":{"relayPortRange":[21000,21999]}}}
+```
+
+The range is inclusive, must be within `1024..65535`, and must have room for every
+unique forwarded port after excluding target ports. Build provisions socat and
+session support when forwarding is configured. A newly added forwarding setup may
+therefore require rebuilding the image.
+
+Relays use **`socat -t 2`**: its native two-second closing wait after EOF, without a
+new idle timer for fully open connections. Readiness checks the relay listener,
+without requiring the application to be running. Initial relay failure fails the
+launching command and retains the container for diagnosis. Later failures get up
+to three restarts; degraded forwarding warns while shell access remains available.
+
+A running container keeps its launch configuration. Detectable changes to config,
+inherited files, referenced local environment variables, direct build inputs,
+image tag, or explicitly supplied resource limits produce a warning and are
+deferred. Named commands and attach hooks also retain their launch definitions.
+Malformed or missing current config warns and permits reuse. Explicit command
+arguments can still use the caller's current `${localEnv:...}` values.
+
+To apply changes, stop the container, rebuild when needed, and start it again.
+`build`, `build --refresh-only`, and `build --reseed-state` refuse while the profile
+runtime is running. Upgrading from 0.1.x to 0.2.x requires an explicit stop, rebuild,
+and recreation because the container supervisor protocol changed.
