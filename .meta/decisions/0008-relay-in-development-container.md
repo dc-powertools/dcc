@@ -68,3 +68,14 @@ Retain the container for diagnosis when possible, consistent with existing
 startup-hook failure behavior. If the proxy is ready but its application is not
 listening, only the incoming connection fails; application unavailability alone
 does not make the container unhealthy.
+
+## Relay Failure After Startup — 2026-09-28
+
+The user accepted bounded supervisor restart attempts with a short delay after a
+relay failure. If recovery fails, keep the container and user commands running.
+Subsequent `dcc start`, `attach`, and `exec` report degraded forwarding while
+retaining shell access for diagnosis. Existing connections may be lost on a crash.
+
+Application connection failures do not trigger relay restarts. Restart attempts
+stop when container shutdown begins, and relay infrastructure cannot keep a
+one-shot container alive. Exact retry limits and delays remain design details.
