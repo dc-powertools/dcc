@@ -1,6 +1,6 @@
 # 0009: Warn And Defer Detectable Running-Container Configuration Changes
 
-Status: Accepted policy; mechanism proposed
+Status: Accepted policy and snapshot/fingerprint approach; detailed design pending
 
 Date: 2026-09-28
 
@@ -17,7 +17,7 @@ Continue allowing access using the running container's configuration. Apply chan
 on explicit recreation, with an image rebuild when build-time changes require it.
 Detection must not itself apply pending configuration or mutate shared runtime assets.
 
-## User Suggestion And Source-Based Refinement
+## Accepted Snapshot And Fingerprint Approach
 
 The user suggested injecting a configuration hash during image build and having the
 client submit the current hash to the supervisor for comparison. This is a suggested
@@ -29,7 +29,8 @@ settings may legitimately differ from image-build inputs. A build fingerprint ca
 identify image staleness, but cannot alone describe which configuration was applied
 to a particular running container.
 
-Proposed mechanism for detailed design:
+The user accepted the following refinement after the build/launch distinction and
+need to retain original configuration were explained:
 
 - Capture the effective configuration at container creation, with a fingerprint
   that can be compared against current readily available configuration inputs.
@@ -40,6 +41,10 @@ Proposed mechanism for detailed design:
   every changed field; a hash comparison can support a generic drift warning.
 - Use already loaded configuration/inheritance and inexpensive inputs; do not add
   remote polling or exhaustive workspace hashing merely to detect all possible drift.
+
+A launch-time snapshot and fingerprint are therefore the accepted reuse baseline;
+separate image-build fingerprinting remains optional. Exact representation and
+comparison protocol remain design details.
 
 A hash detects a difference but cannot recover the previous configuration by itself.
 `RuntimePlan::prepare` currently creates cache/state paths and clears/rewrites startup

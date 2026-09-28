@@ -2,7 +2,7 @@
 
 - Authority: user architecture examination request and selection of the existing
   container supervisor and subsequent isolation, allocation, readiness, recovery,
-  and general configuration-drift decisions, 2026-09-28 / r6.
+  and general configuration-drift decisions, 2026-09-28 / r7.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -33,6 +33,10 @@ configuration changes. Decision 0009 owns this policy, the user's hash suggestio
 and the proposed distinction between build and launch fingerprints plus a retained
 configuration snapshot. This expands the design beyond forwarding; implementation
 has not begun.
+
+The r7 discussion accepted the launch-time configuration snapshot and fingerprint
+as the reuse baseline, with separate optional build-time fingerprinting. Decision
+0009 owns the accepted approach; storage and comparison details remain pending.
 
 ## Existing boundaries
 
