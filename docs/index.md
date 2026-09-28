@@ -33,6 +33,11 @@ dcc profile bootstrap -p local --dockerfile=Dockerfile.local
 dcc profile bootstrap -p ci --extends=devcontainer
 ```
 
+Bootstrap uses the existing `.devcontainer` workspace when one is found. Otherwise,
+it creates `.devcontainer/` at the Git working-tree root, even when invoked from a
+subdirectory. Outside a Git working tree (or when Git is unavailable), it uses the
+current directory. Other commands still require an existing `.devcontainer/`.
+
 Exactly one source option is required. `--image` writes an `image` configuration;
 `--dockerfile` writes a minimal `build.dockerfile` configuration, with the path
 interpreted relative to the new profile file; and `--extends` writes
@@ -41,7 +46,8 @@ and resolves to a valid configuration. Bootstrap accepts direct profile names on
 so its destination is always `.devcontainer/<profile>.json`. It fails without
 changing the file when the destination already exists and never overwrites an
 existing profile. `--dry-run` validates the request and reports the planned creation
-without writing it.
+without creating either the directory or the profile. Invalid source options or a
+missing/invalid parent also leave a missing `.devcontainer/` uncreated.
 
 Run `dcc profile list` to discover named profiles:
 

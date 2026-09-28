@@ -70,6 +70,10 @@ declared state, forwarded ports, or build-preparation hooks.
 
 ## Working With Profiles
 
+Start a new workspace with `dcc profile bootstrap --image=debian`. It creates
+`.devcontainer/` when needed, using the Git working-tree root or the current
+directory outside Git. An existing `.devcontainer` workspace takes precedence.
+
 The default profile is `.devcontainer/devcontainer.json`. Every command also
 accepts `-p/--profile <name>`, which loads `.devcontainer/<name>.json`:
 

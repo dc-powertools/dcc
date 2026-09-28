@@ -9,14 +9,14 @@ Record only commands verified by successful execution in this environment.
 
 | Action | Exact Command | Prerequisites | Observed Result | Last Verified |
 | --- | --- | --- | --- | --- |
-| Toolchain check | `cargo --version` | Cargo on `PATH` | Passed; reported `cargo 1.96.0 (30a34c682 2026-05-25)`. | 2026-07-14 |
-| Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.96.0 (ac68faa20 2026-05-25)`. | 2026-07-14 |
+| Toolchain check | `cargo --version` | Cargo on `PATH` | Passed; reported `cargo 1.98.0 (797e8a9bc 2026-08-05)`. | 2026-09-28 |
+| Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.98.0 (88d9e12ae 2026-08-18)`. | 2026-09-28 |
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
-| Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-09-09 |
-| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.7`. | 2026-09-09 |
-| Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-09-09 |
-| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 591 unit tests and 93 runnable integration tests, with 38 tests listed but ignored as designed. | 2026-09-09 |
-| Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-09-09 |
+| Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-09-28 |
+| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.7`. | 2026-09-28 |
+| Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-09-28 |
+| Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 591 unit tests and 101 runnable integration tests, with 38 tests listed but ignored as designed. | 2026-09-28 |
+| Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-09-28 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 | Workflow lint | `actionlint .github/workflows/*.yml` | `actionlint` on `PATH` | Passed for every workflow with no findings using `actionlint 1.7.12`. | 2026-09-09 |
 | Release workflow contract | `bash scripts/check-release-workflow.sh` | Bash plus standard `awk` and `grep`; run from the repository root | Passed; verified trusted CI reuse, direct-tag CI gating, release-build gating, final publication gating, and the autotag trust assertion. | 2026-09-09 |

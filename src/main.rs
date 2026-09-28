@@ -38,14 +38,6 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
-    let workspace =
-        workspace::find_workspace().context("failed to locate .devcontainer directory")?;
-    if let cli::Command::Profile {
-        command: cli::ProfileCommand::List,
-    } = &cli.command
-    {
-        return profile::list_profiles(&workspace, cli.format, cli.dry_run, cli.debug).await;
-    }
     if let cli::Command::Profile {
         command:
             cli::ProfileCommand::Bootstrap {
@@ -55,6 +47,8 @@ async fn run() -> anyhow::Result<()> {
             },
     } = &cli.command
     {
+        let workspace = workspace::find_bootstrap_workspace()
+            .context("failed to locate workspace for profile bootstrap")?;
         return profile::bootstrap_profile(
             &workspace,
             &cli.profile,
@@ -68,6 +62,15 @@ async fn run() -> anyhow::Result<()> {
                 format: cli.format,
             },
         );
+    }
+
+    let workspace =
+        workspace::find_workspace().context("failed to locate .devcontainer directory")?;
+    if let cli::Command::Profile {
+        command: cli::ProfileCommand::List,
+    } = &cli.command
+    {
+        return profile::list_profiles(&workspace, cli.format, cli.dry_run, cli.debug).await;
     }
 
     let cwd = std::env::current_dir().context("failed to determine current working directory")?;

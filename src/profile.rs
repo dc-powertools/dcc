@@ -317,6 +317,13 @@ pub(crate) fn bootstrap_profile(
         .print(opts.format);
     }
 
+    let directory = workspace.root.join(".devcontainer");
+    fs::create_dir_all(&directory).with_context(|| {
+        format!(
+            "failed to create profile directory `{}`",
+            directory.display()
+        )
+    })?;
     create_profile_exclusively(&config_path, contents.as_bytes())?;
     println!(
         "created profile `{}` at `{}`",

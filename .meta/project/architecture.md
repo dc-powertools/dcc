@@ -312,6 +312,14 @@ directories, stopping at the first directory that contains a `.devcontainer/`
 subdirectory. If the filesystem root is reached without finding one, the
 function returns an error.
 
+`profile bootstrap` dispatches before this required-directory lookup and uses
+`find_bootstrap_workspace()`: existing `.devcontainer` workspace first, then Git's
+`rev-parse --show-toplevel`, then the canonical current directory when outside a Git
+working tree or Git is unavailable. Both paths share workspace identity derivation
+from `origin` or the canonical root. Discovery never creates directories. Bootstrap
+validates the request and any parent profile before creating `.devcontainer/` and
+exclusively creating the target file; dry-run returns before either write.
+
 ```rust
 pub struct Workspace {
     pub root: PathBuf,
@@ -1154,6 +1162,7 @@ Commands:
   stop
   id
   profile list
+  profile bootstrap (--image IMAGE | --dockerfile PATH | --extends PROFILE)
   feature [--add <reference>] [--remove <reference>]
 ```
 

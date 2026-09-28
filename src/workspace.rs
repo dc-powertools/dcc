@@ -19,6 +19,30 @@ pub(crate) fn find_workspace() -> anyhow::Result<Workspace> {
 }
 
 fn find_workspace_from(start: &Path) -> anyhow::Result<Workspace> {
+    let path = canonical_start(start)?;
+    if let Some(root) = existing_workspace_root(&path) {
+        return Ok(workspace_at(root));
+    }
+
+    anyhow::bail!(
+        "could not find `.devcontainer/` directory in `{}` or any of its ancestors",
+        path.display()
+    )
+}
+
+/// Resolve the destination without creating it; bootstrap alone may initialize
+/// a workspace that does not yet contain `.devcontainer`.
+pub(crate) fn find_bootstrap_workspace() -> anyhow::Result<Workspace> {
+    let start = std::env::current_dir().context("failed to determine current working directory")?;
+    let path = canonical_start(&start)?;
+    let root = match existing_workspace_root(&path) {
+        Some(root) => root,
+        None => git_worktree_root(&path)?.unwrap_or(path),
+    };
+    Ok(workspace_at(root))
+}
+
+fn canonical_start(start: &Path) -> anyhow::Result<PathBuf> {
     let mut path = fs::canonicalize(start)
         .with_context(|| format!("failed to canonicalize path: {}", start.display()))?;
 
@@ -29,19 +53,46 @@ fn find_workspace_from(start: &Path) -> anyhow::Result<Workspace> {
             .to_path_buf();
     }
 
-    for dir in std::iter::once(path.as_path()).chain(path.ancestors().skip(1)) {
-        if dir.join(".devcontainer").is_dir() {
-            let root = dir.to_path_buf();
-            let identity =
-                git_remote_url(&root).unwrap_or_else(|| root.to_string_lossy().into_owned());
-            return Ok(Workspace { root, identity });
-        }
-    }
+    Ok(path)
+}
 
-    anyhow::bail!(
-        "could not find `.devcontainer/` directory in `{}` or any of its ancestors",
-        path.display()
-    )
+fn existing_workspace_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|dir| dir.join(".devcontainer").is_dir())
+        .map(Path::to_path_buf)
+}
+
+fn workspace_at(root: PathBuf) -> Workspace {
+    let identity = git_remote_url(&root).unwrap_or_else(|| root.to_string_lossy().into_owned());
+    Workspace { root, identity }
+}
+
+/// Git is optional. A missing executable or a directory outside a Git worktree
+/// leaves bootstrap to use its current directory.
+fn git_worktree_root(start: &Path) -> anyhow::Result<Option<PathBuf>> {
+    let output = match std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(start)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to run git rev-parse --show-toplevel"),
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let root = String::from_utf8(output.stdout)
+        .context("git rev-parse --show-toplevel returned a non-UTF-8 path")?;
+    let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
+    let root = fs::canonicalize(root).with_context(|| {
+        format!(
+            "failed to canonicalize Git worktree root: {}",
+            root.display()
+        )
+    })?;
+    Ok(Some(root))
 }
 
 /// Returns the `origin` remote URL for the git repo at `root`, or `None` if
