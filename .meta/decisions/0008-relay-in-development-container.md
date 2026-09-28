@@ -98,3 +98,17 @@ The chosen utility must still satisfy the accepted readiness, recovery, concurre
 connection, half-close, and child-process cleanup requirements. Exact package/version
 support and supervisor integration remain design and verification work; no runtime
 verification has been performed.
+
+## Supported Environments And Network Modes — 2026-09-28
+
+The user accepted forwarding on local Docker Engine and Docker Desktop using
+normal bridge networking and localhost publication. If forwarding is configured,
+reject `--network=none` and `--network=host` as incompatible before creating a new
+container. These restrictions do not apply when forwarding is absent.
+
+For a remote Docker daemon, publish on the remote Docker host's localhost and
+explicitly report that location. Do not add a tunnel back to the CLI machine.
+Configuration changes targeting an existing running container continue to follow
+decision 0009's warn-and-defer policy rather than applying new network settings.
+
+IPv4/IPv6 policy and concrete platform verification remain pending.

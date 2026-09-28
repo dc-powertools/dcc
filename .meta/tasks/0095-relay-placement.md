@@ -2,7 +2,8 @@
 
 - Authority: user architecture examination request and selection of the existing
   container supervisor and subsequent isolation, allocation, readiness, recovery,
-  provisioning, and general configuration-drift decisions, 2026-09-28 / r8.
+  provisioning, environment support, and general configuration-drift decisions,
+  2026-09-28 / r9.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -41,6 +42,11 @@ as the reuse baseline, with separate optional build-time fingerprinting. Decisio
 The r8 discussion accepted a packaged proxy utility, initially considering `socat`,
 reused or provisioned during image build with a clear failure if unavailable.
 Decision 0008 owns the selection and its outstanding compatibility checks.
+
+The r9 discussion accepted normal bridge networking on local Docker Engine/Desktop,
+pre-creation rejection of host/none networking when forwarding is configured, and
+explicitly reported daemon-host-local publication for remote Docker without another
+tunnel. Decision 0008 owns those boundaries; IPv4/IPv6 policy remains pending.
 
 ## Existing boundaries
 
