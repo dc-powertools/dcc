@@ -1,7 +1,8 @@
 # T-0095: Candidate relay placements
 
 - Authority: user architecture examination request and selection of the existing
-  container supervisor and subsequent isolation/allocation decisions, 2026-09-28 / r3.
+  container supervisor and subsequent isolation/allocation/readiness decisions,
+  2026-09-28 / r4.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -18,6 +19,10 @@ The r3 discussion accepted a preference for simple isolation with peer-container
 access permissible when isolation is too complex, and deterministic proxy-port
 allocation from a configurable range. Decision 0008 owns these accepted policies;
 the remaining design concerns are still under discussion.
+
+The r4 discussion accepted readiness requiring Docker mappings, all proxy listeners,
+and existing startup hooks, without requiring application listeners. Decision 0008
+also records startup-failure diagnostics and retaining the container where possible.
 
 ## Existing boundaries
 
