@@ -13,7 +13,7 @@ Record only commands verified by successful execution in this environment.
 | Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.98.0 (88d9e12ae 2026-08-18)`. | 2026-09-28 |
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-09-28 |
-| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.8`. | 2026-09-28 |
+| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.9`. | 2026-09-28 |
 | Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-09-28 |
 | Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 592 unit tests and 114 runnable integration tests, with 38 tests listed but ignored as designed. | 2026-09-28 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-09-28 |
