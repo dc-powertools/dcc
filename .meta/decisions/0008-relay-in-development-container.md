@@ -111,4 +111,16 @@ explicitly report that location. Do not add a tunnel back to the CLI machine.
 Configuration changes targeting an existing running container continue to follow
 decision 0009's warn-and-defer policy rather than applying new network settings.
 
-IPv4/IPv6 policy and concrete platform verification remain pending.
+Concrete platform verification remains pending.
+
+## IPv4 And IPv6 — 2026-09-28
+
+The user approved required IPv4 publication on host `127.0.0.1` and best-effort
+IPv6 publication on `::1`. If IPv6 publication is unavailable, warn and continue
+with IPv4. Never fall back to publication on all host interfaces.
+
+The proxy connects to application `127.0.0.1` inside the container, preserving
+the current destination behavior. Applications listening exclusively on `::1`
+remain outside this change. Docker-managed publication requires a deliberate
+container-creation fallback for unavailable IPv6; its mechanism and verification
+remain implementation-design work.

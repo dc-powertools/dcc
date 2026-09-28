@@ -3,7 +3,7 @@
 - Authority: user architecture examination request and selection of the existing
   container supervisor and subsequent isolation, allocation, readiness, recovery,
   provisioning, environment support, and general configuration-drift decisions,
-  2026-09-28 / r9.
+  2026-09-28 / r10.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -46,7 +46,12 @@ Decision 0008 owns the selection and its outstanding compatibility checks.
 The r9 discussion accepted normal bridge networking on local Docker Engine/Desktop,
 pre-creation rejection of host/none networking when forwarding is configured, and
 explicitly reported daemon-host-local publication for remote Docker without another
-tunnel. Decision 0008 owns those boundaries; IPv4/IPv6 policy remains pending.
+tunnel. Decision 0008 owns those boundaries.
+
+The r10 discussion approved required host IPv4 loopback publication, best-effort
+IPv6 loopback publication with a warning on fallback, and no wildcard publication.
+Application connections remain IPv4 loopback. Decision 0008 owns this policy;
+Docker creation-time fallback and platform verification remain design work.
 
 ## Existing boundaries
 
