@@ -32,3 +32,14 @@ alternatives examined in T-0095 are not selected.
 This records the placement decision, not a completed detailed design or an
 instruction to implement. The user's no-reproduction constraint remains in force.
 The candidate examination is in `../tasks/0095-relay-placement.md`.
+
+## Access Policy Clarification — 2026-09-28
+
+The user prefers preserving the existing isolation of loopback-only applications,
+but accepts access through the proxy from peer containers on the Docker network
+if preserving isolation introduces too much complexity. Favor the simpler design
+in that case. Host publication remains limited to localhost.
+
+This is a conditional design tradeoff, not a requirement to add network isolation
+machinery. The detailed design should explain the chosen exposure and complexity;
+no isolation implementation or product-code change is selected by this clarification.
