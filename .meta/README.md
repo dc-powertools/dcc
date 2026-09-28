@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-28 | Updated the TLS smoke-test Docker stub for the build preflight; missing/wrong CA regression and standard checks passed (T-0098). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Designed the container-owned socat relay, frozen configuration reuse, failure handling, and migration (T-0096); implementation remains separate. | `.meta/tasks/0096-container-relay-design.md`; `.meta/quality/0096-container-relay-design.md` |
 | 2026-09-28 | Completed the relay placement and behavior discussion, including supervisor ownership, configuration snapshots, recovery, environment support, and explicit migration (T-0095). | `.meta/decisions/0008-relay-in-development-container.md`; `.meta/decisions/0009-warn-and-defer-running-config-changes.md` |
 | 2026-09-28 | Diagnosed concurrent foreground sessions colliding over per-process port-forwarding listeners during attach (T-0094); source inspection only. | `.meta/tasks/0094-attach-port-collision.md` |
@@ -72,7 +73,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 9
+- Completed repository-changing tasks since that pass: 10
 - Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
-- Incomplete maintenance actions: None.
+- Incomplete maintenance actions: Scheduled consistency/pruning pass is due at the
+  10-change threshold; deferred outside the scoped TLS test-stub fix.

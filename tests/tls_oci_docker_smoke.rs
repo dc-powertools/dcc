@@ -447,7 +447,19 @@ fn dcc_with_failing_docker(fx: &SmokeFixture, marker: &Path) -> Output {
     std::fs::create_dir_all(&bin).expect("failed to create fake Docker directory");
     write_executable_from_child(
         &bin.join("docker"),
-        "#!/bin/sh\nset -eu\n: > \"$DCC_FAKE_DOCKER_MARKER\"\nexit 97\n",
+        r#"#!/bin/sh
+set -eu
+# The build preflight may query running containers before fetching Features.
+# Report no runtime only for this fixture's exact lookup; reject everything else.
+if [ "$#" -eq 5 ] && [ "$1" = ps ] && [ "$2" = --filter ] &&
+   [ "$3" = "label=dcc.container_id=$DCC_FAKE_DOCKER_CONTAINER_ID" ] &&
+   [ "$4" = --format ] &&
+   [ "$5" = "$(printf '{{.ID}}\t{{.Label "dcc.container_role"}}')" ]; then
+    exit 0
+fi
+: > "$DCC_FAKE_DOCKER_MARKER"
+exit 97
+"#,
     );
     let mut paths = vec![bin];
     if let Some(current) = std::env::var_os("PATH") {
@@ -458,6 +470,7 @@ fn dcc_with_failing_docker(fx: &SmokeFixture, marker: &Path) -> Output {
         .dcc(&["build"])
         .env("PATH", path)
         .env("DCC_FAKE_DOCKER_MARKER", marker)
+        .env("DCC_FAKE_DOCKER_CONTAINER_ID", fx.container_id())
         .output()
         .expect("failed to run dcc with failing Docker")
 }
@@ -656,7 +669,7 @@ fn missing_and_wrong_ca_fail_before_docker_build() {
     assert_tls_trust_failure(&missing_ca, &server.authority);
     assert!(
         !fake_docker_marker.exists(),
-        "missing CA reached Docker instead of failing at TLS"
+        "missing CA reached an unexpected Docker operation instead of failing at TLS"
     );
     assert!(server.recorded_requests().is_empty());
 
@@ -665,7 +678,7 @@ fn missing_and_wrong_ca_fail_before_docker_build() {
     assert_tls_trust_failure(&wrong_ca, &server.authority);
     assert!(
         !fake_docker_marker.exists(),
-        "wrong CA reached Docker instead of failing at TLS"
+        "wrong CA reached an unexpected Docker operation instead of failing at TLS"
     );
     assert!(server.recorded_requests().is_empty());
 

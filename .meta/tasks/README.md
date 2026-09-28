@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0098
+- Next task ID: T-0099
 - Primary task: T-0097
 - Scheduling: Running
 - Global pause source or reason: None
@@ -117,6 +117,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0096 | Design the approved container-managed relay and general configuration snapshot/drift behavior; pause for material complexity or unresolved ambiguity. | User request plus stop-before-build and explicit socat -t 2 selection 2026-09-28 / r4 | Done | T-0095 | Decide / High | None | Stop; design complete, implementation remains separate. | `.meta/tasks/0096-container-relay-design.md` | Designed packaged socat -t 2 under the existing supervisor, deterministic configurable proxy ports, immutable launch snapshots and cheap drift checks, simple stop-before-build guard, bounded recovery and safe creation fallback. Architecture, security, source/policy consistency, local-link and diff reviews passed. Implementation slices and platform qualification matrix recorded; no product implementation, reproduction, runtime tests, version bump or release. |
 
 | T-0097 | Implement the approved container-owned relay and frozen runtime configuration design. | User implementation request 2026-09-28 / r1 | Needs verification | T-0096 | Initiative / High | Required Docker/Desktop/distro matrix cannot run here; user prohibits container launches. | Qualify the live platform matrix in a capable environment before release. | `.meta/tasks/0097-container-relay-implementation.md`; `.meta/quality/0097-container-relay-implementation.md` | Implemented 0.2.0 container-owned socat relays, frozen snapshots, drift warnings, safe creation and build gate. Format, locked check, Clippy, 702 runnable tests, 5 focused local utility tests, and build passed. No containers launched. |
+
+| T-0098 | Update the TLS smoke-test Docker stub for the running-runtime build preflight. | User request 2026-09-28 / r1 | Done | None | Quick change / Low | None | Stop; stub update complete. | None | Stub accepts only the exact fixture-scoped runtime query, returning no containers; other Docker calls still mark failure and exit 97. The missing/wrong CA test reproduced the CI failure before the change and passed afterward. Format, locked check, all-target Clippy, all 702 default runnable tests, locked build, and focused diff review passed. No containers launched. |
 
 ## Operating Contract
 
