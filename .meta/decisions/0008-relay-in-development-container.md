@@ -86,3 +86,15 @@ The user broadened warn-and-defer behavior to all easily detectable configuratio
 changes while a container is running. [Decision 0009](0009-warn-and-defer-running-config-changes.md)
 owns that policy and the proposed fingerprint/snapshot mechanism. It applies to
 forwarding as well as other configuration; no automatic reconfiguration or restart.
+
+## Proxy Provisioning — 2026-09-28
+
+The user accepted the recommended packaged-utility approach, with `socat` as the
+initial candidate. Reuse a suitable installed version or provision it during image
+build. Fail the build clearly if the required utility cannot be provided. A dedicated
+dcc relay executable is not the selected starting approach.
+
+The chosen utility must still satisfy the accepted readiness, recovery, concurrent
+connection, half-close, and child-process cleanup requirements. Exact package/version
+support and supervisor integration remain design and verification work; no runtime
+verification has been performed.

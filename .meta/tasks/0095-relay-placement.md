@@ -2,7 +2,7 @@
 
 - Authority: user architecture examination request and selection of the existing
   container supervisor and subsequent isolation, allocation, readiness, recovery,
-  and general configuration-drift decisions, 2026-09-28 / r7.
+  provisioning, and general configuration-drift decisions, 2026-09-28 / r8.
 - Status: Done; placement selected, no implementation performed.
 - Constraint: source/documentation inspection only; no reproduction, container
   commands, builds, or runtime tests.
@@ -37,6 +37,10 @@ has not begun.
 The r7 discussion accepted the launch-time configuration snapshot and fingerprint
 as the reuse baseline, with separate optional build-time fingerprinting. Decision
 0009 owns the accepted approach; storage and comparison details remain pending.
+
+The r8 discussion accepted a packaged proxy utility, initially considering `socat`,
+reused or provisioned during image build with a clear failure if unavailable.
+Decision 0008 owns the selection and its outstanding compatibility checks.
 
 ## Existing boundaries
 
