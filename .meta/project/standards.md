@@ -13,13 +13,13 @@ Record only commands verified by successful execution in this environment.
 | Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.98.0 (88d9e12ae 2026-08-18)`. | 2026-09-28 |
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
 | Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-09-28 |
-| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.7`. | 2026-09-28 |
+| Type check | `cargo check` | Rust toolchain and dependencies available | Passed for `dcc v0.1.8`. | 2026-09-28 |
 | Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-09-28 |
 | Test suite | `cargo test` | Rust toolchain and dependencies available | Passed; 591 unit tests and 101 runnable integration tests, with 38 tests listed but ignored as designed. | 2026-09-28 |
 | Build | `cargo build` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-09-28 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 | Workflow lint | `actionlint .github/workflows/*.yml` | `actionlint` on `PATH` | Passed for every workflow with no findings using `actionlint 1.7.12`. | 2026-09-09 |
-| Release workflow contract | `bash scripts/check-release-workflow.sh` | Bash plus standard `awk` and `grep`; run from the repository root | Passed; verified trusted CI reuse, direct-tag CI gating, release-build gating, final publication gating, and the autotag trust assertion. | 2026-09-09 |
+| Release workflow contract | `bash scripts/check-release-workflow.sh` | Bash plus standard `awk` and `grep`; run from the repository root | Passed; verified trusted CI reuse, direct-tag CI gating, release-build gating, final publication gating, and the autotag trust assertion. | 2026-09-28 |
 | Devcontainer config validation | `sudo devcontainer read-configuration --workspace-folder /workspace --include-merged-configuration --log-level trace > /tmp/dcc-devcontainer-read-configuration.json` | Node.js v20.19.2, npm 9.2.0, `@devcontainers/cli 0.87.0`, Docker 26.1.5, and a running Docker daemon. In this harness, Docker needed `dockerd --iptables=false --storage-driver=vfs --bridge=none --ip-forward=false --ip-masq=false`. | Passed; produced 14,073 bytes of merged configuration for `.devcontainer/devcontainer.json`, including root image, Features, mounts, hooks, workspace mount, and defaulted compatibility fields. | 2026-07-15 |
 
 ## Architecture

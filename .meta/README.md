@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-28 | Bumped the project patch version from 0.1.7 to 0.1.8 in a separate local commit after the bootstrap fix (T-0091). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Fixed profile bootstrap in new repositories, with Git-root/current-directory fallback and side-effect-free dry-run (T-0090). | `.meta/tasks/README.md#tasks` |
 | 2026-09-09 | Bumped the project patch version from 0.1.6 to 0.1.7 without triggering release automation (T-0089). | `.meta/tasks/README.md#tasks` |
 | 2026-09-09 | Made `ghcr.io/dc-powertools/features` the built-in repository for short Feature names while retaining project overrides (T-0088). | `.meta/tasks/0088-built-in-default-feature-repository-notes.md` |
@@ -48,7 +49,6 @@ blockers, next actions, detail links, and results. Do not copy them here.
 | 2026-09-08 | Added exclusive profile bootstrapping from an image, Dockerfile, or validated parent profile (T-0082). | `.meta/tasks/README.md#tasks` |
 | 2026-08-25 | Completed registry-scoped custom-CA support and verified its TLS OCI package-to-image path through marker execution and exact cleanup (T-0070). | `.meta/quality/0073-tls-oci-docker-smoke-quality.md` |
 | 2026-08-25 | Remediated CI token exposure with read-only workflow permissions and non-persisted checkout credentials (T-0081). | `.meta/tasks/README.md#tasks` |
-| 2026-08-25 | Replaced released-port rebinding with an exact-object listener-lifetime oracle that remains deterministic under concurrent port acquisition (T-0080). | `.meta/tasks/README.md#tasks` |
 
 ## Documentation Map
 
@@ -77,7 +77,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 3
+- Completed repository-changing tasks since that pass: 4
 - Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
