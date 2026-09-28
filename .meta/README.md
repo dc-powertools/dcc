@@ -37,6 +37,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-09-28 | Examined relay placement candidates, shortlisting a supervisor-managed proxy and a per-container host helper (T-0095). | `.meta/tasks/0095-relay-placement.md` |
 | 2026-09-28 | Diagnosed concurrent foreground sessions colliding over per-process port-forwarding listeners during attach (T-0094); source inspection only. | `.meta/tasks/0094-attach-port-collision.md` |
 | 2026-09-28 | Bumped the patch version from 0.1.8 to 0.1.9 after Feature validation (T-0093). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Added offline Feature publication validation with a pinned schema, upstream-only mode, and shared project/Feature mount parsing that preserves string readonly flags (T-0092). | `.meta/quality/0092-feature-validation.md` |
@@ -80,7 +81,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 ## Hygiene
 
 - Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 7
+- Completed repository-changing tasks since that pass: 8
 - Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
   occurs first.
 - Incomplete maintenance actions: None.
