@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0094
+- Next task ID: T-0095
 - Primary task: None
 - Scheduling: Running
 - Global pause source or reason: None
@@ -112,6 +112,7 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0091 | Bump the patch version from 0.1.7 to 0.1.8 in a separate local commit after the bootstrap fix. | User implementation request 2026-09-28 / r1 | Done | T-0090 | Quick change / Low | None | Stop; outcome complete. | None | Updated Cargo.toml and the root dcc package in Cargo.lock to 0.1.8 after fix commit 2f33cb3. Locked Cargo metadata, format, check, all-target Clippy, 591 unit and 101 runnable integration tests (38 ignored as designed), build, CLI version output, release-workflow contract, and diff review passed. No push, tag, or release was performed. |
 | T-0092 | Add offline Feature metadata validation using a pinned upstream schema and explicit dcc extensions, sharing mount parsing with project configuration and preserving Feature editing. | User request and shared-parser amendment 2026-09-28 / r2 | Done | None | Initiative / Medium | None | Stop; outcome complete. | `.meta/tasks/0092-feature-validation.md`; `.meta/quality/0092-feature-validation.md` | Added single/collection validation, bundled upstream draft-07 schema and explicit extensions, upstream-only mode, file/JSON diagnostics, parser compatibility checks, and shared project/Feature/image-label mount support preserving readonly strings. Existing edits remain compatible. Format, locked check, all-target Clippy, 592 unit plus 114 runnable integration tests (38 ignored as designed), build, schema provenance, and focused diff/security review passed. Publication remains the official CLI's responsibility. |
 | T-0093 | Bump the patch version from 0.1.8 to 0.1.9 in a separate local commit after Feature validation. | User request 2026-09-28 / r1 | Done | T-0092 | Quick change / Low | None | Stop; outcome complete. | None | Updated Cargo.toml and the root dcc package in Cargo.lock to 0.1.9. Locked Cargo metadata, format, check, all-target Clippy, 592 unit and 114 runnable integration tests (38 ignored as designed), build, CLI version output, release-workflow contract, and diff review passed. No push, tag, or release was performed. |
+| T-0094 | Diagnose attach failure when a running container has an already-bound forwarded host port, using source inspection without reproduction. | User request and no-reproduction constraint 2026-09-28 / r2 | Done | None | Discover / Low | None | Stop; source-based diagnosis complete. | `.meta/tasks/0094-attach-port-collision.md` | Container reuse still unconditionally acquires per-process forwarding listeners; a concurrent foreground session on the same ports therefore fails before attach hooks or the shell. Running-container state alone is insufficient: start creates no relays and completed sessions release them. Actual listener ownership on the affected host remains unknown. No reproduction or container launch was attempted; preparatory build cancelled. Source/documentation review and diff check passed; no product code changed. |
 
 ## Operating Contract
 
