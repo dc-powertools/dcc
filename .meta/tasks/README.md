@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0101
+- Next task ID: T-0102
 - Primary task: T-0097
 - Scheduling: Running
 - Global pause source or reason: None
@@ -123,6 +123,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0099 | Bump the package version from 0.2.0 to 0.2.1 after the TLS stub fix. | User request 2026-09-28 / r1 | Done | T-0098 | Quick change / Low | None | Stop; version bump complete. | None | Updated Cargo.toml and the root dcc package in Cargo.lock to 0.2.1. Format, locked check, all-target Clippy, all 702 default runnable tests, locked build, CLI version output, release-workflow contract, and diff review passed. No push, tag, or release performed. |
 
 | T-0100 | Set up this Amazon Linux 2023 host to run Docker containers. | User request 2026-11-16 / r1 | Done | None | Quick change / Medium | User authorized host installation and configuration. | Stop; host setup complete. | None | Installed Amazon Linux Docker Engine 25.0.18 and dependencies; enabled/started docker; added ec2-user to docker group. hello-world, non-sudo access through sg, overlay2/cgroup v2, and localhost HTTP port-publishing smoke passed; test containers removed. Fresh login or newgrp docker activates membership in existing sessions. No public ports or remote Docker API configured; no dcc runtime qualification performed. |
+
+| T-0101 | Run the CI Docker smoke tests against the current main source. | User request 2026-11-16 / r1 | Done | None | Quick change / Medium | User authorized container launches for these tests, superseding the earlier no-launch restriction for this scope. | Stop; requested test run complete, forwarding qualification still requires Engine 28+. | `.meta/quality/0101-docker-smoke-main.md` | Ran all five CI commands with --locked on main 54a8d71 (same product source as fetched origin/main c68b82c): 37 passed, 1 failed. Forwarding test failed on Engine 25.0.18; focused diagnostic confirmed explicit Engine 28+ refusal. No code changed; T-0097 remains Needs verification. |
 
 ## Operating Contract
 
