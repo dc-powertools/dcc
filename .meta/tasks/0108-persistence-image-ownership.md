@@ -2,8 +2,9 @@
 
 ## Identity and source
 
-- Revision: r4, 2026-11-16; user requested recording symlink relocation as the
-  preferred approach and further Codex directory-structure investigation.
+- Revision: r5, 2026-11-16; user requested recording the staged cross-repository
+  implementation plan: limited pilot Feature work enables dcc testing, then finish
+  dcc before migrating the full Feature catalog.
 - Authority: user requested recording an implementation task in dcc, preserving the
   audit findings, requiring coordinated Feature work, and leaving inclusion/exclusion
   specification as open design work.
@@ -235,3 +236,66 @@ observations and limits. It supersedes the earlier anonymous-volume preference a
 whole runtime app-server-daemon/ scratch classification, while keeping the unified
 image-defined initial-state policy. Desktop validation, final schema, safe migration,
 package compatibility and Codex directory mapping remain required before implementation.
+
+
+## Agreed cross-repository implementation sequence (r5)
+
+The user approved recording this sequence. Use one pilot Feature alongside dcc,
+then finish dcc before updating the remaining Features. Limited pilot preparation
+is necessary test-enablement, not authorization to migrate the entire catalog early.
+This checkpoint records the plan; no product implementation or publication is part
+of this documentation update.
+
+| Stage | dcc repository | Features repository |
+| --- | --- | --- |
+| 1. Contract | Finalize exclusion metadata, relocation/link ownership, startup order, compatibility and migration behavior. | Investigate the pilot's installation/state boundaries, particularly Codex's mixed runtime/settings directory. |
+| 2. Fixtures | Add small local synthetic Features for populated and empty exclusions, persistent user data, stale links and legacy migration. | No broad production changes. Fixtures should be self-contained in dcc so core regressions do not depend on upstream downloads or another checkout. |
+| 3. Pilot implementation | Implement and test the complete contract against fixtures and the local pilot. | Prepare only the Codex Feature changes needed to exercise the real installation, daemon, state and exclusion workflow. Keep experimental changes isolated and unpublished. |
+| 4. dcc completion gate | Finish regression coverage, schema/version handling, documentation, safe transition and Linux/macOS qualification. | Maintain the pilot only; do not migrate the remaining catalog until this gate passes. |
+| 5. Feature rollout | Address any concrete integration defects revealed by migration. | Finish the Codex pilot, then migrate and verify remaining packages individually. |
+
+### Local integration and commit boundaries
+
+- Reference the local Features checkout from an isolated integration profile. No
+  experimental Feature publication is needed to test dcc.
+- Keep task-scoped commits separate in the two repositories and record the exact
+  compatible dcc and pilot Feature revisions used for validation.
+- Synthetic fixtures provide precise, deterministic regressions; Codex provides
+  real-package evidence. Neither substitutes for the other.
+- Resolve Codex app-server-daemon/settings.json and other mixed-state questions
+  before finalizing pilot exclusions; do not carry the old scratch assumption forward.
+- Define concrete implementation slices/child tasks when work starts; this plan
+  does not create those tasks or imply their implementation is complete.
+
+### dcc completion gate before broad Feature migration
+
+- [ ] Existing profiles retain supported behavior or have an explicit, safe transition
+  from old state-seeding semantics; migration preserves existing user data.
+- [ ] Persistent data survives rebuild/recreation without content hashing or scans
+  proportional to its size, including large node_modules/target-style fixtures.
+- [ ] Populated and empty excluded targets reset correctly on container replacement.
+- [ ] Runtime links are prepared before hooks, with tested permissions, stale-link
+  handling, concurrent startup and attachment behavior.
+- [ ] Codex CLI startup, daemon operation and relevant updater/pruning behavior are
+  qualified against the new layout; limitations are resolved or explicitly designed.
+- [ ] Required dcc checks, schema/version compatibility and user documentation pass.
+- [ ] Linux and Docker Desktop/macOS qualification pass; absent platform evidence
+  keeps this gate incomplete rather than silently permitting broad rollout.
+
+Completion of this gate is completion of the dcc implementation portion, not of the
+whole cross-repository T-0108 outcome. The parent task remains open until coordinated
+Feature migration and verification are complete.
+
+### Remaining Feature rollout and release order
+
+After the dcc gate, finish Codex and migrate straightforward AWS/Node/Mo layouts
+first where their package audits are complete, then Claude. Handle Rust separately
+because toolchain/proxy/install-root changes require focused integration checks.
+Review packages without direct persistence declarations for indirect effects too.
+Each affected Feature gets appropriate metadata/install/startup changes, tests,
+documentation and versioning rather than one unreviewable bulk migration.
+
+Plan publication only after compatibility is established: release the supporting dcc
+version before publishing Features that require its metadata. Publication remains
+subject to the repository's separate user-authorization requirements; this plan
+neither publishes anything nor authorizes future release actions by itself.
