@@ -2,14 +2,16 @@
 
 ## Identity and source
 
-- Revision: r1, 2026-11-16.
+- Revision: r3, 2026-11-16; user requested recording the agreed unified exclusion
+  behavior and supporting design discussion.
 - Authority: user requested recording an implementation task in dcc, preserving the
   audit findings, requiring coordinated Feature work, and leaving inclusion/exclusion
   specification as open design work.
 - Catalog: [task catalog](README.md), which owns lifecycle and next action.
 - Dependency/evidence: T-0107 [Feature state audit](../quality/0107-feature-state-audit.md).
-- This change captures future work only; do not start design or implementation as
-  part of task intake. Primary task remains unchanged.
+- Initial request captured future work only. The user subsequently requested design
+  exploration of per-package selection and Docker Linux/macOS behavior. Product
+  implementation is not yet started. Primary implementation pointer remains unchanged.
 
 ## Goal
 
@@ -82,21 +84,57 @@ update and launch behavior with ephemeral package storage or image provisioning.
 CODEX_INSTALL_DIR only changes launcher placement; it does not independently move
 the package tree away from CODEX_HOME.
 
-## Open design work — deliberately unresolved
+## Agreed direction (r3)
 
-Determine the best way for each Feature package to specify persistent **directories
-and files**, including inclusions and exclusions. No syntax, whitelist/blacklist
-strategy, glob semantics, new API, or mount technique is selected by this task.
+Persist coherent data-directory roots, with a short list of literal excluded child
+**directories** where installed software or scratch shares the same root. Prefer
+supported installation/configuration-root separation where it simplifies a Feature.
+Avoid a general glob/filter language and per-file mounts for mutable tool state.
+Exact public metadata syntax remains to be designed; examples in the exploration
+note are illustrative, not a frozen schema.
+
+Use one behavior for all excluded directories: **initialize from that directory in
+the selected image, keep changes local to the container, and discard those changes
+when the container is replaced**. Feature installers must leave excluded directories
+empty when empty is the correct initial state, and ensure correct permissions.
+Installed payload and scratch/staging do not need distinct configuration types or
+management paths. Handling an empty directory is the same initialization with no
+files to copy, apart from any small implementation fast path.
+
+A fresh anonymous Docker volume over an excluded child is the investigated mechanism:
+Docker initializes it from the image. It must belong to that container's lifetime,
+be reused by its concurrent exec/attach sessions, and be cleaned up on removal or
+failed creation. Never reuse it across replacement containers as durable state.
+This preserves image-controlled package versions without hashing durable data.
+Copying populated excluded payloads costs disk/startup I/O; empty exclusions do not
+require a separate scratch mode. Qualify the final mechanism on Docker Desktop.
+
+In the inspected image, Codex packages/ contains the standalone installed payload.
+Codex tmp/ held build-time helper links/locks that the Feature should clean;
+app-server-control/ and runtime app-server-daemon/ were absent. Claude downloads/
+was empty staging. Codex packages/app-server-daemon/ was created during runtime use,
+not by the existing Feature image install. Decide whether to provision it during
+build or let it bootstrap ephemerally under the same excluded packages/ directory.
+
+## Remaining open design work
+
+Resolve the final metadata schema, validation, existing isolated file-state support,
+mount lifecycle details, migration and per-package verification. The directory-root
+plus literal-directory-exclusion approach and unified initialization behavior above
+are the agreed direction; do not reopen a separate scratch-versus-payload mode.
+
 
 Evaluate at least:
 
-- Exact file/directory selections versus broader roots with exclusions; unknown new
-  upstream paths and nested mixed-ownership trees.
+- Literal relative-directory validation and overlap/symlink rules; unknown new
+  upstream paths and nested mixed-ownership trees. No general glob or re-inclusion
+  engine is proposed. Legacy file-state behavior still needs an explicit contract.
 - How excluded image paths remain visible/writable when their parent is persistent;
   symlinks, nested mounts, absent files and container-user ownership/permissions.
 - Whether relocating installation roots simplifies particular packages, versus using
   selection/mount rules; preserve launchers and package-manager bookkeeping.
-- Distinguish persistent data, image-provided installs, and ephemeral runtime scratch.
+- Distinguish ownership for Feature audits, but implement installs and scratch under
+  the same image-initialized excluded-directory behavior.
 - Handling image-provided user configuration defaults, separately from tool installs:
   explicit initialize-if-absent or another deliberate policy without overwrite of
   existing user data and without a content scan of durable trees.
@@ -119,7 +157,12 @@ Evaluate at least:
   ownership findings above validated against its supported upstream versions.
 - [ ] Existing mutable settings, credentials, session data and caches survive rebuild
   and recreation; migration preserves user data and provides a recovery path.
-- [ ] Defaults initialization and runtime scratch handling have explicit behavior.
+- [ ] All exclusions use the same image-initialization/container-lifetime behavior;
+  both populated installed payload and empty scratch/staging cases are tested.
+- [ ] Feature installers clean excluded scratch/staging directories and prepare their
+  initial ownership/permissions; no separate scratch persistence mode is introduced.
+- [ ] Defaults initialization has explicit behavior independent of durable-state
+  content hashing.
 - [ ] Targeted tests verify files, directories, mixed parents, exclusions, symlinks,
   ownership, image upgrades, concurrent sessions and relevant lifecycle hooks.
 - [ ] Large node_modules/target-style data tests demonstrate bounded dcc memory and
@@ -137,3 +180,36 @@ Main risks are hiding image binaries behind persistent mounts, losing credential
 history, retaining stale package selection metadata, daemon/bootstrap failures, and
 incompatible dcc/Feature rollout. Treat data migration and the public configuration
 contract as high-risk work when selecting verification and review gates.
+
+
+## Design exploration checkpoint (r2)
+
+User requested evaluating the clearest selection rules and Docker behavior on Linux
+and macOS. See [directory persistence design exploration](0108-persistence-design-exploration.md)
+for the provisional recommendation and Linux spikes. This is not an accepted final
+schema or a completed implementation. Desktop qualification, metadata versioning,
+backend/migration details and remaining package runtime verification stay open.
+
+
+## Recorded discussion and evidence (r3)
+
+See [directory persistence design exploration](0108-persistence-design-exploration.md)
+for the package-by-package layout recommendation, Docker mount examples, Linux test
+results and macOS limitations. User explicitly requested this task/documentation
+update; recording the checkpoint does not mean the implementation task is complete.
+
+Useful constraints from that discussion:
+
+- Direct file bind mounts can reject atomic replacement (Linux spike returned EBUSY),
+  while atomic save inside a mounted parent directory worked. Keep related SQLite
+  data and sidecars together rather than mounting database filenames individually.
+- Nested persistent-parent plus image-initialized excluded-child tests on Linux
+  preserved parent user data, discarded runtime child changes on recreation, and
+  selected image-v2 contents over a stale durable child without deleting old data.
+- With CLAUDE_CONFIG_DIR set, Claude 2.1.325 created .claude.json inside that directory;
+  a separate writable file mount was unnecessary. Verify supported versions/auth.
+- Rust can separate RUSTUP_HOME/tool executables from persistent CARGO_HOME and use
+  CARGO_INSTALL_ROOT to keep runtime-installed tools and their bookkeeping ephemeral.
+- Persistent-root bind versus Docker-managed volume is an independent backend choice.
+  Desktop file-sharing performance, permissions, atomic saves and SQLite need live
+  qualification. Do not depend on host mount propagation on macOS.
