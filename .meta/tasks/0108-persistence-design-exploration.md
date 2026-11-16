@@ -1,6 +1,8 @@
 # T-0108: Directory Persistence Design Exploration
 
-2026-11-16, r3. Unified exclusion behavior agreed with the user; illustrative schema,
+2026-11-16, r4. Historical volume exploration, updated with the preferred direction.
+See [symlink alternatives investigation](0108-exclusion-alternatives.md).
+Unified exclusion behavior agreed with the user; illustrative schema,
 package layouts and remaining implementation details are not frozen or implemented.
 
 ## Agreed direction and proposed configuration
@@ -10,12 +12,13 @@ configuration variables to separate installed tools from data where possible, an
 permit a short list of literal excluded child directories where a tool mixes them.
 Avoid general include/exclude glob rules and individual mounts for mutable files.
 
-Conceptual extension of existing state object syntax (not final schema):
+Conceptual extension of existing state object syntax (not final schema or verified
+complete Codex exclusion list; runtime app-server-daemon/ requires further audit):
 
 ```json
 {
   "path": "${containerEnv:HOME}/.codex",
-  "exclude": ["packages", "tmp", "app-server-control", "app-server-daemon"]
+  "exclude": ["packages", "tmp", "app-server-control"]
 }
 ```
 
@@ -49,7 +52,7 @@ Observed image inventory:
 | Codex packages/ | Populated standalone binaries/resources and install selection metadata. |
 | Codex tmp/ | Installer helper links/locks; clean during Feature build. |
 | Codex app-server-control/ | Absent; Feature should prepare empty runtime directory. |
-| Codex app-server-daemon/ | Absent runtime-control directory; distinct from packages/app-server-daemon/. |
+| Codex app-server-daemon/ | Absent initially, but can contain settings.json user preferences alongside runtime records. Whole-directory exclusion withdrawn pending investigation. |
 | Claude downloads/ | Empty staging directory. |
 
 packages/app-server-daemon/ appeared only after Codex runtime use. Provisioning that
@@ -63,7 +66,7 @@ image changes must be tested without adding a separate management path.
 | --- | --- |
 | AWS | Persist whole ~/.aws. Keep CLI and default template outside; preserve initialize-if-absent behavior. |
 | Claude | Persist whole CLAUDE_CONFIG_DIR (currently ~/.claude); exclude downloads/. Keep executable versions and launchers outside state. Set the variable consistently for runtime, and align build initialization or explicit defaults. |
-| Codex | Persist whole CODEX_HOME, excluding packages/, tmp/, app-server-control/ and runtime app-server-daemon/. Keep all user files/SQLite sidecars together. Revisit .tmp plugin staging separately after runtime verification; do not blindly classify user-selected plugins/skills as image installation payload. |
+| Codex | Persist whole CODEX_HOME, excluding validated child directories such as packages/; tmp/ and app-server-control/ require verification. Do not exclude runtime app-server-daemon/ wholesale: it also contains settings.json preferences. Keep all user files/SQLite sidecars together. Revisit .tmp plugin staging separately after runtime verification; do not blindly classify user-selected plugins/skills as image installation payload. |
 | Mo | Persist whole MO_HOME; installed executable is in Homebrew. Add exclusions only after actual runtime helper/scratch layout is verified. |
 | Node | Persist whole workspace node_modules. Feature installs Node/npm outside it. Project npm commands may add, replace or remove packages; dcc does not reconcile image seeds. |
 | Rust | Keep RUSTUP_HOME and rustup/proxy install bin directory outside persistent CARGO_HOME. Persist whole CARGO_HOME and workspace target. Set CARGO_INSTALL_ROOT outside persistent data so runtime cargo-install tools and bookkeeping stay ephemeral. This avoids selecting individual config/credential files and avoids a bin exclusion at the persistent root. |
@@ -100,9 +103,11 @@ need an explicit compatibility policy; this recommendation does not silently rem
 existing support or claim all such files can be moved. If an unavoidable isolated
 file remains, design/test its application's write behavior before selecting a method.
 
-## Docker realization and Linux evidence
+## Earlier Docker-volume realization and Linux evidence (fallback candidate)
 
-Docker cannot express a filter over one bind mount. A directory exclusion can be
+The preferred r4 mechanism is now relocation plus symlinks, with package-specific
+qualification. The anonymous-volume approach below remains supporting evidence and
+a fallback candidate. Docker cannot express a filter over one bind mount. A directory exclusion can be
 implemented with an additional nested anonymous Docker volume at the excluded path:
 
 ```sh
@@ -179,7 +184,9 @@ custom relocation. A general glob language requires content discovery, missing-f
 semantics, re-inclusion precedence and tracking newly created files: unnecessary here.
 Per-file copy-in/copy-out adds synchronization/loss risks and concurrent attach issues.
 Symlinking excluded Codex package directories changes upstream installer assumptions
-(the installer explicitly avoids pruning symlinked package roots); prefer real mounts.
+(the installer explicitly avoids pruning symlinked package roots). The r4 investigation
+nonetheless prefers relocation plus links after successful startup/bootstrap spikes;
+qualify those assumptions and retain real mounts as a fallback candidate.
 
 Resolve final schema/versioning and legacy file-state semantics, persistent backend,
 excluded-storage cleanup/recovery, migration, defaults initialization, Mo/Codex runtime

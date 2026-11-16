@@ -2,8 +2,8 @@
 
 ## Identity and source
 
-- Revision: r3, 2026-11-16; user requested recording the agreed unified exclusion
-  behavior and supporting design discussion.
+- Revision: r4, 2026-11-16; user requested recording symlink relocation as the
+  preferred approach and further Codex directory-structure investigation.
 - Authority: user requested recording an implementation task in dcc, preserving the
   audit findings, requiring coordinated Feature work, and leaving inclusion/exclusion
   specification as open design work.
@@ -66,7 +66,7 @@ Six Features currently declare eight durable paths:
 | --- | --- | --- |
 | aws-cli | ~/.aws | Persist user config, credentials and SSO/CLI caches. Executable lives outside it at /usr/local/aws-cli. Default template at /usr/local/share/aws-cli/config is copied on startup only when user config is absent. |
 | claude | ~/.claude | Persist user settings/auth/session/project/skill/plugin state. downloads/ is installer staging and should not be durable. Executable versions already live outside it under ~/.local/share/claude/versions with ~/.local/bin/claude launcher. Audit ~/.claude.json outside current state root for config/auth coverage. Installer-generated defaults/backups are not automatically image-owned executable payload. |
-| codex | ~/.codex | packages/standalone and packages/app-server-daemon, including releases/current links/selection/update/install metadata, belong to image-controlled installation storage. Preserve user config/auth, sessions/history, user skills/plugins, memories and state databases, including necessary SQLite WAL/SHM companions. tmp/ and app-server-control/ plus sockets/PIDs/locks in app-server-daemon/ are generally ephemeral. Distinguish runtime app-server-daemon/ from packages/app-server-daemon/. |
+| codex | ~/.codex | packages/standalone and packages/app-server-daemon, including releases/current links/selection/update/install metadata, belong to image-controlled installation storage. Preserve user config/auth, sessions/history, user skills/plugins, memories and state databases, including necessary SQLite WAL/SHM companions. tmp/ and app-server-control/ require runtime validation. app-server-daemon/ mixes settings.json user preferences with process records: do not exclude it wholesale pending investigation. Distinguish it from installed packages/app-server-daemon/. |
 | mo | ~/.mo | Feature and Homebrew formula install mo under /home/linuxbrew/.linuxbrew, outside MO_HOME. Persist application state, but inspect runtime internals before committing to a complete inclusion/exclusion map; runtime helpers/caches have not been exhaustively audited. |
 | node | /workspace/node_modules | Entire dependency directory is simple persistence; Feature installs Node/npm under /usr/local. Startup npm install manages project dependencies; package-manager operations may replace content. No image seed refresh or hashing required. |
 | rust | ~/.rustup | Treat installed toolchains and selection/install metadata as image-controlled under this policy. Do not blindly persist settings.toml that can select a toolchain absent from a rebuilt image. Durable user overrides, if supported, require explicit separate treatment. |
@@ -84,7 +84,7 @@ update and launch behavior with ephemeral package storage or image provisioning.
 CODEX_INSTALL_DIR only changes launcher placement; it does not independently move
 the package tree away from CODEX_HOME.
 
-## Agreed direction (r3)
+## Agreed direction (r4)
 
 Persist coherent data-directory roots, with a short list of literal excluded child
 **directories** where installed software or scratch shares the same root. Prefer
@@ -101,17 +101,23 @@ Installed payload and scratch/staging do not need distinct configuration types o
 management paths. Handling an empty directory is the same initialization with no
 files to copy, apart from any small implementation fast path.
 
-A fresh anonymous Docker volume over an excluded child is the investigated mechanism:
-Docker initializes it from the image. It must belong to that container's lifetime,
-be reused by its concurrent exec/attach sessions, and be cleaned up on removal or
-failed creation. Never reuse it across replacement containers as durable state.
-This preserves image-controlled package versions without hashing durable data.
-Copying populated excluded payloads costs disk/startup I/O; empty exclusions do not
-require a separate scratch mode. Qualify the final mechanism on Docker Desktop.
+Prefer relocating excluded contents to stable image-controlled locations outside
+persistent roots, then creating/verifying symlinks at original paths after persistent
+mounts are attached and before user hooks. The target uses the normal image/container
+writable layer: no per-container payload-population copy, and updates remain ephemeral.
+Installers leave appropriate targets empty for scratch, preserving unified semantics.
+Perform relocation during the same installation layer to avoid image-byte duplication.
+Qualify each package's symlink/updater/sandbox behavior; anonymous image-initialized
+volumes remain a fallback candidate, not the preferred default.
+
+See [exclusion alternatives investigation](0108-exclusion-alternatives.md) for Linux
+Codex startup/daemon-bootstrap/recreation tests, installer pruning limitations,
+migration requirements and rejected/limited Docker mounting alternatives.
 
 In the inspected image, Codex packages/ contains the standalone installed payload.
 Codex tmp/ held build-time helper links/locks that the Feature should clean;
-app-server-control/ and runtime app-server-daemon/ were absent. Claude downloads/
+app-server-control/ and runtime app-server-daemon/ were absent in that fresh image,
+but this does not establish their future contents as disposable. Claude downloads/
 was empty staging. Codex packages/app-server-daemon/ was created during runtime use,
 not by the existing Feature image install. Decide whether to provision it during
 build or let it bootstrap ephemerally under the same excluded packages/ directory.
@@ -119,7 +125,9 @@ build or let it bootstrap ephemerally under the same excluded packages/ director
 ## Remaining open design work
 
 Resolve the final metadata schema, validation, existing isolated file-state support,
-mount lifecycle details, migration and per-package verification. The directory-root
+symlink preparation/lifecycle details, migration and per-package verification. In
+particular, resolve Codex runtime app-server-daemon/settings.json persistence before
+finalizing its excluded directory list. The directory-root
 plus literal-directory-exclusion approach and unified initialization behavior above
 are the agreed direction; do not reopen a separate scratch-versus-payload mode.
 
@@ -157,6 +165,10 @@ Evaluate at least:
   ownership findings above validated against its supported upstream versions.
 - [ ] Existing mutable settings, credentials, session data and caches survive rebuild
   and recreation; migration preserves user data and provides a recovery path.
+- [ ] Symlink relocation, permissions, concurrent startup and migration are tested;
+  package updater/pruning/sandbox compatibility is qualified or a fallback designed.
+- [ ] Codex runtime directory investigation identifies and preserves user preferences,
+  including app-server-daemon/settings.json, without persisting stale process state.
 - [ ] All exclusions use the same image-initialization/container-lifetime behavior;
   both populated installed payload and empty scratch/staging cases are tested.
 - [ ] Feature installers clean excluded scratch/staging directories and prepare their
@@ -213,3 +225,13 @@ Useful constraints from that discussion:
 - Persistent-root bind versus Docker-managed volume is an independent backend choice.
   Desktop file-sharing performance, permissions, atomic saves and SQLite need live
   qualification. Do not depend on host mount propagation on macOS.
+
+
+## Investigation update (r4)
+
+User selected symlink relocation as the preferred direction after exploring alternatives.
+The [investigation record](0108-exclusion-alternatives.md) preserves the supporting
+observations and limits. It supersedes the earlier anonymous-volume preference and
+whole runtime app-server-daemon/ scratch classification, while keeping the unified
+image-defined initial-state policy. Desktop validation, final schema, safe migration,
+package compatibility and Codex directory mapping remain required before implementation.
