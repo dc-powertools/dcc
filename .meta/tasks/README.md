@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0104
+- Next task ID: T-0105
 - Primary task: T-0097
 - Scheduling: Running
 - Global pause source or reason: None
@@ -129,6 +129,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0102 | Upgrade Docker to meet the Engine 28+ forwarding requirement and rerun the failed smoke test. | User request 2026-11-16 / r1 | Done | None | Quick change / Medium | User authorized Docker upgrade. | Stop; upgrade and focused verification complete. | `.meta/quality/0102-docker-upgrade.md` | Installed official Docker ARM64 Engine/CLI 29.9.3 under /opt with reversible systemd override; added checksum-verified Buildx 0.39.0. Existing distro containerd/runc and overlay2 retained. Service active/enabled and previously failing forwarding test passed. Manual updates required. |
 
 | T-0103 | Evaluate build, startup, and connection of a dcc profile with Codex installed. | User request 2026-11-16 / r1 | Done | None | Discover / Medium | User authorizes Docker launches and sudo for this evaluation. | Stop; evaluation complete. | `.meta/quality/0103-codex-profile.md` | Published Codex feature on Debian ARM64 built, started, attached, opened Codex UI, and preserved state across restart. Misleading seed warning recorded; authenticated service access untested. Test containers removed; no product changes. |
+
+| T-0104 | Test concurrent codex:yolo run and interactive attach on one profile container. | User request 2026-11-16 / r1 | Done | None | Discover / Medium | User authorizes concurrent runtime sessions. | Stop; concurrent attachment verified. | `.meta/quality/0104-concurrent-codex-attach.md` | codex:yolo and interactive attach shared container f12be140e3e6; shell verified original Codex processes; attach exit left run active. Both sessions exited and container removed. |
 
 ## Operating Contract
 
