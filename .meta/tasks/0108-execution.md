@@ -85,3 +85,29 @@ daemon migration remain unqualified; rebuild is the supported durable update/rol
 Exact committed revision pairing and final integration evidence are recorded below
 after local commits; all content was tested before commit and immutable tree/binary
 hashes allow equivalence checks. No broad Feature rollout or publication.
+
+## Exact integration revision pairing
+
+- dcc implementation: `0331498d5fe4d86125ec692e9907426b3b71a59f` (0.3.0).
+- Features unpublished pilot: `6193b82c5d5ed49678858261ec69d079ce40d279`.
+- Both clean committed revisions were used for the final local-reference smoke.
+- Frozen executable SHA256:
+  `35bf36c0e808c50f86426a4df5b4529b9158832af4a758766f8f7e801b9f3b6e`.
+- Built image:
+  `sha256:5293f5feec835c314ddc711513646f46961d46fd76d06d9a099e922aa2e2afd3`.
+
+Commands, from `/tmp/dcc-0108-local-integration` using a task-local sudo Docker wrapper:
+`bin/dcc-final build`; `bin/dcc-final start`; `bin/dcc-final exec sh -ec ...`
+(pilot 10/10 checks, dummy retained history/marketplace cache/settings, daemon
+start/version/stop); `bin/dcc-final stop --now`. All passed. Earlier final-content
+checks also passed Debian 2/2 and two full rebuild/recreation cycles resetting
+package/tmp markers while retaining user state. Logs are `exact-revisions-*.log`
+and `final-*.log` in that temporary directory; durable findings are summarized here.
+Runtime stopped afterward. Source/pilot commits are separate, nothing pushed/published.
+
+T-0109 and T-0110 are Done within their bounded Linux/local-pilot scopes. T-0108 is
+Needs verification: provide a Docker Desktop/macOS runner and qualify filesystem,
+ownership, atomic saves and SQLite; complete remaining Codex updater/daemon migration
+checks; then migrate/audit remaining Features individually, Rust separately. The
+supporting dcc release must precede dependent production Feature publication, and
+publication still requires separate authorization. No broad migration started.

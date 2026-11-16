@@ -46,8 +46,9 @@ protections, and no-clobber staging. Fresh-only chown uses no-follow semantics.
 Migration retains backups indefinitely; explicit manual recovery/retention is documented.
 
 The strengthened six-process regression failed before the winner/mode fixes and passes
-after. Masking regressions fail before guards and pass after; image/scratch reset and
-large-state canaries exercise behavior rather than merely parser shape. A synthetic
+after. Masking regressions assert rejection before any durable initialization;
+image/scratch reset and large-state canaries exercise behavior rather than merely
+parser shape. A synthetic
 hook helper initially raced on shared probe filenames; unique mktemp probes fixed the
 fixture without weakening the concurrency criterion.
 
@@ -73,6 +74,12 @@ and ephemeral; container recreation is the supported reset and rollback boundary
 
 ## Completion
 
-T-0109 Linux implementation: verified. T-0110 local pilot: verified content, separate
-local commit pending. Parent T-0108: Needs verification; no broad Feature migration.
-Exact committed integration pairing will be appended after task-scoped commits.
+T-0109 Linux implementation: verified. T-0110 local pilot: verified and committed
+separately. Parent T-0108: Needs verification; no broad Feature migration.
+Exact-revision local-reference smoke passed with clean dcc source
+`0331498d5fe4d86125ec692e9907426b3b71a59f` and Features
+`6193b82c5d5ed49678858261ec69d079ce40d279`. Cached build/start, 10 pilot checks,
+retained dummy preferences/history/plugin cache and daemon start/version/stop passed.
+Immutable image: `sha256:5293f5feec835c314ddc711513646f46961d46fd76d06d9a099e922aa2e2afd3`.
+Frozen binary SHA256: `35bf36c0e808c50f86426a4df5b4529b9158832af4a758766f8f7e801b9f3b6e`.
+Runtime stopped; subsequent dcc record commit changes documentation only.
