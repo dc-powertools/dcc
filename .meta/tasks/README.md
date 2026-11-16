@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0108
+- Next task ID: T-0109
 - Primary task: T-0097
 - Scheduling: Running
 - Global pause source or reason: None
@@ -137,6 +137,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0106 | Build workspace test profile and measure memory usage. | User request 2026-11-16 / r1 | Done | None | Discover / Medium | User authorizes real configuration build. | Stop; build and measurement complete. | `.meta/quality/0106-real-profile-memory.md` | Workspace test profile built successfully in 112.260 s; dcc peak 489.2 MiB RSS during fresh state hashing, about 18 MiB during image build. No product/config changes; no containers remain. |
 
 | T-0107 | Audit Feature durable paths for image-owned versus persistent content. | User request 2026-11-16 / r1 | Done | None | Discover / Low | Read-only audit authorized. | Stop; audit complete. | `.meta/quality/0107-feature-state-audit.md` | Audited all ten Features and eight durable paths; identified Codex packages and Rust toolchains/proxies as image-owned, data/cache persistence and scratch exclusions. Cargo mixed bin and runtime tool layouts need explicit policy; no product changes. |
+
+| T-0108 | Separate simple persistence from image-controlled installations, replacing content-hash seed reconciliation across dcc and Features. | User task-capture request 2026-11-16 / r1 | Pending | T-0107 | Decide / High (provisional) | Capture only; inclusion/exclusion contract remains open design work. | Design Feature file/directory persistence selection, ownership and migration; plan coordinated package changes. | `.meta/tasks/0108-persistence-image-ownership.md` | Task recorded; no design choice or implementation made. |
 
 ## Operating Contract
 
