@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0100
+- Next task ID: T-0101
 - Primary task: T-0097
 - Scheduling: Running
 - Global pause source or reason: None
@@ -121,6 +121,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0098 | Update the TLS smoke-test Docker stub for the running-runtime build preflight. | User request 2026-09-28 / r1 | Done | None | Quick change / Low | None | Stop; stub update complete. | None | Stub accepts only the exact fixture-scoped runtime query, returning no containers; other Docker calls still mark failure and exit 97. The missing/wrong CA test reproduced the CI failure before the change and passed afterward. Format, locked check, all-target Clippy, all 702 default runnable tests, locked build, and focused diff review passed. No containers launched. |
 
 | T-0099 | Bump the package version from 0.2.0 to 0.2.1 after the TLS stub fix. | User request 2026-09-28 / r1 | Done | T-0098 | Quick change / Low | None | Stop; version bump complete. | None | Updated Cargo.toml and the root dcc package in Cargo.lock to 0.2.1. Format, locked check, all-target Clippy, all 702 default runnable tests, locked build, CLI version output, release-workflow contract, and diff review passed. No push, tag, or release performed. |
+
+| T-0100 | Set up this Amazon Linux 2023 host to run Docker containers. | User request 2026-11-16 / r1 | Done | None | Quick change / Medium | User authorized host installation and configuration. | Stop; host setup complete. | None | Installed Amazon Linux Docker Engine 25.0.18 and dependencies; enabled/started docker; added ec2-user to docker group. hello-world, non-sudo access through sg, overlay2/cgroup v2, and localhost HTTP port-publishing smoke passed; test containers removed. Fresh login or newgrp docker activates membership in existing sessions. No public ports or remote Docker API configured; no dcc runtime qualification performed. |
 
 ## Operating Contract
 
