@@ -103,10 +103,23 @@ pub(crate) fn apply_state_path_substitution(s: &str) -> String {
 pub(crate) fn apply_state_path_substitutions(state: Vec<StateEntry>) -> Vec<StateEntry> {
     state
         .into_iter()
-        .map(|StateEntry { path, kind }| StateEntry {
-            path: apply_state_path_substitution(&path),
-            kind,
-        })
+        .map(
+            |StateEntry {
+                 path,
+                 kind,
+                 exclusions,
+             }| StateEntry {
+                path: apply_state_path_substitution(&path),
+                kind,
+                exclusions: exclusions
+                    .into_iter()
+                    .map(|mut exclusion| {
+                        exclusion.target = apply_state_path_substitution(&exclusion.target);
+                        exclusion
+                    })
+                    .collect(),
+            },
+        )
         .collect()
 }
 
@@ -415,6 +428,22 @@ mod tests {
         assert_eq!(
             apply_state_path_substitution("${containerCacheFolder}/cargo"),
             "/cache/cargo"
+        );
+    }
+
+    #[test]
+    fn state_substitutes_targets_but_keeps_exclusions_literal() {
+        let entry: StateEntry = serde_json::from_value(serde_json::json!({
+            "path":"${containerWorkspaceFolder}/state", "type":"directory-with-exclusions",
+            "exclude":[{"path":"packages","target":"${containerEnv:HOME}/installed"}]
+        }))
+        .unwrap();
+        let result = apply_state_path_substitutions(vec![entry]);
+        assert_eq!(result[0].path, "/workspace/state");
+        assert_eq!(result[0].exclusions[0].path, "packages");
+        assert_eq!(
+            result[0].exclusions[0].target,
+            "${containerEnv:HOME}/installed"
         );
     }
 

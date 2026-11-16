@@ -1,0 +1,25 @@
+{
+  "id": "persistence-fixture",
+  "version": "1.0.0",
+  "name": "Deterministic persistence regression fixture",
+  "customizations": {
+    "dcc": {
+      "state": [{
+        "path": "${containerEnv:HOME}/.persistence-fixture",
+        "type": "directory-with-exclusions",
+        "exclude": [
+          {"path": "packages", "target": "/opt/dcc-local/persistence/packages"},
+          {"path": "scratch", "target": "/opt/dcc-local/persistence/scratch"}
+        ]
+      }]
+    }
+  },
+  "options": {
+    "imageVersion": {
+      "type": "string",
+      "default": "v1",
+      "enum": ["v1", "v2"],
+      "description": "Installed payload and initial user defaults version"
+    }
+  }
+}

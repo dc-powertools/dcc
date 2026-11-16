@@ -182,8 +182,8 @@ pub(crate) struct FeatureBuildOutput {
     /// contributed any runtime properties (mounts, command, remoteEnv).
     pub(crate) metadata_label: Option<String>,
     /// Feature-contributed state entries (validated, deferred containerEnv left
-    /// intact), in feature installation order. Used to build the `dcc.seed`
-    /// label so seeding covers Feature- and project-declared state alike.
+    /// intact), in feature installation order. Combined with project state for
+    /// cross-source validation before building the image.
     pub(crate) feature_state: Vec<StateEntry>,
 }
 
@@ -566,20 +566,15 @@ fn insert_dcc_label_field(entry: &mut serde_json::Value, key: &str, value: serde
 }
 
 fn state_entries_to_label_value(state: &[StateEntry]) -> serde_json::Value {
-    serde_json::Value::Array(
-        state
-            .iter()
-            .map(|entry| match entry.kind {
-                crate::config::StateKind::Directory => {
-                    serde_json::Value::String(entry.path.clone())
-                }
-                crate::config::StateKind::File => serde_json::json!({
-                    "path": entry.path.clone(),
-                    "type": "file",
-                }),
-            })
-            .collect(),
-    )
+    serde_json::Value::Array(state.iter().map(|entry| {
+        if !entry.exclusions.is_empty() {
+            serde_json::json!({"path": entry.path, "type": "directory-with-exclusions", "exclude": entry.exclusions})
+        } else if entry.kind == crate::config::StateKind::File {
+            serde_json::json!({"path": entry.path, "type": "file"})
+        } else {
+            serde_json::Value::String(entry.path.clone())
+        }
+    }).collect())
 }
 
 fn feature_dcc_value<'a>(entry: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
@@ -1507,6 +1502,7 @@ mod tests {
             vec![StateEntry {
                 path: "/home/dev/.cache".to_string(),
                 kind: crate::config::StateKind::Directory,
+                exclusions: Vec::new(),
             }]
         );
     }
@@ -1634,13 +1630,33 @@ mod tests {
                 StateEntry {
                     path: "/workspace/target".to_string(),
                     kind: crate::config::StateKind::Directory,
+                    exclusions: Vec::new(),
                 },
                 StateEntry {
                     path: "${containerEnv:HOME}/.npmrc".to_string(),
                     kind: crate::config::StateKind::File,
+                    exclusions: Vec::new(),
                 },
             ]
         );
+    }
+
+    #[test]
+    fn exclusion_metadata_survives_image_label_roundtrip() {
+        let input = serde_json::json!({"path":"${containerEnv:HOME}/.tool","type":"directory-with-exclusions","exclude":[{"path":"packages","target":"/opt/dcc-local/tool/packages"}]});
+        let state: Vec<StateEntry> =
+            serde_json::from_value(serde_json::json!([input.clone()])).unwrap();
+        assert_eq!(
+            state_entries_to_label_value(&state),
+            serde_json::json!([input.clone()])
+        );
+        let label = serde_json::json!([{"id":"tool","customizations":{"dcc":{"state":[input]}}}]);
+        assert_eq!(
+            parse_runtime_from_label(&label.to_string()).unwrap().state,
+            state
+        );
+        let schema = serde_json::json!({"path":"/data","type":"directory","exclude":[{"path":"bin","target":"/opt/bin"}]});
+        assert!(serde_json::from_value::<StateEntry>(schema).is_err());
     }
 
     #[test]
@@ -1774,10 +1790,12 @@ mod tests {
                 StateEntry {
                     path: "/workspace/target".to_string(),
                     kind: crate::config::StateKind::Directory,
+                    exclusions: Vec::new(),
                 },
                 StateEntry {
                     path: "${containerEnv:HOME}/.npmrc".to_string(),
                     kind: crate::config::StateKind::File,
+                    exclusions: Vec::new(),
                 },
             ]
         );

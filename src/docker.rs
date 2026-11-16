@@ -27,7 +27,6 @@ pub(crate) async fn build(
     pull: bool,
     context: Vec<u8>,
     metadata_label: Option<&str>,
-    seed_label: Option<&str>,
     build_args: Vec<(String, String)>,
 ) -> anyhow::Result<()> {
     let opts = DockerBuildOptions {
@@ -35,7 +34,6 @@ pub(crate) async fn build(
         no_cache,
         pull,
         metadata_label: metadata_label.map(str::to_string),
-        seed_label: seed_label.map(str::to_string),
         file: None,
         context_dir: None,
         build_args,
@@ -52,8 +50,6 @@ pub(crate) struct DockerBuildOptions {
     /// upstream rather than reusing a stale local image.
     pub(crate) pull: bool,
     pub(crate) metadata_label: Option<String>,
-    /// Optional `dcc.seed` label value (resolved seed manifest JSON).
-    pub(crate) seed_label: Option<String>,
     pub(crate) file: Option<PathBuf>,
     pub(crate) context_dir: Option<PathBuf>,
     pub(crate) build_args: Vec<(String, String)>,
@@ -73,9 +69,6 @@ pub(crate) fn build_args(opts: &DockerBuildOptions) -> Vec<String> {
             "--label".to_string(),
             format!("devcontainer.metadata={label}"),
         ]);
-    }
-    if let Some(seed) = &opts.seed_label {
-        args.extend(["--label".to_string(), format!("dcc.seed={seed}")]);
     }
     let mut build_args = opts.build_args.clone();
     build_args.sort_by(|a, b| a.0.cmp(&b.0));
@@ -794,7 +787,6 @@ mod tests {
             no_cache: true,
             pull: false,
             metadata_label: Some("[{}]".to_string()),
-            seed_label: None,
             file: None,
             context_dir: None,
             build_args: vec![
@@ -824,41 +816,12 @@ mod tests {
     }
 
     #[test]
-    fn build_args_include_seed_label_when_present() {
-        let args = build_args(&DockerBuildOptions {
-            tag: "dcc-img".to_string(),
-            no_cache: false,
-            pull: false,
-            metadata_label: Some("[{}]".to_string()),
-            seed_label: Some(r#"{"build_id":"x","entries":[]}"#.to_string()),
-            file: None,
-            context_dir: None,
-            build_args: Vec::new(),
-            target: None,
-        });
-        assert!(
-            args.contains(&"--label".to_string()),
-            "expected --label, got: {args:?}"
-        );
-        assert!(
-            args.iter()
-                .any(|a| a == "dcc.seed={\"build_id\":\"x\",\"entries\":[]}"),
-            "expected dcc.seed label, got: {args:?}"
-        );
-        assert!(
-            args.iter().any(|a| a == "devcontainer.metadata=[{}]"),
-            "expected metadata label too, got: {args:?}"
-        );
-    }
-
-    #[test]
     fn build_args_for_path_context_include_file_and_context() {
         let args = build_args(&DockerBuildOptions {
             tag: "dcc-img".to_string(),
             no_cache: false,
             pull: false,
             metadata_label: None,
-            seed_label: None,
             file: Some(std::path::Path::new("/workspace/.devcontainer/Dockerfile").to_path_buf()),
             context_dir: Some(std::path::Path::new("/workspace").to_path_buf()),
             build_args: Vec::new(),
@@ -884,7 +847,6 @@ mod tests {
             no_cache: false,
             pull: true,
             metadata_label: None,
-            seed_label: None,
             file: None,
             context_dir: None,
             build_args: Vec::new(),
@@ -903,7 +865,6 @@ mod tests {
             no_cache: false,
             pull: false,
             metadata_label: None,
-            seed_label: None,
             file: None,
             context_dir: None,
             build_args: Vec::new(),

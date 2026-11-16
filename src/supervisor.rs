@@ -764,8 +764,12 @@ case "${1:-}" in
         exit "$result"
         ;;
     mode)
-        # Promote an already-running container to durable.
-        printf '%s' "${2:-durable}" > "$MODE_FILE"
+        # Atomic replacement also works when Linux protected_regular forbids
+        # root from truncating a user-owned file in the sticky state tmpfs.
+        tmp=$(mktemp "$STATE/mode.XXXXXX")
+        printf '%s' "${2:-durable}" > "$tmp"
+        chmod 0644 "$tmp"
+        mv -f "$tmp" "$MODE_FILE"
         ;;
     stop)
         # Graceful: stop accepting new commands, drain, then exit.

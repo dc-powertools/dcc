@@ -16,7 +16,8 @@ containers without sharing state between profiles.
 - Keeps forwarded ports available across sessions for the container's lifetime.
 - Warns and defers configuration changes until the running container is recreated.
 - Keeps a durable per-profile `/cache` mount under `.dcc/<profile>`.
-- Persists declared state paths with `customizations.dcc.state`.
+- Persists declared user data with `customizations.dcc.state`; image-owned directory
+  exclusions keep installed software tied to the selected image.
 - Supports local config inheritance with `customizations.dcc.extends`.
 - Resolves short Feature names from `ghcr.io/dc-powertools/features` by default, with
   a project-configured repository override.
@@ -102,7 +103,6 @@ an explicit mount.
 dcc build                    # build the default profile image
 dcc build -p ci              # build .devcontainer/ci.json
 dcc build --refresh-only     # rerun update/post-create prep hooks
-dcc build --reseed-state     # overwrite declared state with the image seed
 dcc profile bootstrap --image=debian
 dcc profile bootstrap -p ci --extends=devcontainer
 dcc profile list             # list available named profiles

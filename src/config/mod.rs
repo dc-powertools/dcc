@@ -190,6 +190,40 @@ pub(crate) struct RawDccConfig {
 pub(crate) struct StateEntry {
     pub(crate) path: String,
     pub(crate) kind: StateKind,
+    pub(crate) exclusions: Vec<StateExclusion>,
+}
+
+impl serde::Serialize for StateEntry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.kind == StateKind::Directory && self.exclusions.is_empty() {
+            return serializer.serialize_str(&self.path);
+        }
+        use serde::ser::SerializeMap as _;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("path", &self.path)?;
+        map.serialize_entry(
+            "type",
+            if self.exclusions.is_empty() {
+                "file"
+            } else {
+                "directory-with-exclusions"
+            },
+        )?;
+        if !self.exclusions.is_empty() {
+            map.serialize_entry("exclude", &self.exclusions)?;
+        }
+        map.end()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StateExclusion {
+    pub(crate) path: String,
+    pub(crate) target: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, Deserialize)]
@@ -201,14 +235,23 @@ pub(crate) enum StateKind {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStateObject {
+    path: String,
+    #[serde(default = "default_state_type", rename = "type")]
+    kind: String,
+    exclude: Option<Vec<StateExclusion>>,
+}
+
+fn default_state_type() -> String {
+    "directory".to_string()
+}
+
+#[derive(Deserialize)]
 #[serde(untagged)]
 enum RawStateEntry {
     Path(String),
-    Object {
-        path: String,
-        #[serde(default, rename = "type")]
-        kind: StateKind,
-    },
+    Object(RawStateObject),
 }
 
 impl<'de> Deserialize<'de> for StateEntry {
@@ -216,12 +259,46 @@ impl<'de> Deserialize<'de> for StateEntry {
     where
         D: serde::Deserializer<'de>,
     {
+        use serde::de::Error as _;
         match RawStateEntry::deserialize(deserializer)? {
             RawStateEntry::Path(path) => Ok(Self {
                 path,
                 kind: StateKind::Directory,
+                exclusions: Vec::new(),
             }),
-            RawStateEntry::Object { path, kind } => Ok(Self { path, kind }),
+            RawStateEntry::Object(object) => {
+                let kind = match object.kind.as_str() {
+                    "directory" => StateKind::Directory,
+                    "file" => StateKind::File,
+                    "directory-with-exclusions" => StateKind::Directory,
+                    other => {
+                        return Err(D::Error::custom(format!(
+                            "unsupported state type `{other}`"
+                        )))
+                    }
+                };
+                let exclusions = match (object.kind.as_str(), object.exclude) {
+                    ("directory-with-exclusions", Some(exclusions)) if !exclusions.is_empty() => {
+                        exclusions
+                    }
+                    ("directory-with-exclusions", _) => {
+                        return Err(D::Error::custom(
+                            "directory-with-exclusions requires a nonempty exclude list",
+                        ))
+                    }
+                    (_, Some(_)) => {
+                        return Err(D::Error::custom(
+                            "exclude requires type directory-with-exclusions",
+                        ))
+                    }
+                    (_, None) => Vec::new(),
+                };
+                Ok(Self {
+                    path: object.path,
+                    kind,
+                    exclusions,
+                })
+            }
         }
     }
 }
@@ -423,6 +500,30 @@ mod tests {
     }
 
     #[test]
+    fn exclusions_require_fail_closed_type_and_strict_fields() {
+        for input in [
+            r#"{"path":"/data","exclude":[{"path":"bin","target":"/opt/bin"}]}"#,
+            r#"{"path":"/data","type":"file","exclude":[]}"#,
+            r#"{"path":"/data","type":"directory-with-exclusions","exclude":[]}"#,
+            r#"{"path":"/data","type":"directory-with-exclusions"}"#,
+            r#"{"path":"/data","unknown":true}"#,
+            r#"{"path":"/data","type":"directory-with-exclusions","exclude":[{"path":"bin","target":"/opt/bin","typo":true}]}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<StateEntry>(input).is_err(),
+                "accepted {input}"
+            );
+        }
+        let input = serde_json::json!({"path":"/data","type":"directory-with-exclusions","exclude":[{"path":"bin","target":"/opt/bin"}]});
+        let entry: StateEntry = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(entry.kind, StateKind::Directory);
+        assert_eq!(entry.exclusions[0].path, "bin");
+        assert_eq!(serde_json::to_value(entry).unwrap(), input);
+        // The previously supported type enum rejects the new discriminator.
+        assert!(serde_json::from_str::<StateKind>("\"directory-with-exclusions\"").is_err());
+    }
+
+    #[test]
     fn all_known_fields() {
         let file = write_temp(
             r#"{
@@ -599,10 +700,12 @@ mod tests {
                 StateEntry {
                     path: "/home/dev/.cache".to_string(),
                     kind: StateKind::Directory,
+                    exclusions: Vec::new(),
                 },
                 StateEntry {
                     path: "/home/dev/.npmrc".to_string(),
                     kind: StateKind::File,
+                    exclusions: Vec::new(),
                 },
             ]
         );
@@ -829,6 +932,7 @@ mod tests {
             Some(&StateEntry {
                 path: "/cache/file".to_string(),
                 kind: StateKind::File,
+                exclusions: Vec::new(),
             })
         );
     }

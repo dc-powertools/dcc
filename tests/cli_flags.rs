@@ -512,7 +512,7 @@ fn dry_run_format_json_outputs_stable_report() {
 }
 
 #[test]
-fn build_dry_run_reports_planned_seeding_with_no_executables_on_path() {
+fn build_dry_run_reports_absence_only_defaults_with_no_executables_on_path() {
     let fx = Fixture::new();
     fx.write_config(
         "Dockerfile",
@@ -542,8 +542,10 @@ fn build_dry_run_reports_planned_seeding_with_no_executables_on_path() {
             .into_iter()
             .flatten()
             .chain(report["skipped"].as_array().into_iter().flatten())
-            .any(|entry| entry.as_str().is_some_and(|text| text.contains("seed"))),
-        "expected dry-run seeding plan: {report}"
+            .any(|entry| entry
+                .as_str()
+                .is_some_and(|text| text.contains("absent roots"))),
+        "expected dry-run defaults plan: {report}"
     );
 }
 

@@ -34,6 +34,24 @@ impl CacheDir {
     /// Creates the cache directory (and any missing intermediate dirs).
     /// Idempotent: succeeds if the directory already exists.
     pub(crate) fn ensure_exists(&self) -> anyhow::Result<()> {
+        for path in [self.host_path.parent(), Some(self.host_path.as_path())]
+            .into_iter()
+            .flatten()
+        {
+            match std::fs::symlink_metadata(path) {
+                Ok(metadata) => anyhow::ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "refusing symlinked cache path `{}`",
+                    path.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to inspect cache path `{}`", path.display())
+                    })
+                }
+            }
+        }
         std::fs::create_dir_all(&self.host_path).with_context(|| {
             format!(
                 "failed to create cache directory `{}`",
@@ -323,6 +341,7 @@ mod tests {
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.cache".to_string(),
             kind: StateKind::Directory,
+            exclusions: Vec::new(),
         }]);
         assert_eq!(
             mounts,
@@ -348,6 +367,7 @@ mod tests {
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.cargo".to_string(),
             kind: StateKind::Directory,
+            exclusions: Vec::new(),
         }]);
         cache.prepare_state_mounts(&mounts).unwrap();
         assert!(mounts[0].host_path.is_dir());
@@ -363,6 +383,7 @@ mod tests {
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.npmrc".to_string(),
             kind: StateKind::File,
+            exclusions: Vec::new(),
         }]);
         cache.prepare_state_mounts(&mounts).unwrap();
         assert!(mounts[0].host_path.is_file());
@@ -379,6 +400,7 @@ mod tests {
         let mounts = cache.plan_state_mounts(&[StateEntry {
             path: "/home/dev/.npmrc".to_string(),
             kind: StateKind::File,
+            exclusions: Vec::new(),
         }]);
         std::fs::create_dir_all(&mounts[0].host_path).unwrap();
         let err = cache.prepare_state_mounts(&mounts).unwrap_err();

@@ -32,7 +32,7 @@ src/
   feature.rs          dcc feature profile config edit command
   run.rs              dcc run command
   supervisor.rs       In-container PID 1 lifecycle supervisor (scripts + host-side rt dir)
-  seed.rs             State seeding from the image (hydration, dcc.seed label, ledger)
+  persistence.rs      Absence-only defaults, serialized safe exclusion link preparation
   stop.rs             dcc stop command (graceful / --now / --kill variants)
   uid.rs              updateRemoteUserUID remap planning (host uid/gid, no-op conditions, Dockerfile block)
   forward.rs          Port allocation and baked in-container relay assets
@@ -435,8 +435,8 @@ commands if it does not already exist. It is never deleted automatically. The
 managed `.dcc/` root receives a `.gitignore` containing `*` when no entry already
 exists at that path, keeping generated profiles, runtime assets, seed ledgers, caches,
 and state out of Git status. Existing `.dcc/.gitignore` entries are never modified.
-Build preparation may hydrate declared state into the profile directory and record a
-seed ledger alongside it (see `devcontainer.metadata` label below).
+Build preparation initializes only absent declared roots. Existing seed ledgers are
+retained for recovery and never read for persistence decisions.
 
 Declared `customizations.dcc.state` entries are validated as absolute container
 paths after config merge and container-side substitution. They reject unresolved
@@ -468,64 +468,26 @@ post-`${containerEnv:VAR}` resolution:
 The guards are textual; a state path that is a symlink in the image resolving
 outside itself is not detected in `normalize_state_path`.
 
-### State seeding
+### Persistence and image ownership
 
-Bind mounts mask image content with an empty host source, so data a Feature
-`install.sh`, a `Dockerfile` layer, or an official `build` source placed at a
-declared state path is invisible at runtime. `dcc build` seeds declared state
-from the image (`src/seed.rs`): it runs one short-lived container on the
-finished image with the state mounts **not** applied and the host state root
-mounted at `/dcc-seed`, then copies each declared path's image content into the
-host state directory with `tar` inside the container. Modes and symlinks are
-preserved; for non-root `containerUser` profiles, hydration re-owns copied state
-to that user so bind-mounted state remains writable even when Dockerfile layers
-created the content before `updateRemoteUserUID` remapped the user. A host-side
-`docker cp` is deliberately avoided because it would land every file owned by
-the invoking host user.
+`src/persistence.rs` serializes initialization and exclusion migration using a kernel
+file lock at `.dcc/<profile>.persistence.lock`. A short-lived image container checks
+root/target ancestors and copies only wholly absent roots through `/dcc-initialize`.
+New trees are owned by the container user; existing roots are never traversed,
+hashed, reconciled or re-owned. Legacy seed ledgers are retained and ignored.
 
-A `dcc.seed` image label (alongside `devcontainer.metadata` and `dcc.version`)
-carries the resolved seed manifest — per entry the container path, kind, and
-content digest — read back with the same `docker::inspect_image_label_value`
-idiom. The label lets `dcc build --dry-run` report planned seeding and lets the
-runtime guard compare `build_id`s without re-digesting content.
+A second preparation container attaches persistent roots and verifies/creates excluded
+child symlinks as the container user. It runs before build/runtime hooks, including
+when user lifecycle hooks are skipped. Installers prepare stable image targets outside
+persistent roots, preferably in the installation layer. Generic dcc does not move image
+payload. Incorrect links or real directories are renamed into unique root-local
+recovery directories; correct links stay unchanged. No automatic backup deletion.
 
-Hydration decisions are driven by a host-side ledger at
-`.dcc/<profile>.seed.json` (a sibling of the profile cache directory, outside the
-`/cache` mount so container-side code cannot reach it). Each entry records
-`seed_digest` (digest of what `dcc` wrote) and `build_id` (image identity). The
-ledger is authoritative: `dcc` never infers intent from directory emptiness, so
-an empty seeded directory and an unseeded one are distinguishable, and empty file
-state remains legitimate. Digest identity includes raw file bytes and, inside
-directories, normalized relative paths and symlink targets. Traversal order,
-ownership, timestamps, and permission modes are intentionally normalized or excluded
-to keep equivalent content stable across hosts.
-
-Build ordering:
-
-```
-build image
-  -> resolve state paths (inspect_image_env / probe_user_env / resolve_runtime_state)
-  -> hydrate unseeded or safely-refreshable entries   [seed.rs]
-  -> prepare_state_mounts
-  -> start build-prep container
-  -> onCreateCommand / updateContentCommand / postCreateCommand
-```
-
-Hydrating before build-prep is what fixes the hook blind spot: `onCreateCommand`
-observes install-time content. Hydration needs its own container because
-build-prep runs *with* state mounts attached and therefore cannot see the image
-content.
-
-Re-seed policy (`dcc build`): if the host state digest matches the recorded
-`seed_digest`, skip re-hydration; if it differs, preserve the user's data and
-warn (naming the path, the recorded digest, and `--reseed-state`); `dcc build
---reseed-state` overwrites differing host state. The policy is all-or-nothing
-across every declared state path.
-
-Runtime guard (`dcc start`/`run`/`exec`/`attach`): compare the ledger `build_id`
-against the image `dcc.seed` label and warn on mismatch; hydrate only entries
-with no ledger record (wiped-`.dcc` recovery). Content re-digesting is off the
-hot path. The guard is best-effort — a stale ledger never blocks the runtime.
+The strict `directory-with-exclusions` discriminator rejects older dcc parsers.
+The 0.3 version label requires rebuilding older images/controllers. File binds remain
+legacy compatibility only; parent directories are preferred for atomic saves.
+Public syntax, platform qualification and recovery steps live in
+`docs/index.md#persistent-data-and-image-owned-directories`.
 
 Each accepted state path is planned as a bind mount rooted below
 `<workspace>/.dcc/<profile>/state/` using the normalized container path. Directory
@@ -572,7 +534,7 @@ Every `dcc build` generates a Dockerfile and runs `docker build` over an
 in-memory tar context, so every dcc-built image carries a `dcc.version` label:
 
 ```
-docker build [--no-cache] [--pull] [--label devcontainer.metadata=<json>] [--label dcc.seed=<json>] --tag <image-tag> -
+docker build [--no-cache] [--pull] [--label devcontainer.metadata=<json>] --tag <image-tag> -
 ```
 
 `--pull` is passed when `--no-cache` is given and the Dockerfile's `FROM` is an
@@ -598,12 +560,10 @@ unsafe runtime settings), `dcc build` passes
 JSON array with one entry per contributing feature and is stored inside the
 image. `dcc run` and build preparation read it back via `docker image inspect`
 rather than relying on any local file, making the image self-describing and
-portable across machines. When the merged Feature + project state is non-empty,
-`dcc build` additionally passes `--label dcc.seed=<json>` carrying the resolved
-seed manifest (see State Seeding above).
+portable across machines. `dcc build` no longer emits a `dcc.seed` label; persistence has no digest ledger.
 
 After the image exists, `dcc build` resolves declared state paths against the
-image environment, **hydrates** them from the image (see State Seeding), then
+image environment, initializes absent roots and prepares exclusions, then
 starts a temporary build-preparation container with workspace, cache, and
 declared state mounts attached. That container carries
 `dcc.container_id=<container-id>` and `dcc.container_role=build-prep`. It runs
@@ -892,8 +852,8 @@ A versioned SHA-256 fingerprint covers inherited config bytes, referenced localE
 values (including absent versus empty), and directly named bounded inputs such as
 Dockerfile/ignore files, local Feature metadata/install scripts, lockfiles and CA
 bundles. Current comparison errors warn and permit frozen reuse. A moved image tag
-or explicit resource-limit change also warns. No runtime reload occurs. Build,
-refresh and reseed require stopping the matching runtime first.
+or explicit resource-limit change also warns. No runtime reload occurs. Build and
+refresh require stopping the matching runtime first.
 
 Protocol 0.2 adds `snapshot`, `verify-config`, `relay-status`, and `wait-hooks`.
 `wait-ready` checks initial relay readiness plus hooks, while `wait-hooks` allows
@@ -1103,12 +1063,10 @@ occupies the target gid it keeps the old gid and still updates the uid. A
 `containerUser: root` profile is unaffected: the remap skips root, so no remap
 `RUN` is ever emitted for root profiles.
 
-Because the remap is baked into the image at build time, state hydration
-(`src/seed.rs`) sees the remapped `/etc/passwd`. Hydration still re-owns copied
-state for non-root `containerUser` profiles, because a Dockerfile can create and
-`chown` state paths before the remap step, leaving those files with the user's
-old numeric uid. This keeps declared state writable without reordering T-0022's
-hydration.
+Because the remap is baked into the image at build time, absence-only state initialization
+(`src/persistence.rs`) sees the remapped `/etc/passwd`. It owns only newly copied
+state for `containerUser`, because a Dockerfile may have created defaults before
+the remap. Existing durable trees are never recursively re-owned.
 
 **`.dcc-features/<id>/install.sh`** and **`.dcc-features/<id>/devcontainer-feature.json`**
 for each feature.

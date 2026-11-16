@@ -852,10 +852,12 @@ mod tests {
                         crate::config::StateEntry {
                             path: "/cache/a".to_string(),
                             kind: crate::config::StateKind::Directory,
+                            exclusions: Vec::new(),
                         },
                         crate::config::StateEntry {
                             path: "/cache/b".to_string(),
                             kind: crate::config::StateKind::File,
+                            exclusions: Vec::new(),
                         },
                     ]),
                     ..RawDccConfig::default()
@@ -871,10 +873,12 @@ mod tests {
                         crate::config::StateEntry {
                             path: "/cache/a".to_string(),
                             kind: crate::config::StateKind::Directory,
+                            exclusions: Vec::new(),
                         },
                         crate::config::StateEntry {
                             path: "/cache/c".to_string(),
                             kind: crate::config::StateKind::Directory,
+                            exclusions: Vec::new(),
                         },
                     ]),
                     ..RawDccConfig::default()
@@ -895,14 +899,17 @@ mod tests {
                 crate::config::StateEntry {
                     path: "/cache/a".to_string(),
                     kind: crate::config::StateKind::Directory,
+                    exclusions: Vec::new(),
                 },
                 crate::config::StateEntry {
                     path: "/cache/b".to_string(),
                     kind: crate::config::StateKind::File,
+                    exclusions: Vec::new(),
                 },
                 crate::config::StateEntry {
                     path: "/cache/c".to_string(),
                     kind: crate::config::StateKind::Directory,
+                    exclusions: Vec::new(),
                 },
             ]
         );
@@ -977,6 +984,7 @@ mod tests {
                 } else {
                     crate::config::StateKind::Directory
                 },
+                exclusions: Vec::new(),
             }),
             0..5,
         ));

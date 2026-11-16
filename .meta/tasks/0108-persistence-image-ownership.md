@@ -299,3 +299,14 @@ Plan publication only after compatibility is established: release the supporting
 version before publishing Features that require its metadata. Publication remains
 subject to the repository's separate user-authorization requirements; this plan
 neither publishes anything nor authorizes future release actions by itself.
+
+## Implementation checkpoint (r6, 2026-11-16)
+
+The user requested execution with bounded agent investigation, implementation, review
+and verification. The frozen contract and resumable plan live in
+[execution notes](0108-execution.md); [quality evidence](../quality/0108-persistence.md)
+owns observed checks, fixes and remaining gates. Decision 0010 supersedes automatic
+seed reconciliation. T-0109 owns the verified Linux implementation slice; T-0110 owns
+the unpublished local Codex pilot. This parent remains open: Desktop/macOS, automatic
+updater recovery and coordinated remaining Feature audits/migration are incomplete.
+Do not begin broad Feature rollout or publish experimental metadata.

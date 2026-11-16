@@ -4,8 +4,8 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0109
-- Primary task: T-0097
+- Next task ID: T-0111
+- Primary task: T-0108
 - Scheduling: Running
 - Global pause source or reason: None
 
@@ -138,7 +138,10 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 | T-0107 | Audit Feature durable paths for image-owned versus persistent content. | User request 2026-11-16 / r1 | Done | None | Discover / Low | Read-only audit authorized. | Stop; audit complete. | `.meta/quality/0107-feature-state-audit.md` | Audited all ten Features and eight durable paths; identified Codex packages and Rust toolchains/proxies as image-owned, data/cache persistence and scratch exclusions. Cargo mixed bin and runtime tool layouts need explicit policy; no product changes. |
 
-| T-0108 | Separate simple persistence from image-controlled installations, replacing content-hash seed reconciliation across dcc and Features. | User design and checkpoint-update request 2026-11-16 / r5 | Active | T-0107 | Decide / High (provisional) | User approved staged plan: limited Codex pilot enables dcc; broad Feature rollout waits for dcc completion. | Finalize contract and Codex audit; implement fixtures plus local pilot, complete dcc qualification, then migrate remaining Features. | `.meta/tasks/0108-persistence-image-ownership.md` | Recorded symlink approach, Codex audit gaps and staged cross-repo plan with explicit dcc completion gate, local pilot revision tracking and release ordering. Implementation remains open. |
+| T-0108 | Separate persistent user data from image-controlled software across dcc and Features. | User execution request 2026-11-16 / r6 | Needs verification | T-0109, T-0110 | Initiative / High | macOS/Desktop and remaining package qualification incomplete; broad Feature rollout gated | Qualify Desktop/macOS and remaining Codex updater/migration behavior before broader Feature audits and rollout. | `.meta/tasks/0108-persistence-image-ownership.md`; `.meta/tasks/0108-execution.md`; `.meta/quality/0108-persistence.md` | Linux contract and local pilot implemented and independently reviewed; 10 new Docker +33 existing smoke tests passed. Parent stays open. |
+
+| T-0109 | Implement and verify the Linux dcc persistence contract and deterministic regressions for T-0108. | Parent T-0108 r6 / r1 | Done | None | Initiative / High | None within this bounded Linux slice; parent Desktop/catalog gate unchanged | Record compatible revision after local commit; no publication. | `.meta/quality/0108-persistence.md`; `.meta/decisions/0010-persistence-image-ownership.md` | 0.3.0 contract implemented; 572 unit +124 integration tests, 10 persistence Docker regressions and 33 existing Docker smokes passed; independent review resolved preservation/mount/concurrency findings. |
+| T-0110 | Prepare and qualify only an unpublished local Codex pilot against the new dcc Linux contract. | Parent T-0108 r6 / r1 | Active | T-0109 | Initiative / High | Production catalog rollout gated by parent platform/package qualification | Commit reviewed pilot separately and record exact compatible revisions. | `.meta/tasks/0108-execution.md`; Features `readme/CODEX-PERSISTENCE-PILOT.md` | Local-reference integration passed CLI/daemon/recreation and data preservation; no production src metadata changes. |
 
 ## Operating Contract
 

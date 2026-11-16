@@ -222,6 +222,13 @@ pub(crate) fn resolve_state_entries_container_env(
                     )
                 })?,
                 kind: entry.kind,
+                exclusions: entry.exclusions.iter().map(|exclusion| {
+                    Ok(crate::config::StateExclusion {
+                        path: exclusion.path.clone(),
+                        target: vars::resolve_container_env(&exclusion.target, env)
+                            .with_context(|| format!("invalid exclusion target `{}`", exclusion.target))?,
+                    })
+                }).collect::<anyhow::Result<Vec<_>>>()?,
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -239,23 +246,87 @@ fn validate_state_entries_inner(
     deferred: DeferredContainerEnv,
 ) -> anyhow::Result<Vec<StateEntry>> {
     let mut validated = Vec::new();
-    for entry in state {
+    for mut entry in state {
         if has_deferred_container_env(&entry.path) {
             validate_deferred_state_entry(&entry, deferred)?;
-            insert_state_entry(&mut validated, entry)?;
-            continue;
+        } else {
+            entry.path = normalize_state_path(&entry.path)?;
         }
-
-        let path = normalize_state_path(&entry.path)?;
-        insert_state_entry(
-            &mut validated,
-            StateEntry {
-                path,
-                kind: entry.kind,
-            },
-        )?;
+        anyhow::ensure!(
+            entry.kind == StateKind::Directory || entry.exclusions.is_empty(),
+            "file state cannot have directory exclusions"
+        );
+        for exclusion in &mut entry.exclusions {
+            validate_exclusion_path(&exclusion.path)?;
+            if has_deferred_container_env(&exclusion.target) {
+                validate_deferred_state_entry(
+                    &StateEntry {
+                        path: exclusion.target.clone(),
+                        kind: StateKind::Directory,
+                        exclusions: Vec::new(),
+                    },
+                    deferred,
+                )?;
+            } else {
+                exclusion.target = normalize_state_path(&exclusion.target)
+                    .with_context(|| format!("invalid exclusion target `{}`", exclusion.target))?;
+            }
+        }
+        for (index, exclusion) in entry.exclusions.iter().enumerate() {
+            for other in &entry.exclusions[..index] {
+                anyhow::ensure!(
+                    !is_path_or_child(&exclusion.path, &other.path)
+                        && !is_path_or_child(&other.path, &exclusion.path),
+                    "exclusions `{}` and `{}` overlap within state `{}`",
+                    exclusion.path,
+                    other.path,
+                    entry.path
+                );
+            }
+        }
+        insert_state_entry(&mut validated, entry)?;
+    }
+    let mut targets: Vec<&str> = Vec::new();
+    for entry in &validated {
+        for exclusion in &entry.exclusions {
+            if has_deferred_container_env(&exclusion.target) {
+                continue;
+            }
+            for root in &validated {
+                if !has_deferred_container_env(&root.path) {
+                    anyhow::ensure!(
+                        !is_path_or_child(&exclusion.target, &root.path)
+                            && !is_path_or_child(&root.path, &exclusion.target),
+                        "exclusion target `{}` overlaps persistent root `{}`",
+                        exclusion.target,
+                        root.path
+                    );
+                }
+            }
+            for other in &targets {
+                anyhow::ensure!(
+                    !is_path_or_child(&exclusion.target, other)
+                        && !is_path_or_child(other, &exclusion.target),
+                    "exclusion targets `{}` and `{}` overlap",
+                    exclusion.target,
+                    other
+                );
+            }
+            targets.push(&exclusion.target);
+        }
     }
     Ok(validated)
+}
+
+fn validate_exclusion_path(path: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !path.is_empty()
+            && !path.starts_with('/')
+            && !path.contains(['\0', '\\', '*', '?', '[', ']', '{', '}', '$'])
+            && path.split('/').all(|part| !part.is_empty() && part != "." && part != ".."),
+        "exclusion path `{path}` must be a literal relative child directory without dot segments, variables or glob rules"
+    );
+    Ok(())
 }
 
 fn has_deferred_container_env(path: &str) -> bool {
@@ -298,6 +369,7 @@ fn validate_deferred_state_entry(
 /// only break the container or `dcc` itself; there is no legitimate state target
 /// beneath them.
 const RESERVED_SUBTREE_PATHS: &[&str] = &[
+    "/dcc-initialize",
     "/proc",
     "/sys",
     "/dev",
@@ -416,11 +488,11 @@ fn check_reserved_state_path(normalized: &str) -> anyhow::Result<()> {
 fn insert_state_entry(validated: &mut Vec<StateEntry>, entry: StateEntry) -> anyhow::Result<()> {
     for existing in validated.iter() {
         if existing.path == entry.path {
-            if existing.kind == entry.kind {
+            if existing == &entry {
                 return Ok(());
             }
             anyhow::bail!(
-                "customizations.dcc.state path `{}` is declared as both {} and {}",
+                "customizations.dcc.state path `{}` is declared as both {} and {} or has conflicting exclusions",
                 entry.path,
                 state_kind_name(existing.kind),
                 state_kind_name(entry.kind)
@@ -494,6 +566,117 @@ mod tests {
             .unwrap()
             .cert
             .pem()
+    }
+
+    fn excluded(root: &str, path: &str, target: &str) -> crate::config::StateEntry {
+        crate::config::StateEntry {
+            path: root.into(),
+            kind: crate::config::StateKind::Directory,
+            exclusions: vec![crate::config::StateExclusion {
+                path: path.into(),
+                target: target.into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn initialization_mount_path_is_reserved_for_roots_and_targets() {
+        for path in ["/dcc-initialize", "/dcc-initialize/nested"] {
+            let entry = crate::config::StateEntry {
+                path: path.into(),
+                kind: crate::config::StateKind::Directory,
+                exclusions: vec![],
+            };
+            assert!(validate_state_entries(vec![entry]).is_err());
+            assert!(validate_state_entries(vec![excluded("/data", "packages", path)]).is_err());
+        }
+    }
+
+    #[test]
+    fn exclusions_validate_literals_overlaps_and_external_targets() {
+        for path in [
+            "",
+            "/bin",
+            "..",
+            "../bin",
+            "bin/..",
+            "./bin",
+            "bin//child",
+            "bin/",
+            "*",
+            "b?",
+            "[a]",
+            "${containerEnv:HOME}",
+            "a\\b",
+        ] {
+            assert!(
+                validate_state_entries(vec![excluded("/data", path, "/opt/image/bin")]).is_err(),
+                "accepted {path}"
+            );
+        }
+        for target in [
+            "relative",
+            "/data/bin",
+            "/data",
+            "/proc/x",
+            "/usr/local/share/dcc/x",
+        ] {
+            assert!(
+                validate_state_entries(vec![excluded("/data", "bin", target)]).is_err(),
+                "accepted {target}"
+            );
+        }
+        let mut entry = excluded("/data", "bin", "/opt/image/bin");
+        entry.exclusions.push(crate::config::StateExclusion {
+            path: "bin/child".into(),
+            target: "/opt/image/child".into(),
+        });
+        assert!(validate_state_entries(vec![entry]).is_err());
+        assert!(validate_state_entries(vec![
+            excluded("/data", "bin", "/opt/image/bin"),
+            excluded("/other", "bin", "/opt/image/bin/child")
+        ])
+        .is_err());
+        assert!(validate_state_entries(vec![
+            excluded("/data", "bin", "/opt/image/bin"),
+            crate::config::StateEntry {
+                path: "/opt/image".into(),
+                kind: crate::config::StateKind::Directory,
+                exclusions: vec![]
+            }
+        ])
+        .is_err());
+        assert!(validate_state_entries(vec![
+            excluded("/data", "bin", "/opt/image/bin"),
+            excluded("/data", "scratch", "/opt/image/scratch")
+        ])
+        .is_err());
+        let entry = excluded("/data", "nested/bin", "/opt/image/bin");
+        assert_eq!(
+            validate_state_entries(vec![entry.clone(), entry.clone()]).unwrap(),
+            vec![entry]
+        );
+    }
+
+    #[test]
+    fn exclusion_targets_resolve_container_env_and_recheck_all_roots() {
+        let entry = excluded(
+            "${containerEnv:HOME}/.tool",
+            "bin",
+            "${containerEnv:INSTALL}/bin",
+        );
+        let entries = validate_state_entries_allowing_deferred_container_env(vec![entry]).unwrap();
+        let env = std::collections::HashMap::from([
+            ("HOME".into(), "/home/dev".into()),
+            ("INSTALL".into(), "/opt/tool".into()),
+        ]);
+        assert_eq!(
+            resolve_state_entries_container_env(&entries, &env).unwrap()[0].exclusions[0].target,
+            "/opt/tool/bin"
+        );
+        let mut unsafe_env = env;
+        unsafe_env.insert("INSTALL".into(), "/home/dev/.tool".into());
+        assert!(resolve_state_entries_container_env(&entries, &unsafe_env).is_err());
     }
 
     #[test]
@@ -741,6 +924,7 @@ mod tests {
             vec![crate::config::StateEntry {
                 path: "/workspace/target".to_string(),
                 kind: crate::config::StateKind::Directory,
+                exclusions: Vec::new(),
             }]
         );
     }
@@ -839,6 +1023,7 @@ mod tests {
             let err = validate_state_entries(vec![crate::config::StateEntry {
                 path: reserved.to_string(),
                 kind: crate::config::StateKind::Directory,
+                exclusions: Vec::new(),
             }])
             .unwrap_err();
             assert!(
@@ -853,6 +1038,7 @@ mod tests {
         let err = validate_state_entries(vec![crate::config::StateEntry {
             path: "/workspace/.dcc/state".to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }])
         .unwrap_err();
         assert!(err.to_string().contains("/workspace/.dcc"));
@@ -864,6 +1050,7 @@ mod tests {
         validate_state_entries(vec![crate::config::StateEntry {
             path: path.to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }])
         .expect_err("expected rejection")
     }
@@ -872,6 +1059,7 @@ mod tests {
         validate_state_entries(vec![crate::config::StateEntry {
             path: path.to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }])
         .expect("expected acceptance")
     }
@@ -1015,6 +1203,7 @@ mod tests {
         let deferred = vec![crate::config::StateEntry {
             path: "${containerEnv:HOME}".to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }];
         // First: deferred path passes config-load validation.
         let loaded = validate_state_entries_allowing_deferred_container_env(deferred.clone())
@@ -1034,6 +1223,7 @@ mod tests {
         let deferred = vec![crate::config::StateEntry {
             path: "${containerEnv:HOME}/.cargo".to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }];
         let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
         let env = std::collections::HashMap::from([("HOME".to_string(), "/home/dev".to_string())]);
@@ -1046,6 +1236,7 @@ mod tests {
         let deferred = vec![crate::config::StateEntry {
             path: "${containerEnv:MISSING}".to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }];
         let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
         let err = resolve_state_entries_container_env(&loaded, &std::collections::HashMap::new())
@@ -1065,6 +1256,7 @@ mod tests {
         let deferred = vec![crate::config::StateEntry {
             path: "${containerEnv:ROOT}/cache".to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }];
         let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
         let env = std::collections::HashMap::from([("ROOT".to_string(), String::new())]);
@@ -1080,6 +1272,7 @@ mod tests {
         let deferred = vec![crate::config::StateEntry {
             path: "${containerEnv:MISSING:/home/dev}/.cache".to_string(),
             kind: crate::config::StateKind::Directory,
+            exclusions: Vec::new(),
         }];
         let loaded = validate_state_entries_allowing_deferred_container_env(deferred).unwrap();
         let resolved =
@@ -1095,6 +1288,7 @@ mod tests {
         let err = validate_state_entries(vec![crate::config::StateEntry {
             path: "/etc/passwd".to_string(),
             kind: crate::config::StateKind::File,
+            exclusions: Vec::new(),
         }])
         .unwrap_err();
         assert!(err.to_string().contains("/etc"), "got: {err:#}");
@@ -1106,10 +1300,12 @@ mod tests {
             crate::config::StateEntry {
                 path: "/home/dev/.tool".to_string(),
                 kind: crate::config::StateKind::Directory,
+                exclusions: Vec::new(),
             },
             crate::config::StateEntry {
                 path: "/home/dev//.tool/".to_string(),
                 kind: crate::config::StateKind::File,
+                exclusions: Vec::new(),
             },
         ])
         .unwrap_err();
@@ -1125,10 +1321,12 @@ mod tests {
             crate::config::StateEntry {
                 path: "/home/dev/.cache".to_string(),
                 kind: crate::config::StateKind::Directory,
+                exclusions: Vec::new(),
             },
             crate::config::StateEntry {
                 path: "/home/dev/.cache/tool".to_string(),
                 kind: crate::config::StateKind::Directory,
+                exclusions: Vec::new(),
             },
         ])
         .unwrap_err();
@@ -1160,6 +1358,7 @@ mod tests {
             vec![crate::config::StateEntry {
                 path: "/home/dev/.npmrc".to_string(),
                 kind: crate::config::StateKind::File,
+                exclusions: Vec::new(),
             }]
         );
     }

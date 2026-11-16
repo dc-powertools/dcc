@@ -691,13 +691,6 @@ fn modified_state_is_not_clobbered_on_rebuild() {
 
     let rebuild = fx.dcc(&["build"]);
     assert_success(&rebuild);
-    // A warning must name the path and the digest/build-id divergence.
-    let stderr = String::from_utf8_lossy(&rebuild.stderr);
-    assert!(
-        stderr.contains("/seeded-dir") && stderr.contains("reseed-state"),
-        "expected no-clobber warning naming /seeded-dir and --reseed-state, got stderr: {stderr}"
-    );
-
     // The user's modification survives the rebuild.
     assert_success(&fx.dcc(&["run", "read"]));
     assert_eq!(fx.read_file("seeded.txt"), "user-modified");
@@ -705,7 +698,7 @@ fn modified_state_is_not_clobbered_on_rebuild() {
 
 #[test]
 #[ignore]
-fn reseed_state_flag_clobbers_modified_state() {
+fn obsolete_reseed_state_flag_preserves_modified_state() {
     let fx = DockerFixture::new();
     write_seeding_dockerfile(&fx);
     fx.write_config(&seeding_dir_config());
@@ -718,9 +711,9 @@ fn reseed_state_flag_clobbers_modified_state() {
         "printf 'user-modified' > /seeded-dir/value",
     ]));
 
-    assert_success(&fx.dcc(&["build", "--reseed-state"]));
+    assert_failure(&fx.dcc(&["build", "--reseed-state"]));
     assert_success(&fx.dcc(&["run", "read"]));
-    assert_eq!(fx.read_file("seeded.txt"), "from-image");
+    assert_eq!(fx.read_file("seeded.txt"), "user-modified");
 }
 
 #[test]

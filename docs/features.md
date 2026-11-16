@@ -257,6 +257,17 @@ Feature state supports the same container-side path variables as project state:
 validation, while `${containerEnv:VAR}` remains deferred until the built image
 environment is available. Host-local variables are rejected.
 
+Exclusion entries use `type: "directory-with-exclusions"` and
+`exclude: [{"path": "packages", "target": "/opt/example/packages"}]`.
+The installer prepares writable targets and exact absolute symlinks in its own
+installation RUN. Scratch targets start empty. Targets stay outside every persistent
+root. dcc verifies/repairs links before user hooks and preserves displaced durable
+directories in recovery backups. See [persistence and migration](index.md#persistent-data-and-image-owned-directories).
+
+This metadata requires dcc 0.3 or later: older parsers reject the new type. Release
+supporting dcc before publishing Features that use it. The local Codex pilot remains
+unpublished; broad catalog migration awaits Linux and Docker Desktop/macOS qualification.
+
 ## Feature Commands
 
 Features may expose named shell commands through

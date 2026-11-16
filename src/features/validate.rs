@@ -273,3 +273,33 @@ fn schema_errors(
         });
     }
 }
+
+#[cfg(test)]
+mod persistence_schema_tests {
+    #[test]
+    fn exclusion_schema_requires_explicit_type_and_exact_fields() {
+        let validator = jsonschema::validator_for(&super::schema(false).unwrap()).unwrap();
+        let feature = |entry| {
+            serde_json::json!({
+                "id":"fixture", "version":"1.0.0", "name":"Fixture",
+                "customizations":{"dcc":{"state":[entry]}}
+            })
+        };
+        let valid = serde_json::json!({
+            "path":"${containerEnv:HOME}/.tool", "type":"directory-with-exclusions",
+            "exclude":[{"path":"packages", "target":"/opt/dcc-local/tool/packages"}]
+        });
+        assert!(validator.is_valid(&feature(valid.clone())));
+        for invalid in [
+            serde_json::json!({"path":"/data", "exclude":[{"path":"bin", "target":"/opt/bin"}]}),
+            serde_json::json!({"path":"/data", "type":"directory", "exclude":[{"path":"bin", "target":"/opt/bin"}]}),
+            serde_json::json!({"path":"/data", "type":"directory-with-exclusions", "exclude":[]}),
+            serde_json::json!({"path":"/data", "type":"directory-with-exclusions", "exclude":[{"path":"bin", "target":"/opt/bin", "unknown":true}]}),
+        ] {
+            assert!(
+                !validator.is_valid(&feature(invalid.clone())),
+                "accepted {invalid}"
+            );
+        }
+    }
+}

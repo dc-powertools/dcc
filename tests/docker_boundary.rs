@@ -910,7 +910,10 @@ fn missing_container_env_fails_build_preparation_lifecycle_hook() {
         "postCreateCommand":"echo ${containerEnv:MISSING}"
     }"#;
     let fx = FakeDockerFixture::new(config);
-    let output = fx.output(&["build", "--refresh-only"], None);
+    let output = fx.output(
+        &["build", "--refresh-only"],
+        Some(&compatible_patch_version()),
+    );
     assert_failure(&output);
     assert_stderr_contains(&output, "postCreateCommand from project");
     assert_stderr_contains(&output, "variable `MISSING` is missing");
@@ -1017,15 +1020,11 @@ fn reuse_warns_and_defers_config_edits_without_recreating_or_rewriting_assets() 
 }
 
 #[test]
-fn running_runtime_blocks_build_refresh_and_reseed_before_mutation() {
+fn running_runtime_blocks_build_refresh_before_mutation() {
     let fx = FakeDockerFixture::new(root_image_config());
     let version = compatible_patch_version();
     assert_success(&fx.output(&["start"], Some(&version)));
-    for args in [
-        vec!["build"],
-        vec!["build", "--refresh-only"],
-        vec!["build", "--reseed-state"],
-    ] {
+    for args in [vec!["build"], vec!["build", "--refresh-only"]] {
         let output = fx.output(&args, Some(&version));
         assert_failure(&output);
         assert_stderr_contains(&output, "stop it before build");
@@ -1216,4 +1215,24 @@ fn immutable_assets_prune_only_released_unreferenced_instances() {
     assert_success(&fx.output(&["start"], Some(&version)));
     assert!(!original.exists());
     assert!(pending.exists());
+}
+
+#[test]
+fn refresh_refuses_legacy_controller_before_state_changes() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let output = fx.output(&["build", "--refresh-only"], Some("0.2.1"));
+    assert_failure(&output);
+    assert_stderr_contains(&output, "incompatible");
+    assert!(!fx.calls().iter().any(|call| call
+        .first()
+        .is_some_and(|arg| arg == "run" || arg == "create")));
+}
+
+#[test]
+fn removed_reseed_refuses_before_docker_or_state_changes() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let output = fx.output(&["build", "--reseed-state"], None);
+    assert_failure(&output);
+    assert_stderr_contains(&output, "existing state is always preserved");
+    assert!(fx.calls().is_empty());
 }

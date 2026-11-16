@@ -310,45 +310,96 @@ Whole subtrees are blocked for paths such as `/proc`, `/sys`, `/dev`, `/tmp`,
 `/media`; specific subdirectories such as `/home/dev/.cargo` and
 `/workspace/target` remain valid.
 
-These guards are textual. A state path that is a symlink in the image resolving
-outside itself is not detected here.
+State initialization also rejects symlinked roots and ancestors in the image and
+managed host state paths. Use a real directory root rather than a symlink alias.
 
-## Seeding State From The Image
+## Persistent Data And Image-Owned Directories
 
-Bind mounts never copy image content into an empty host source. Without seeding,
-data the image build places at a declared state path would be silently masked by
-an empty directory or file.
+At build or first runtime creation, `dcc` copies image defaults only when the entire
+host state root is absent. An existing root, including an empty directory or empty
+file, is preserved. Later image builds do not merge, refresh or reconcile its contents.
+There is no durable-tree hashing or content scan. Initialization preserves image modes
+and symlinks and sets ownership to `containerUser` on the newly copied tree only.
+To add defaults to an existing root, use a lifecycle hook that explicitly creates only
+missing settings. Keep related database files and SQLite sidecars in one directory.
 
-`dcc build` seeds declared state from the image. It runs one short-lived
-container on the finished image with state mounts disabled and the host state
-root mounted at `/dcc-seed`, then copies each declared path's image content into
-the host state directory with `tar` inside the container. Modes and symlinks are
-preserved. For non-root `containerUser` profiles, hydrated state is re-owned to
-that user so bind-mounted state remains writable after `updateRemoteUserUID`
-remaps the user's uid/gid.
+Installed software must remain in the image/container layer. When it shares a data
+root, use literal child-directory exclusions (requires dcc 0.3):
 
-Seeding runs before build-preparation hooks (`onCreateCommand`,
-`updateContentCommand`, `postCreateCommand`) and is skipped when a profile
-declares no state.
+```jsonc
+"customizations": {
+  "dcc": {
+    "state": [{
+      "path": "${containerEnv:HOME}/.example",
+      "type": "directory-with-exclusions",
+      "exclude": [
+        { "path": "packages", "target": "/opt/example/packages" },
+        { "path": "tmp", "target": "/opt/example/tmp" }
+      ]
+    }]
+  }
+}
+```
 
-`dcc build` records seeded state in `.dcc/<profile>.seed.json`, with per-entry
-`seed_digest` and `build_id`. Digests include file bytes and, within directories,
-normalized relative paths and symlink targets. Directory traversal order, ownership,
-timestamps, and permission modes are intentionally excluded; they do not make identical
-seed content appear changed across hosts.
+The image installer must prepare each target as a writable directory owned by the
+container user, relocate payload there in the installation layer, and leave an exact
+absolute symlink at the original image path (or leave that path absent). For scratch,
+prepare an empty target. dcc verifies this contract; it never relocates installed
+payload or copies it into persistent storage. Moving payload from an earlier image
+layer can duplicate image bytes; prefer doing this in the original installation RUN.
+Qualify the application against symlink paths, including its updater and sandbox.
 
-Re-seed behavior:
+An exclusion is a nonempty literal relative child-directory path: no globs,
+substitutions, absolute paths, empty components, `.` or `..`. Nested literal paths
+such as `cache/downloads` are allowed; their ancestors must be real directories.
+Targets support the same container-side substitutions as roots. They must be real
+directories outside every persistent root and reserved dcc/system paths, with no
+symlinked ancestors. Targets cannot overlap workspace/cache or explicit mount destinations (including
+runArgs mounts); explicit mounts cannot cover excluded original paths. Mount
+destination symlink aliases in the image or attached durable roots are refused.
+Targets and exclusions cannot overlap one another. Duplicate
+root declarations must agree exactly on type and exclusions.
 
-- If the host state digest matches the recorded `seed_digest`, `dcc` skips
-  re-hydration.
-- If the host state digest differs, `dcc` preserves your data and warns.
-- `dcc build --reseed-state` overwrites differing host state with the image seed.
+After attaching persistence in a preparation container using the selected image,
+dcc creates/verifies these links as the configured user, before build-preparation or
+runtime hooks. This runs even when user lifecycle hooks are skipped. A host process
+lock serializes state initialization and migration among dcc processes. The running
+container's frozen configuration remains in force for later attachments.
 
-Runtime commands compare the ledger's `build_id` against the image's `dcc.seed`
-label and warn on mismatch. They hydrate only entries with no ledger record, so a
-wiped `.dcc` can recover from the image without a rebuild.
+Excluded contents use the image plus container writable layer. Runtime installs,
+updates and scratch writes are shared within that container and disappear on
+replacement. Both populated payload and empty scratch use this same mechanism.
+The persistent backend remains profile-local host bind mounts; no Docker storage
+backend change or privileged in-container mount is required.
 
-`dcc build --dry-run` reports planned seeding without invoking Docker.
+### Migrating Existing Profiles
+
+Stop the profile runtime, back up `.dcc/<profile>/state`, update dcc, then rebuild
+before starting. Version 0.3 rejects 0.2 images through the existing major/minor gate;
+old dcc rejects the new exclusion type. Plain directory/file declarations keep their
+mount paths and existing bytes. Old `.dcc/<profile>.seed.json` files are left intact
+and ignored, including obsolete or malformed records. The removed `--reseed-state`
+option returns an error before Docker or state changes. To intentionally reset a
+root, stop the container, back it up, and explicitly move the host root aside first.
+
+When an exclusion path is an existing directory or an incorrect/broken link, dcc
+renames it to `<state-root>/.dcc-exclusion-backup.XXXXXX/original` and records its
+original absolute container path in `original-path`. It never deletes the displaced
+data, follows a stale link, or merges old packages into the current image. A matching
+link needs no migration. Review recovery directories from the host after stopping
+the runtime; recover user data selectively to a durable location. Keep installed
+software outside persistence. Backups have no automatic retention/deletion policy.
+Do not manually mutate exclusion paths during migration. Permission errors fail with
+the old data intact; fix the root ownership deliberately, without recursive changes
+to credentials/history/caches unless you have reviewed those changes.
+
+Legacy `type: "file"` is retained for compatibility and cannot have exclusions.
+A file bind mount can reject atomic replacement with `EBUSY`; prefer the tool's
+supported configuration-directory override and persist its parent directory.
+
+The new layout is tested on Linux. Docker Desktop/macOS qualification is incomplete,
+including file sharing, ownership, atomic saves and SQLite behavior; broad Feature
+migration remains gated on that verification.
 
 ## Environment Variables
 
@@ -715,6 +766,6 @@ Malformed or missing current config warns and permits reuse. Explicit command
 arguments can still use the caller's current `${localEnv:...}` values.
 
 To apply changes, stop the container, rebuild when needed, and start it again.
-`build`, `build --refresh-only`, and `build --reseed-state` refuse while the profile
+`build` and `build --refresh-only` refuse while the profile
 runtime is running. Upgrading from 0.1.x to 0.2.x requires an explicit stop, rebuild,
 and recreation because the container supervisor protocol changed.

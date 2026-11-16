@@ -11,6 +11,13 @@ SHA-256: `671fcd80cbb3510793412746b35505d12b6a4b8e68d38a01960e440aa5af32eb`.
 `dcc-feature-extensions.json` owns the explicit dcc contract as replacements at
 JSON Pointers in the upstream schema. It permits string mounts, `remoteEnv`, and
 legacy `scripts`, and validates `customizations.dcc.commands` and `.state`.
+Directory exclusions require the fail-closed `type: "directory-with-exclusions"`
+discriminator and a nonempty `exclude` array of `{ "path": "relative/child",
+"target": "/absolute/image/location" }` objects. Older dcc parsers reject this new
+type rather than silently persisting excluded software. The parser additionally
+checks literal relative children, overlap and that targets lie outside every
+persistent root. `directory` and legacy `file` entries cannot contain `exclude`.
+
 Other tools' customizations remain unrestricted, as upstream specifies. Object
 mounts retain the upstream fields; `readonly` is not an object property.
 

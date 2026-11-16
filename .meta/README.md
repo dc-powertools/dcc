@@ -6,8 +6,8 @@ documentation index, not a task list or history log.
 ## Task Cursor
 
 - Task catalog: `.meta/tasks/README.md`
-- Primary task: T-0097
-- Primary details: `.meta/tasks/0097-container-relay-implementation.md`
+- Primary task: T-0108
+- Primary details: `.meta/tasks/0108-persistence-image-ownership.md`
 
 The task catalog owns outcomes, status, dependencies, task-specific approvals or
 blockers, next actions, detail links, and results. Do not copy them here.
@@ -29,9 +29,10 @@ blockers, next actions, detail links, and results. Do not copy them here.
 - Baking a seed store into the image (extra build stage staging state tarballs) — rejected
   for image overhead; the image already holds the data at its natural path. See
   `.meta/decisions/0001-state-seeding-from-image.md`.
-- Using `mv` instead of `cp` to relocate state data during build to control image size —
-  ineffective, because additive layers never reclaim bytes from the layer that created the
-  path, and it breaks standalone `docker run` use of the image. Same decision record.
+- Moving payload from an earlier image layer does not reclaim those earlier bytes.
+  T-0108 permits same-installation-layer relocation with preserved original-path
+  symlinks; decision 0010 supersedes the old blanket relocation warning in 0001.
+
 
 ## Recently Completed
 
@@ -49,7 +50,8 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 - Reusable framework: `.meta/meta/README.md`
 - Task catalog: `.meta/tasks/README.md`
-- State seeding decision: `.meta/decisions/0001-state-seeding-from-image.md`
+- Persistence/image ownership contract: `.meta/decisions/0010-persistence-image-ownership.md`
+- Historical state seeding decision: `.meta/decisions/0001-state-seeding-from-image.md`
 - UID remap decision: `.meta/decisions/0002-update-remote-user-uid-in-build-stage.md`
 - Remove image fast path decision: `.meta/decisions/0003-remove-image-fast-path.md`
 - Supervisor delivery model decision: `.meta/decisions/0004-embed-supervisor-in-image.md`

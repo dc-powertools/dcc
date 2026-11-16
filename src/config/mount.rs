@@ -104,6 +104,127 @@ fn validate_mount_string(mount: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Excluded targets must remain in the container's image/writable layer. Reject
+/// any declared mount that would cover a target or any part of its contents.
+/// Return all actual destinations for image-side symlink-ancestor preflight.
+/// `run_args` uses the same supported flag grammar as the runtime sanitizer.
+pub(crate) fn validate_exclusion_mounts(
+    state: &[super::StateEntry],
+    mounts: &[String],
+    run_args: &[String],
+) -> anyhow::Result<Vec<String>> {
+    if state.iter().all(|entry| entry.exclusions.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let mut destinations = [
+        "/workspace",
+        "/cache",
+        "/run/dcc",
+        "/usr/local/share/dcc/rt",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect::<Vec<_>>();
+    let managed_count = destinations.len();
+    for mount in mounts {
+        destinations.push(mount_destination(mount)?);
+    }
+    let mut args = run_args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--privileged" {
+            continue;
+        }
+        let (flag, value) = if let Some((flag, value)) = arg.split_once('=') {
+            (flag, value)
+        } else {
+            (
+                arg.as_str(),
+                args.next()
+                    .ok_or_else(|| anyhow::anyhow!("runArgs flag `{arg}` requires a value"))?
+                    .as_str(),
+            )
+        };
+        match flag {
+            "--mount" => destinations.push(mount_destination(value)?),
+            "-v" | "--volume" => {
+                let parts: Vec<_> = value.split(':').collect();
+                let target = match parts.as_slice() {
+                    [target] => *target,
+                    [_, target] | [_, target, _] => *target,
+                    _ => anyhow::bail!("cannot determine runArgs volume destination"),
+                };
+                destinations.push(normalize_mount_destination(target)?);
+            }
+            "--tmpfs" => destinations.push(normalize_mount_destination(
+                value.split(':').next().unwrap_or_default(),
+            )?),
+            _ => (),
+        }
+    }
+    for entry in state {
+        for exclusion in &entry.exclusions {
+            for destination in &destinations {
+                anyhow::ensure!(
+                    !paths_overlap(&exclusion.target, destination),
+                    "excluded image target `{}` overlaps container mount destination `{destination}`; relocate the target outside mounted storage", exclusion.target
+                );
+            }
+            let original = format!("{}/{}", entry.path, exclusion.path);
+            // The managed workspace parent is intentionally allowed: the state
+            // root is itself a nested bind. Explicit mounts cannot replace the
+            // exclusion link or a directory beneath it.
+            for destination in destinations.iter().skip(managed_count) {
+                anyhow::ensure!(
+                    !paths_overlap(&original, destination),
+                    "excluded directory `{original}` overlaps explicit container mount destination `{destination}`"
+                );
+            }
+        }
+    }
+    Ok(destinations)
+}
+
+fn mount_destination(mount: &str) -> anyhow::Result<String> {
+    validate_mount_string(mount).map_err(anyhow::Error::msg)?;
+    let target = mount
+        .split(',')
+        .filter_map(|part| part.trim().split_once('='))
+        .find_map(|(key, value)| matches!(key, "dst" | "destination" | "target").then_some(value))
+        .ok_or_else(|| anyhow::anyhow!("mount has no destination"))?;
+    normalize_mount_destination(target)
+}
+
+fn normalize_mount_destination(path: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        path.starts_with('/')
+            && !path.contains(['\0', '\n', '\r'])
+            && super::vars::unresolved_variables(path).is_empty(),
+        "mount destination `{path}` must resolve to an absolute container path"
+    );
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => (),
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    Ok(format!("/{}", parts.join("/")))
+}
+
+fn paths_overlap(a: &str, b: &str) -> bool {
+    let child = |path: &str, parent: &str| {
+        parent == "/"
+            || path == parent
+            || path
+                .strip_prefix(parent)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    child(a, b) || child(b, a)
+}
+
 pub(super) fn deserialize_optional_mounts<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<String>>, D::Error>
@@ -118,6 +239,113 @@ where
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn excluded(target: &str) -> Vec<super::super::StateEntry> {
+        vec![serde_json::from_value(json!({
+            "path":"/home/dev/.tool", "type":"directory-with-exclusions",
+            "exclude":[{"path":"packages", "target":target}]
+        }))
+        .unwrap()]
+    }
+
+    #[test]
+    fn excludes_targets_hidden_by_managed_or_explicit_mounts() {
+        for target in ["/workspace/packages", "/cache/packages"] {
+            assert!(validate_exclusion_mounts(&excluded(target), &[], &[]).is_err());
+        }
+        for mount in [
+            "type=volume,target=/opt/payload",
+            "type=volume,dst=/opt",
+            "type=bind,src=/host,destination=/opt/payload/cache",
+            "type=tmpfs,target=/opt/./payload/",
+            "type=volume,target=/elsewhere/../opt//payload",
+            "type=volume,target=/",
+        ] {
+            assert!(
+                validate_exclusion_mounts(&excluded("/opt/payload"), &[mount.into()], &[]).is_err(),
+                "accepted {mount}"
+            );
+        }
+        assert!(validate_exclusion_mounts(
+            &excluded("/opt/payload"),
+            &["type=volume,target=/opt/payload-other".into()],
+            &[]
+        )
+        .is_ok());
+        assert!(validate_exclusion_mounts(
+            &excluded("/opt/payload"),
+            &["type=volume,target=${containerEnv:MISSING}".into()],
+            &[]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn excludes_targets_hidden_by_runtime_mount_volume_and_tmpfs_args() {
+        for args in [
+            vec!["--mount", "type=volume,target=/opt"],
+            vec!["--mount=type=bind,src=/host,target=/opt/payload"],
+            vec!["-v", "/host:/opt:ro"],
+            vec!["--volume", "named:/opt/payload"],
+            vec!["--volume=/opt/payload"],
+            vec!["--tmpfs", "/opt/payload:mode=700"],
+            vec!["--tmpfs=/opt/payload/cache"],
+            vec!["--privileged", "--volume=named:/opt"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            assert!(
+                validate_exclusion_mounts(&excluded("/opt/payload"), &[], &args).is_err(),
+                "accepted {args:?}"
+            );
+        }
+        // Non-mount values cannot masquerade as flags during the scan.
+        assert!(validate_exclusion_mounts(
+            &excluded("/opt/payload"),
+            &[],
+            &[
+                "--env".into(),
+                "EXAMPLE=--volume=/opt".into(),
+                "--volume=named:/unrelated".into()
+            ]
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn mount_preflight_returns_managed_and_explicit_destinations() {
+        let destinations = validate_exclusion_mounts(
+            &excluded("/opt/payload"),
+            &["type=volume,target=/other".into()],
+            &["--tmpfs=/scratch".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            destinations,
+            [
+                "/workspace",
+                "/cache",
+                "/run/dcc",
+                "/usr/local/share/dcc/rt",
+                "/other",
+                "/scratch"
+            ]
+        );
+        assert!(validate_exclusion_mounts(&[], &[], &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn explicit_mount_cannot_replace_original_exclusion_link() {
+        for destination in [
+            "/home/dev/.tool/packages",
+            "/home/dev/.tool/packages/cache",
+            "/home/dev/.tool",
+        ] {
+            let mount = format!("type=volume,target={destination}");
+            assert!(validate_exclusion_mounts(&excluded("/opt/payload"), &[mount], &[]).is_err());
+        }
+        let state = vec![serde_json::from_value(json!({"path":"/workspace/user-state", "type":"directory-with-exclusions", "exclude":[{"path":"packages", "target":"/opt/payload"}]})).unwrap()];
+        assert!(validate_exclusion_mounts(&state, &[], &[]).is_ok());
+    }
 
     #[test]
     fn objects_and_strings_preserve_runtime_semantics() {

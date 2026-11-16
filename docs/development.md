@@ -60,6 +60,16 @@ cargo build
 Docker-dependent smoke tests are ignored locally and run explicitly in CI on
 GitHub-hosted Ubuntu runners with Docker available.
 
+The deterministic persistence suite uses small local Features and no upstream tool
+downloads. It covers data recovery, image replacement, concurrent attachment and
+large state without content scans:
+
+```sh
+cargo test --test persistence -- --ignored --nocapture --test-threads=1
+```
+
+Docker Desktop/macOS qualification is still required before broad Feature migration.
+
 The private-registry package-to-image smoke has its own serial integration target:
 
 ```sh

@@ -245,7 +245,34 @@ pub(crate) async fn create(
                         attempt.take().context("winner disappeared")?,
                     ));
                 }
-                anyhow::bail!("container name is already owned by another or not-yet-running instance; retry after it starts");
+                if container.config.labels.get(docker::CONTAINER_ID_LABEL)
+                    == Some(&snapshot.identity)
+                    && container.state.status == "created"
+                    && container
+                        .config
+                        .labels
+                        .get("dcc.launch_token")
+                        .is_some_and(|token| !token.is_empty())
+                {
+                    // A concurrent dcc owns this exact attempt. Observe it only;
+                    // never start, remove or replay its potentially running hooks.
+                    let id = container.id.clone();
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                    while std::time::Instant::now() < deadline {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        let winner = docker::inspect_container(&id).await?.context(
+                            "concurrent runtime disappeared before startup; retry the command",
+                        )?;
+                        if winner.state.status == "running" {
+                            return Ok(Created::Winner(winner));
+                        }
+                        anyhow::ensure!(winner.state.status == "created", "concurrent runtime failed before attachment; inspect it before retrying");
+                    }
+                    anyhow::bail!("concurrent runtime did not start within 30 seconds; inspect it before retrying");
+                }
+                anyhow::bail!(
+                    "container name is already owned by another instance; refusing to alter it"
+                );
             }
         }
         let failure = if output.status.success() {

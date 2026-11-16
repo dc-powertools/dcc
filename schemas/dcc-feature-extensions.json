@@ -41,6 +41,28 @@
                       "path": { "type": "string" },
                       "type": { "enum": ["directory", "file"] }
                     }
+                  },
+                  {
+                    "type": "object",
+                    "required": ["path", "type", "exclude"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "path": { "type": "string" },
+                      "type": { "const": "directory-with-exclusions" },
+                      "exclude": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "required": ["path", "target"],
+                          "additionalProperties": false,
+                          "properties": {
+                            "path": { "type": "string", "minLength": 1 },
+                            "target": { "type": "string", "minLength": 1 }
+                          }
+                        }
+                      }
+                    }
                   }
                 ]
               }
