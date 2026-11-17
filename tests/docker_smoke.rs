@@ -1257,3 +1257,147 @@ fn durable_reuse_and_keep_promotion_work_with_handshake() {
     // Clean up.
     assert_success(&fx.dcc(&["stop", "--now"]));
 }
+
+// Hold bootstrap until the test has observed every waiter. A fixed sleep can
+// accidentally exercise only the already-complete status fast path.
+fn wait_for_bootstrap_waiters(container: &str, expected: usize) {
+    let script = format!(
+        r#"uid=$(id -u); n=0
+for f in /run/dcc/waiters/*; do
+    [ -p "$f" ] || continue
+    [ "$(stat -c %u "$f")" = "$uid" ] || exit 2
+    [ "$(stat -c %a "$f")" = 644 ] || exit 2
+    n=$((n + 1))
+done
+[ "$n" -ge {expected} ] && [ ! -f /run/dcc/bootstrap-status ]"#
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let output = docker(&["exec", container, "sh", "-c", &script]);
+        if output.status.success() {
+            return;
+        }
+        assert_ne!(
+            output.status.code(),
+            Some(2),
+            "waiter ownership or permissions differ from supervisor"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "waiters did not register before bootstrap completion"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+#[ignore = "requires Docker daemon and local image builds"]
+fn readiness_waiters_match_supervisor_user_during_bootstrap() {
+    for user in ["dev", "root"] {
+        let fx = DockerFixture::new();
+        fx.write_config(&format!(r#"{{
+            "image": "{IMAGE}", "containerUser": "{user}", "updateRemoteUserUID": false,
+            "postStartCommand": "touch /workspace/bootstrap-entered; while [ ! -f /workspace/release-bootstrap ]; do sleep 0.05; done; echo bootstrap-output; test ! -f /workspace/fail-bootstrap",
+            "customizations": {{"dcc": {{"commands": {{"probe": "echo command-output; sleep 0.2"}}}}}}
+        }}"#));
+        assert_success(&fx.dcc(&["build"]));
+        let container = fx.container_id();
+        // The second cold run follows an explicit stop; the durable case also
+        // exercises wait-hooks on attachment while startup is still in progress.
+        for args in [vec!["run", "probe"], vec!["run", "probe"], vec!["start"]] {
+            let mut initial = ChildGuard(
+                fx.fx
+                    .dcc(&args)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap(),
+            );
+            initial.wait_for_file(&fx.fx.dir.path().join("bootstrap-entered"), "startup hook");
+            wait_for_bootstrap_waiters(&container, 1);
+            let mut reuse = if args[0] == "start" {
+                let child = ChildGuard(
+                    fx.fx
+                        .dcc(&["run", "probe"])
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .unwrap(),
+                );
+                wait_for_bootstrap_waiters(&container, 2);
+                Some(child)
+            } else {
+                None
+            };
+            fx.write_file("release-bootstrap", "");
+            initial.wait_for_success("startup with a registered waiter");
+            if let Some(child) = &mut reuse {
+                child.wait_for_success("wait-hooks during startup");
+                // Snapshot access still uses root and its host-owned mode stays
+                // private (the host UID may also match the configured user).
+                let mode = docker(&[
+                    "exec",
+                    "-u",
+                    "0",
+                    &container,
+                    "stat",
+                    "-c",
+                    "%a",
+                    "/usr/local/share/dcc/rt/snapshot.json",
+                ]);
+                assert_success(&mode);
+                assert_eq!(String::from_utf8_lossy(&mode.stdout).trim(), "600");
+                assert_success(&docker(&[
+                    "exec",
+                    "-u",
+                    "0",
+                    &container,
+                    "cat",
+                    "/usr/local/share/dcc/rt/snapshot.json",
+                ]));
+            }
+            assert_success(&fx.dcc(&["stop"]));
+            std::fs::remove_file(fx.fx.dir.path().join("bootstrap-entered")).unwrap();
+            std::fs::remove_file(fx.fx.dir.path().join("release-bootstrap")).unwrap();
+        }
+        // Failed bootstrap must notify its waiter too and preserve the hook's
+        // diagnostic output rather than hanging or reporting a killed exec.
+        fx.write_file("fail-bootstrap", "");
+        let mut failing = ChildGuard(
+            fx.fx
+                .dcc(&["start"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        failing.wait_for_file(
+            &fx.fx.dir.path().join("bootstrap-entered"),
+            "failing startup hook",
+        );
+        wait_for_bootstrap_waiters(&container, 1);
+        fx.write_file("release-bootstrap", "");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while failing.0.try_wait().unwrap().is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "failed bootstrap did not notify waiter"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let mut stderr = String::new();
+        failing
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut stderr)
+            .unwrap();
+        assert!(!failing.0.wait().unwrap().success());
+        assert!(
+            stderr.contains("startup hook") && stderr.contains("bootstrap-output"),
+            "{stderr}"
+        );
+        assert_success(&fx.dcc(&["stop"]));
+    }
+}

@@ -38,6 +38,7 @@ blockers, next actions, detail links, and results. Do not copy them here.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-11-17 | Fixed readiness FIFO ownership by running wait controls as the supervisor user; regular checks and all 34 Docker smoke tests passed (T-0112). | `.meta/quality/0112-readiness-fifo-ownership.md` |
 | 2026-09-28 | Bumped the package version to 0.2.1 after the TLS stub fix; required checks passed (T-0099). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Updated the TLS smoke-test Docker stub for the build preflight; missing/wrong CA regression and standard checks passed (T-0098). | `.meta/tasks/README.md#tasks` |
 | 2026-09-28 | Designed the container-owned socat relay, frozen configuration reuse, failure handling, and migration (T-0096); implementation remains separate. | `.meta/tasks/0096-container-relay-design.md`; `.meta/quality/0096-container-relay-design.md` |

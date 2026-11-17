@@ -1236,3 +1236,29 @@ fn removed_reseed_refuses_before_docker_or_state_changes() {
     assert_stderr_contains(&output, "existing state is always preserved");
     assert!(fx.calls().is_empty());
 }
+
+#[test]
+fn readiness_uses_container_user_while_snapshot_controls_remain_root() {
+    let fx = FakeDockerFixture::new(root_image_config());
+    let version = compatible_patch_version();
+    assert_success(&fx.output(&["start"], Some(&version)));
+    assert_success(&fx.output(&["start"], Some(&version)));
+    let calls = fx.calls();
+    for verb in ["wait-ready", "wait-hooks", "snapshot", "verify-config"] {
+        let controls: Vec<_> = calls
+            .iter()
+            .filter(|call| call[0] == "exec" && call.iter().any(|arg| arg == verb))
+            .collect();
+        assert!(!controls.is_empty(), "missing control call: {verb}");
+        for call in controls {
+            if matches!(verb, "wait-ready" | "wait-hooks") {
+                assert!(
+                    !call.iter().any(|arg| arg == "-u" || arg == "--user"),
+                    "{call:?}"
+                );
+            } else {
+                assert!(contains_pair(call, "-u", "0"), "{call:?}");
+            }
+        }
+    }
+}

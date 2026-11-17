@@ -1132,16 +1132,21 @@ pub(crate) async fn control(
     verb: &str,
     argument: Option<&str>,
 ) -> anyhow::Result<std::process::Output> {
-    let mut args = vec![
-        "exec".into(),
-        "-u".into(),
-        "0".into(),
+    let mut args = vec!["exec".into()];
+    // Waiters create FIFOs that the supervisor must open to signal bootstrap
+    // completion. Inherit Config.User (the supervisor's launch user) so a
+    // non-root supervisor can write them without widening their permissions.
+    // Other controls still need root, notably for private launch snapshots.
+    if !matches!(verb, "wait-ready" | "wait-hooks") {
+        args.extend(["-u".into(), "0".into()]);
+    }
+    args.extend([
         "-w".into(),
         "/".into(),
         container.into(),
         format!("{}/dcc-ctl", crate::supervisor::DCC_SHARE),
         verb.into(),
-    ];
+    ]);
     if let Some(value) = argument {
         args.push(value.into());
     }

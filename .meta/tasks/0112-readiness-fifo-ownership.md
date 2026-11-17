@@ -1,8 +1,15 @@
 # T-0112: Fix readiness FIFO ownership
 
-- Authority: user request 2026-11-17 to record a task; revision r1.
-- Scope: future implementation and verification; this intake does not begin implementation.
+- Authority: user implementation and commit request 2026-11-17; revision r2.
+- Scope: implement and verify the readiness user fix, then create a local commit.
 - Evidence: [T-0111 reproduction](../quality/0111-startup-reproduction.md).
+
+## Completion
+
+Implemented and verified on 2026-11-17. Readiness controls inherit the supervisor's configured user; other controls retain root. Deterministic ownership/notification
+regressions fail before and pass after the fix. All 34 Docker smoke tests, the
+regular suite, formatting, Clippy, and build passed. No baked supervisor/protocol
+change or compatibility bump required. See [verification](../quality/0112-readiness-fifo-ownership.md).
 
 ## Problem and outcome
 

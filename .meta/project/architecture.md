@@ -739,6 +739,11 @@ the host maps to a clear error. Only after readiness does `dcc-exec` run the use
 command and deregister on exit. `dcc start` (which runs no command) calls
 `dcc-ctl wait-ready` host-side so a hook failure surfaces immediately.
 
+Host-side `wait-ready` and `wait-hooks` controls inherit the container's configured
+user, matching the supervisor so it can write each waiter FIFO without broadening
+FIFO permissions. Other host-side controls continue running as root, including
+access to private launch snapshots.
+
 `dcc attach` first runs frozen `postAttachCommand` hooks **inside the container through Docker exec**, with Feature hooks
 before the project hook. On a cold start, the host first waits for the supervisor's
 readiness signal (`wait-ready`) so `postStartCommand` always completes before
