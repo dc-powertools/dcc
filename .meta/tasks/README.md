@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0118
+- Next task ID: T-0119
 - Primary task: T-0108
 - Scheduling: Running
 - Global pause source or reason: None
@@ -151,6 +151,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0116 | Diagnose CI timeout waiting for the readiness regression startup hook. | User diagnosis request 2026-11-17 / r1 | Done | None | Discover / Low | No implementation requested | Stop; fixture correction tracked in T-0117. | `.meta/quality/0116-readiness-ci-timeout.md` | Exact timeout reproduced with host UID 0/container dev UID 1000: touch marker Permission denied, then release-loop deadlock. Same binary passes at host UID 1000. CI standard-runner UID 1001 fits the failure; full CI logs not inspected. No source changes. |
 
 | T-0117 | Fix readiness regression coordination permissions and diagnostics across host UIDs. | User orchestration/implementation request 2026-11-17 / r2 | Done | T-0116 | Quick change / Medium | None | Stop; independently reviewed and verified across UID matrix. | `.meta/tasks/0117-readiness-fixture-uid-portability.md`; `.meta/quality/0117-readiness-fixture-uid-portability.md` | Isolated shared coordination mount, fail-fast marker, bounded file-backed diagnostics and negative permission test. Actual host UIDs 1000/0/1001 pass; 35 Docker smokes plus regular suite/fmt/Clippy/build pass. Production code unchanged. |
+
+| T-0118 | Bump dcc from 0.3.0 to 0.3.1 and commit locally. | User execution request 2026-11-17 / r1 | Done | None | Quick change / Low | None | Stop; local patch bump verified. | None | Updated Cargo.toml and Cargo.lock to 0.3.1. Check, fmt, Clippy, 572 unit +125 integration tests and build passed; binary reports dcc 0.3.1. No push, tag or publication performed. |
 
 ## Operating Contract
 
