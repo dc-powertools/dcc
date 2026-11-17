@@ -53,7 +53,7 @@ That is consistent with this fixture failing on CI while passing locally with UI
 1000. The supplied panic and local reproduction were examined; the actual failed
 CI run's full logs and numeric ownership were not independently inspected.
 
-## Proposed correction (not implemented)
+## Correction identified during diagnosis
 
 Make the fixture's coordination files independent of host/container UID equality.
 Prefer a dedicated test-only shared coordination directory with explicit access
@@ -68,7 +68,8 @@ Make marker-creation errors fail the hook immediately (for example, fail-fast or
 an explicit checked touch), and improve timeout diagnostics to reveal the hook
 log/container user and ownership. Preserve deterministic waiter-before-bootstrap
 coverage. Verify the correction with matching and mismatched UIDs and root and
-non-root supervisors. Product/test implementation is tracked in [T-0117](../tasks/0117-readiness-fixture-uid-portability.md) and has not started.
+non-root supervisors. The correction was subsequently implemented and verified in [T-0117](../tasks/0117-readiness-fixture-uid-portability.md); see its [verification record](0117-readiness-fixture-uid-portability.md).
 
 Isolated diagnosis containers were removed by the existing test fixture cleanup.
-No production or test source changed. T-0113/T-0114/T-0115 are unaffected.
+No production or test source changed during this diagnosis. The subsequent test-only
+correction belongs to T-0117. T-0113/T-0114/T-0115 are unaffected.

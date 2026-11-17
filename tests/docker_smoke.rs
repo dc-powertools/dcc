@@ -1258,9 +1258,163 @@ fn durable_reuse_and_keep_promotion_work_with_handshake() {
     assert_success(&fx.dcc(&["stop", "--now"]));
 }
 
+// Only this disposable coordination mount is shared across host/container UIDs.
+// Keeping it separate from /workspace also avoids requiring traversal permission
+// on the host-owned workspace, and leaving off the sticky bit permits the host
+// to remove markers written by the root-user case.
+#[cfg(unix)]
+struct BootstrapSync(tempfile::TempDir);
+
+#[cfg(unix)]
+impl BootstrapSync {
+    fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        Self(dir)
+    }
+
+    fn marker(&self, name: &str) -> std::path::PathBuf {
+        self.0.path().join(name)
+    }
+
+    fn config(&self, user: &str, entered: &str) -> String {
+        serde_json::json!({
+            "image": IMAGE,
+            "containerUser": user,
+            "updateRemoteUserUID": false,
+            "mounts": [format!("type=bind,source={},target=/dcc-bootstrap-sync", self.0.path().display())],
+            "postStartCommand": format!(
+                "set -e; touch /dcc-bootstrap-sync/{entered}; while [ ! -f /dcc-bootstrap-sync/release ]; do sleep 0.05; done; echo bootstrap-output; test ! -f /dcc-bootstrap-sync/fail"
+            ),
+            "customizations": {"dcc": {"commands": {"probe": "echo command-output; sleep 0.2"}}}
+        }).to_string()
+    }
+
+    fn diagnostics(&self, container: &str) -> String {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata = std::fs::metadata(self.0.path()).unwrap();
+        // Do not dump inspect, environment or snapshots. This is a known test
+        // hook, and both its log and the resulting diagnostic text are bounded.
+        let output = docker(&[
+            "exec", container, "sh", "-c",
+            "id; ls -ldn /workspace /dcc-bootstrap-sync /dcc-bootstrap-sync/unwritable 2>/dev/null || true; printf '\\nbootstrap status: '; cat /run/dcc/bootstrap-status 2>/dev/null || true; printf '\\nhook log:\\n'; tail -c 4096 /run/dcc/hook.log 2>/dev/null || true",
+        ]);
+        let stdout = &output.stdout[..output.stdout.len().min(6144)];
+        let stderr = &output.stderr[..output.stderr.len().min(1024)];
+        format!(
+            "host coordination uid={} gid={} mode={:o}\n{}{}",
+            metadata.uid(),
+            metadata.gid(),
+            metadata.mode() & 0o7777,
+            String::from_utf8_lossy(stdout),
+            String::from_utf8_lossy(stderr)
+        )
+    }
+}
+
+#[cfg(unix)]
+struct BootstrapRun {
+    child: ChildGuard,
+    stderr: tempfile::NamedTempFile,
+}
+
+#[cfg(unix)]
+impl BootstrapRun {
+    fn start(fx: &DockerFixture, args: &[&str]) -> Self {
+        let stderr = tempfile::NamedTempFile::new().unwrap();
+        let child = ChildGuard(
+            fx.fx
+                .dcc(args)
+                .stdout(Stdio::null())
+                .stderr(stderr.reopen().unwrap())
+                .spawn()
+                .unwrap(),
+        );
+        Self { child, stderr }
+    }
+
+    fn stderr_tail(&self) -> String {
+        use std::io::{Seek as _, SeekFrom};
+        // A regular file can be tailed even while a Docker subprocess survives;
+        // draining a captured pipe here could wait forever for its writer.
+        let mut file = self.stderr.reopen().unwrap();
+        let start = file.metadata().unwrap().len().saturating_sub(4096);
+        file.seek(SeekFrom::Start(start)).unwrap();
+        let mut bytes = Vec::new();
+        file.take(4096).read_to_end(&mut bytes).unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn diagnostics(&self, sync: &BootstrapSync, container: &str) -> String {
+        format!(
+            "{}\nCLI stderr:\n{}",
+            sync.diagnostics(container),
+            self.stderr_tail()
+        )
+    }
+
+    fn wait_for_marker(
+        &mut self,
+        sync: &BootstrapSync,
+        container: &str,
+        marker: &str,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if sync.marker(marker).exists() {
+                return Ok(());
+            }
+            if let Some(status) = self.child.0.try_wait().unwrap() {
+                return Err(format!(
+                    "dcc exited with {status} before startup marker {marker}\n{}",
+                    self.diagnostics(sync, container)
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "timed out waiting for startup marker {marker}\n{}",
+                    self.diagnostics(sync, container)
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn wait(&mut self, sync: &BootstrapSync, container: &str) -> std::process::ExitStatus {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = self.child.0.try_wait().unwrap() {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for dcc completion\n{}",
+                self.diagnostics(sync, container)
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn assert_success(&mut self, sync: &BootstrapSync, container: &str) {
+        let status = self.wait(sync, container);
+        assert!(
+            status.success(),
+            "dcc exited with {status}\n{}",
+            self.diagnostics(sync, container)
+        );
+    }
+}
+
 // Hold bootstrap until the test has observed every waiter. A fixed sleep can
 // accidentally exercise only the already-complete status fast path.
-fn wait_for_bootstrap_waiters(container: &str, expected: usize) {
+#[cfg(unix)]
+fn wait_for_bootstrap_waiters(
+    container: &str,
+    expected: usize,
+    sync: &BootstrapSync,
+    run: &BootstrapRun,
+) {
     let script = format!(
         r#"uid=$(id -u); n=0
 for f in /run/dcc/waiters/*; do
@@ -1280,59 +1434,47 @@ done
         assert_ne!(
             output.status.code(),
             Some(2),
-            "waiter ownership or permissions differ from supervisor"
+            "waiter ownership or permissions differ from supervisor\n{}",
+            run.diagnostics(sync, container)
         );
         assert!(
             Instant::now() < deadline,
-            "waiters did not register before bootstrap completion"
+            "waiters did not register before bootstrap completion\n{}",
+            run.diagnostics(sync, container)
         );
         std::thread::sleep(Duration::from_millis(25));
     }
 }
 
+#[cfg(unix)]
 #[test]
 #[ignore = "requires Docker daemon and local image builds"]
 fn readiness_waiters_match_supervisor_user_during_bootstrap() {
     for user in ["dev", "root"] {
+        let sync = BootstrapSync::new();
         let fx = DockerFixture::new();
-        fx.write_config(&format!(r#"{{
-            "image": "{IMAGE}", "containerUser": "{user}", "updateRemoteUserUID": false,
-            "postStartCommand": "touch /workspace/bootstrap-entered; while [ ! -f /workspace/release-bootstrap ]; do sleep 0.05; done; echo bootstrap-output; test ! -f /workspace/fail-bootstrap",
-            "customizations": {{"dcc": {{"commands": {{"probe": "echo command-output; sleep 0.2"}}}}}}
-        }}"#));
+        fx.write_config(&sync.config(user, "entered"));
         assert_success(&fx.dcc(&["build"]));
         let container = fx.container_id();
         // The second cold run follows an explicit stop; the durable case also
         // exercises wait-hooks on attachment while startup is still in progress.
         for args in [vec!["run", "probe"], vec!["run", "probe"], vec!["start"]] {
-            let mut initial = ChildGuard(
-                fx.fx
-                    .dcc(&args)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .unwrap(),
-            );
-            initial.wait_for_file(&fx.fx.dir.path().join("bootstrap-entered"), "startup hook");
-            wait_for_bootstrap_waiters(&container, 1);
+            let mut initial = BootstrapRun::start(&fx, &args);
+            initial
+                .wait_for_marker(&sync, &container, "entered")
+                .unwrap_or_else(|error| panic!("{error}"));
+            wait_for_bootstrap_waiters(&container, 1, &sync, &initial);
             let mut reuse = if args[0] == "start" {
-                let child = ChildGuard(
-                    fx.fx
-                        .dcc(&["run", "probe"])
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                        .unwrap(),
-                );
-                wait_for_bootstrap_waiters(&container, 2);
+                let child = BootstrapRun::start(&fx, &["run", "probe"]);
+                wait_for_bootstrap_waiters(&container, 2, &sync, &child);
                 Some(child)
             } else {
                 None
             };
-            fx.write_file("release-bootstrap", "");
-            initial.wait_for_success("startup with a registered waiter");
+            std::fs::write(sync.marker("release"), "").unwrap();
+            initial.assert_success(&sync, &container);
             if let Some(child) = &mut reuse {
-                child.wait_for_success("wait-hooks during startup");
+                child.assert_success(&sync, &container);
                 // Snapshot access still uses root and its host-owned mode stays
                 // private (the host UID may also match the configured user).
                 let mode = docker(&[
@@ -1357,47 +1499,59 @@ fn readiness_waiters_match_supervisor_user_during_bootstrap() {
                 ]));
             }
             assert_success(&fx.dcc(&["stop"]));
-            std::fs::remove_file(fx.fx.dir.path().join("bootstrap-entered")).unwrap();
-            std::fs::remove_file(fx.fx.dir.path().join("release-bootstrap")).unwrap();
+            std::fs::remove_file(sync.marker("entered")).unwrap();
+            std::fs::remove_file(sync.marker("release")).unwrap();
         }
         // Failed bootstrap must notify its waiter too and preserve the hook's
         // diagnostic output rather than hanging or reporting a killed exec.
-        fx.write_file("fail-bootstrap", "");
-        let mut failing = ChildGuard(
-            fx.fx
-                .dcc(&["start"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap(),
-        );
-        failing.wait_for_file(
-            &fx.fx.dir.path().join("bootstrap-entered"),
-            "failing startup hook",
-        );
-        wait_for_bootstrap_waiters(&container, 1);
-        fx.write_file("release-bootstrap", "");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while failing.0.try_wait().unwrap().is_none() {
-            assert!(
-                Instant::now() < deadline,
-                "failed bootstrap did not notify waiter"
-            );
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        let mut stderr = String::new();
+        std::fs::write(sync.marker("fail"), "").unwrap();
+        let mut failing = BootstrapRun::start(&fx, &["start"]);
         failing
-            .0
-            .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut stderr)
-            .unwrap();
-        assert!(!failing.0.wait().unwrap().success());
+            .wait_for_marker(&sync, &container, "entered")
+            .unwrap_or_else(|error| panic!("{error}"));
+        wait_for_bootstrap_waiters(&container, 1, &sync, &failing);
+        std::fs::write(sync.marker("release"), "").unwrap();
+        assert!(!failing.wait(&sync, &container).success());
+        let stderr = failing.stderr_tail();
         assert!(
             stderr.contains("startup hook") && stderr.contains("bootstrap-output"),
             "{stderr}"
         );
         assert_success(&fx.dcc(&["stop"]));
     }
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires Docker daemon and local image builds"]
+fn readiness_marker_permission_failure_reports_before_timeout() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sync = BootstrapSync::new();
+    let fx = DockerFixture::new();
+    std::fs::create_dir(sync.marker("unwritable")).unwrap();
+    std::fs::set_permissions(
+        sync.marker("unwritable"),
+        std::fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+    fx.write_config(&sync.config("dev", "unwritable/entered"));
+    assert_success(&fx.dcc(&["build"]));
+    let container = fx.container_id();
+    let mut run = BootstrapRun::start(&fx, &["start"]);
+    let error = run
+        .wait_for_marker(&sync, &container, "unwritable/entered")
+        .unwrap_err();
+    assert!(error.starts_with("dcc exited with"), "{error}");
+    assert!(error.contains("Permission denied"), "{error}");
+    assert!(
+        error.contains("uid=1000(dev)")
+            && error.contains("host coordination uid=")
+            && error.contains("unwritable"),
+        "{error}"
+    );
+    assert!(
+        !sync.marker("release").exists(),
+        "failed marker creation entered the release gate"
+    );
+    assert_success(&fx.dcc(&["stop"]));
 }

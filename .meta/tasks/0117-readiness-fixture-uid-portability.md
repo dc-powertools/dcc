@@ -1,9 +1,19 @@
 # T-0117: Fix readiness regression UID portability and failure diagnostics
 
-- Authority: user task-recording and pending-documentation commit request 2026-11-17; revision r1.
-- Scope: future test-fixture correction and verification; implementation has not started.
+- Authority: user orchestration and implementation request 2026-11-17; revision r2.
+- Scope: implement and verify the test-fixture correction, complete independent review, and create a local task-scoped commit.
 - Diagnosis: [T-0116](../quality/0116-readiness-ci-timeout.md).
 - Related implementation: [T-0112 FIFO ownership fix](0112-readiness-fifo-ownership.md). The production fix remains valid; this task addresses its regression fixture.
+
+## Completion
+
+Implemented and independently reviewed on 2026-11-17. Isolated coordination storage
+removes the workspace UID assumption; marker creation is fail-fast and diagnostics
+include bounded hook and ownership details via private file-backed stderr. Both
+readiness tests pass with actual host UIDs 1000, 0 and 1001. All 35 Docker smoke
+tests, 572 unit and 125 integration tests, formatting, Clippy and build passed.
+No production source or supervisor protocol changed. See
+[verification and review](../quality/0117-readiness-fixture-uid-portability.md).
 
 ## Problem and outcome
 
@@ -56,5 +66,21 @@ startup failures promptly without weakening the readiness-notification regressio
 Relevant source: tests/docker_smoke.rs readiness regression and ChildGuard waiting
 helpers; tests/common/mod.rs fixture construction; UID remap policy for comparison.
 
-First next step: implement isolated coordination storage and failure diagnostics,
-then verify under the UID combinations that distinguished failure from success.
+Next action: stop; fixture correction and all required verification are complete.
+
+## Execution ownership (r2)
+
+- Root: catalog/brief/quality records, integration, host UID matrix, full required
+  checks, final review and commit. Existing primary T-0108 is preserved as pending
+  broader work; only T-0117 is being implemented.
+- implement_0117 (complete): sole code writer for tests/docker_smoke.rs (tests/common/mod.rs
+  only if necessary); focused fixture/diagnostics/negative coverage; no product
+  source edits or commits. Reports checks and hands off live Docker runs to root.
+- review_0117 (complete; no blocking findings): read-only independent review of UID coverage, permissions,
+  diagnostics bounds/privacy, cleanup and final diff. No Docker runs or commits.
+- Shared worktree, disjoint ownership; after interruption inspect status and agent
+  messages before reassigning work. Agents must not touch shared task records.
+
+Verification plan: formatting, Clippy, regular suite, build; focused live Docker
+regressions including marker-denied failure; actual test process UIDs 1000, 0 and
+1001 if local permissions permit; full existing Docker smoke suite after review.
