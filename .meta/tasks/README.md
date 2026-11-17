@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0116
+- Next task ID: T-0118
 - Primary task: T-0108
 - Scheduling: Running
 - Global pause source or reason: None
@@ -148,6 +148,9 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0113 | Diagnose and fix fast-command teardown returning 137 after successful startup. | User research and preference/task-update request 2026-11-17 / r5 | Ready | None | Initiative / Medium | Keep open; CLI-disconnection detection investigation deferred; product implementation pending | Research race fixes within the current container-owned cleanup model, preserving CLI-crash cleanup and explicit reset. | `.meta/tasks/0113-fast-command-teardown-race.md`; `.meta/quality/0113-teardown-races.md`; `.meta/quality/0113-interactive-disconnects.md` | Both races confirmed with Docker checkpoints. User favors current approach after comparing crash outcomes; CLI acknowledgment not selected because abandoned reservations add stranded-container cases. 35 post-launch disconnect trials: live jobs survive client loss in both modes; mux-own-detach removes one-shot containers, while durable mux jobs reconnect. Finite jobs finish and clean up. Pre-command detection deferred; races unresolved; task open. |
 | T-0114 | Make all dcc stop variants remove created-but-unstarted profile runtimes. | User task-recording request 2026-11-17 / r1 | Ready | None | Quick change / Medium | Implementation not started; recorded at user request | Design exact-instance created-state discovery/removal and concurrent-start regressions. | `.meta/tasks/0114-stop-unstarted-container.md` | Pending; running-only lookup currently leaves never-started containers and name conflicts behind. |
 | T-0115 | Define ergonomics and implement recovery/reattachment to disconnected interactive jobs. | User task-recording request 2026-11-17 / r1 | Ready | None | Initiative / Medium | Implementation not started; dedicated command or doctor-led alternative undecided | Evaluate session backends and define concrete selection, reattach, detach, and recovery flows. | `.meta/tasks/0115-job-reattachment-ergonomics.md`; `.meta/quality/0113-interactive-disconnects.md` | Pending; current attach creates new work; research confirms live disconnected jobs and mux recovery with lifecycle constraints. |
+| T-0116 | Diagnose CI timeout waiting for the readiness regression startup hook. | User diagnosis request 2026-11-17 / r1 | Done | None | Discover / Low | No implementation requested | Stop; fixture correction tracked in T-0117. | `.meta/quality/0116-readiness-ci-timeout.md` | Exact timeout reproduced with host UID 0/container dev UID 1000: touch marker Permission denied, then release-loop deadlock. Same binary passes at host UID 1000. CI standard-runner UID 1001 fits the failure; full CI logs not inspected. No source changes. |
+
+| T-0117 | Fix readiness regression coordination permissions and diagnostics across host UIDs. | User task-recording request 2026-11-17 / r1 | Ready | T-0116 | Quick change / Medium | Implementation not started; recorded at user request | Add isolated shared coordination storage, fail-fast marker creation, and bounded startup diagnostics; verify UID matrix. | `.meta/tasks/0117-readiness-fixture-uid-portability.md` | Pending; preserve deterministic FIFO regression while removing its host UID 1000 assumption. |
 
 ## Operating Contract
 
