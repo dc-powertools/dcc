@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0111
+- Next task ID: T-0114
 - Primary task: T-0108
 - Scheduling: Running
 - Global pause source or reason: None
@@ -142,6 +142,10 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 | T-0109 | Implement and verify the Linux dcc persistence contract and deterministic regressions for T-0108. | Parent T-0108 r6 / r1 | Done | None | Initiative / High | None within this bounded Linux slice; parent Desktop/catalog gate unchanged | Stop; Linux source commit 0331498 verified. Parent Desktop/catalog gates remain open. | `.meta/quality/0108-persistence.md`; `.meta/decisions/0010-persistence-image-ownership.md` | 0.3.0 contract implemented; 572 unit +124 integration tests, 10 persistence Docker regressions and 33 existing Docker smokes passed; independent review resolved preservation/mount/concurrency findings. |
 | T-0110 | Prepare and qualify only an unpublished local Codex pilot against the new dcc Linux contract. | Parent T-0108 r6 / r1 | Done | T-0109 | Initiative / High | Production catalog rollout gated by parent platform/package qualification | Stop; bounded local pilot complete. Parent platform/updater/catalog gates remain open. | `.meta/tasks/0108-execution.md`; Features `readme/CODEX-PERSISTENCE-PILOT.md` | Features 6193b82 with dcc source 0331498 passed exact-revision local-reference CLI/daemon/state smoke; production src unchanged. |
+
+| T-0111 | Reproduce cold one-shot startup status 137 and compare durable startup. | User request 2026-11-17 / r1 | Done | None | Discover / Low | None | Stop; reproduction complete; product fix separate. | `.meta/quality/0111-startup-reproduction.md` | Reproduced exact startup 137 twice with Debian, sleep hook and forwarded port. Root-owned 0644 waiter FIFO blocks non-root supervisor notification; one-shot reaper kills readiness exec while container exits 0. Manual permission/notification experiment released durable startup. No product changes. |
+| T-0112 | Fix readiness FIFO ownership for root and non-root supervisors. | User task-recording request 2026-11-17 / r1 | Ready | None | Quick change / Medium | No implementation started; recorded at user request | Validate control-user approach and add a deterministic waiting-path regression. | `.meta/tasks/0112-readiness-fifo-ownership.md` | Pending; exact startup failure and permission cause verified in T-0111. |
+| T-0113 | Diagnose and fix fast-command teardown returning 137 after successful startup. | User task-recording request 2026-11-17 / r1 | Ready | None | Initiative / Medium | No implementation started; recorded at user request | Establish the teardown interleaving and deterministic regression before choosing a fix. | `.meta/tasks/0113-fast-command-teardown-race.md` | Pending; command exec 137 with container exit 0 observed in T-0111; exact cause unconfirmed. |
 
 ## Operating Contract
 
