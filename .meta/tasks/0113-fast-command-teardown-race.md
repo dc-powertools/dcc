@@ -1,7 +1,7 @@
 # T-0113: Diagnose and fix fast-command teardown race
 
-- Authority: user task-recording request, subsequent design/reproduction request, explicit task-update requests, and user preference for the current approach after crash analysis, and evidence/design review with task update, 2026-11-17; revision r7.
-- Scope: investigation includes user-requested post-launch interactive disconnect experiments; product implementation remains pending. Pre-command CLI-disconnection detection remains deferred.
+- Authority: user task-recording request, subsequent design/reproduction request, explicit task-update requests, and user preference for the current approach after crash analysis, and evidence/design review with task update, 2026-11-17; user acceptance of shared locking and process identity with task-update request, 2026-11-18; revision r8.
+- Scope: selected next slice is the startup/admission race repair using supervisor-owned record cleanup, a shared lifecycle lock, and wrapper process identity. Product implementation remains pending. Docker result delivery after process exit and pre-command CLI-disconnection detection remain deferred.
 - Evidence: [initial observation](../quality/0111-startup-reproduction.md), [deterministic race confirmation](../quality/0113-teardown-races.md), and [interactive disconnect observations](../quality/0113-interactive-disconnects.md).
 
 ## Problem and outcome
@@ -16,6 +16,102 @@ Both suspected teardown races are now independently confirmed in isolated Docker
 In both cases, Docker reported container exit 0 and OOMKilled=false. These results confirm both race windows, but do not determine which caused the original intermittent Codex failure. No product source was changed for the experiments, and test containers were removed.
 
 The outcome is to preserve command output and its actual exit status before automatic teardown, and prevent concurrent registration from racing a shutdown decision.
+
+## Selected approach (2026-11-18, r8)
+
+The user accepts the shared lock and process identity approach discussed after r7.
+This request records the design only; T-0113 stays open and no product implementation
+is authorized by this update. The immediate priority is the startup/admission race.
+The r7 result-journal recommendation below is retained as earlier analysis, not a
+prerequisite for this bounded slice. Command completion/result-delivery concerns are
+lower priority for now; this is deferral, not a correctness claim about them.
+
+### Supervisor-owned records replace ARRIVED
+
+- Before readiness waits or user-code execution, the wrapper publishes a complete
+  active record identifying itself. It leaves the record in place on normal exit,
+  failure or signal; its EXIT trap no longer removes the record.
+- The supervisor examines records, identifies terminated wrappers, and removes their
+  records itself. When it observes a valid registration, it remembers that work has
+  arrived, including when that wrapper is already dead at the first poll.
+- A command that starts and ends between polls therefore leaves discoverable
+  evidence. Remove the separate ARRIVED file: retirement and the supervisor's local
+  has-seen-work state supply the historical information it previously preserved.
+- A one-shot supervisor drains only after it has seen accepted work and no accepted
+  live/unknown work remains, or the existing pre-registration orphan timeout expires.
+  Durable mode stays alive until explicitly stopped. Keep the current orphan-timeout
+  fallback; do not add pre-command disconnect detection.
+
+### One shared lifecycle lock
+
+Use exclusive `flock` on one stable container-private file, for example
+`/run/dcc/lifecycle.lock`. Here "shared" means all lifecycle participants use the
+same lock; each critical section takes it exclusively.
+
+1. Wrapper acquires lock, checks STOPPING, and either rejects before running any
+   user code or publishes its complete PID/identity record; then releases and
+   closes the lock descriptor before wait-hooks or command launch.
+2. Supervisor acquires the same lock, inspects/retires records, updates its local
+   has-seen-work state and makes its final idle decision. If it chooses shutdown,
+   it writes STOPPING while still holding the lock. It then releases/closes the
+   descriptor and runs shutdown hooks outside the critical section.
+3. Graceful stop, stop-now, mode promotion and orphan-timeout drain use that same
+   boundary. A mode promotion either wins before committed drain or is rejected;
+   it cannot reopen a draining instance. Stop-now closes admission before taking
+   its target snapshot and sends signals outside the lock.
+
+This serializes both the initial stale-count case and a new registration racing
+retirement of the last previous command. If registration wins, the supervisor sees
+it; if shutdown wins, the wrapper sees STOPPING and rejects. The likelihood of the
+latter interleaving is unmeasured; its narrower window does not justify a delay as
+protection. Do not add automatic replay based solely on status 253.
+
+Keep sections short: no user work, readiness waits or shutdown hooks under the lock.
+Never unlink/recreate the lock file, which would allow different locks on different
+inodes. Ensure consistent root/non-root permissions and `flock` availability across
+supported images. Close descriptors so arbitrary descendants cannot retain the
+lock after a crash; the kernel releases it when its last descriptor closes.
+
+### Track wrapper identity, not just a reusable PID
+
+The chosen simple implementation direction is a record containing the wrapper PID
+and its kernel start time from `/proc/PID/stat` (field 22), scoped to the current
+container instance. Capture the wrapper's own identity before publishing the record;
+track the wrapper because it exists before the user process and readiness wait.
+
+The supervisor reads identity and state together: matching PID/start time in a live
+state protects the invocation; a vanished process, changed start time, or terminated
+state (including zombie Z) permits retirement. A stopped process remains live.
+Permission failures, malformed data or other unexpected read errors mean unknown,
+not completion: preserve the record and surface useful diagnostics. Parse stat's
+parenthesized command field correctly rather than splitting the entire file on
+whitespace. Publish records completely under the lock and validate their format.
+
+PID plus start time is the practical shell approach to detecting PID reuse, not an
+exit-status source or a kernel-issued unique handle. A pidfd acquired while the
+wrapper's identity is established is the stronger alternative if qualification
+requires it; a native helper is not selected or required for this slice. Rechecking
+`/proc` before signalling does not make check-then-kill atomic: stop-now must not
+claim pidfd-level protection against PID reuse during signal delivery.
+
+### Verification and scope boundary
+
+Require deterministic checkpoints for both lock acquisition orders, initial
+registration against an empty observation/orphan expiry, and new registration
+against retirement of the previous command. A fast command completed between polls
+must still be discovered and retired without ARRIVED. Verify SIGKILL releases the
+lock, wrapper death leaves a record that can be reclaimed, PID/start-time mismatch,
+zombies, stopped live processes, unknown identity, root/non-root operation, and no
+lock inheritance into user children. Preserve CLI-loss behavior: live disconnected
+jobs remain registered, finite jobs can finish and be retired without a CLI ack.
+
+Preserve one-shot/durable/--keep and stop behavior; qualify baked-script packaging
+and the existing host-supervisor protocol boundary before choosing release scope.
+No new journal, CLI acknowledgment or delay-based guarantee is selected. The
+post-exit Docker status/output hazard remains documented and unresolved, and is
+not a blocker for selecting or verifying this startup-race slice. Retain its broader
+regression criteria below for eventual completion of T-0113, rather than declaring
+the whole task fixed when this slice passes.
 
 ## Investigated alternative: CLI acknowledgment (not selected)
 
@@ -185,7 +281,7 @@ exec-die event alone likewise cannot prove that a delayed client has queried sta
 | Container-owned result journal outside container-private state | Cleanup can finish without surviving CLI; result survives auto-removal | Requires correlated status/output transport, retention, storage/backpressure and trust rules. Recommended completion direction for qualification. |
 | Mandatory CLI completion acknowledgment | Directly orders teardown after the caller gets Docker result | Adds abandoned reservations and caller-dependent cleanup. Remains unselected per user preference. |
 
-### Recommended design to qualify, not an approved implementation
+### Earlier r7 recommendation (result channel deferred by r8)
 
 Use a serialized container-owned lifecycle plus results whose lifetime is independent
 of container removal. Separate admission, execution liveness, and result retention:
@@ -326,8 +422,8 @@ are not evidence of a repaired race and were not rerun for this investigation.
 
 ## Remaining research
 
-- Find how to serialize registration, active-state observation, and the transition to draining within the current container-owned model.
-- Qualify the recommended independent result journal/transport before choosing implementation. Process-death-only cleanup is now demonstrated insufficient with auto-removal; resolve output/PTY, retention, failure and topology questions without mandatory CLI lifetime acknowledgment.
+- Prepare the selected r8 shared-lock, supervisor-owned retirement and PID/start-time design for implementation, including deterministic startup/admission regressions and image/protocol qualification. Implementation has not been requested in this update.
+- Deferred: investigate Docker result delivery after process exit. The r7 journal/transport option remains unselected; it is not a prerequisite for the r8 startup-race slice.
 - Preserve automatic cleanup after normal wrapper exit when the CLI disappears; examine abrupt wrapper death, stale records, concurrent commands, and stop/reset behavior explicitly.
 - Use the existing deterministic checkpoints to assess candidates; avoid treating a fixed sleep as a completion guarantee.
 
