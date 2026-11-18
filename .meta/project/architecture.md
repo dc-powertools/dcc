@@ -788,7 +788,8 @@ for removal; durable containers remain running until stopped. This repairs the
 startup/admission and premature-record-retirement windows but does not guarantee
 Docker delivers status/output after wrapper exit before auto-removal. That separate
 post-exit hazard and pre-command CLI-disconnection detection remain deferred under
-T-0113; the parent task stays open. The changed registration/control contract requires
+[npspqj](../tasks/npspqj-command-result-delivery/README.md). T-0113 is closed and
+its verified implementation evidence is archived. The changed registration/control contract requires
 version 0.4.0, refusing 0.3 images through the existing minor-version gate. Stop old
 containers, rebuild and recreate them to migrate; no persistent-data migration applies.
 

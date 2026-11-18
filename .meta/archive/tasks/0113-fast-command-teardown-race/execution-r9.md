@@ -1,5 +1,9 @@
 # T-0113 execution r9
 
+Historical r9 evidence. T-0113 closed under r10 after deferred work transferred to
+[npspqj](../../../tasks/npspqj-command-result-delivery/README.md); the earlier
+open-parent statements below describe the r9 checkpoint, not current task state.
+
 ## Authority and frame
 
 User requested execution/orchestration with agents on 2026-11-18. This supersedes

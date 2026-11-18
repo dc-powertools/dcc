@@ -120,6 +120,7 @@ Historical evidence is consulted for a specific question; current project/framew
 - [T-0110](0110-prepare-and-qualify-only-an-unpublished-local-codex/README.md) — Prepare and qualify only an unpublished local Codex pilot against the new dcc Linux contract.
 - [T-0111](0111-reproduce-cold-one-shot-startup-status-137-and/README.md) — Reproduce cold one-shot startup status 137 and compare durable startup.
 - [T-0112](0112-readiness-fifo-ownership/README.md) — Fix readiness FIFO ownership for root and non-root supervisors.
+- [T-0113](0113-fast-command-teardown-race/README.md) — Repair startup/admission and wrapper-retirement races.
 - [T-0116](0116-diagnose-ci-timeout-waiting-for-the-readiness-regression/README.md) — Diagnose CI timeout waiting for the readiness regression startup hook.
 - [T-0117](0117-readiness-fixture-uid-portability/README.md) — Fix readiness regression coordination permissions and diagnostics across host UIDs.
 - [T-0118](0118-bump-dcc-from-0-3-0-to-0/README.md) — Bump dcc from 0.3.0 to 0.3.1 and commit locally.

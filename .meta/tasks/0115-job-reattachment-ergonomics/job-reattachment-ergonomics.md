@@ -2,8 +2,8 @@
 
 - Authority: user task-recording request 2026-11-17; revision r1.
 - Scope: record future design and implementation work; implementation has not started.
-- Research: [T-0113 interactive disconnect observations](../0113-fast-command-teardown-race/quality-interactive-disconnects.md).
-- Related: [T-0113 teardown races](../0113-fast-command-teardown-race/fast-command-teardown-race.md), [T-0114 unstarted-container recovery](../0114-stop-unstarted-container/stop-unstarted-container.md). Resolve implementation dependencies when selecting a design; do not assume either task is a prerequisite for design research.
+- Research: [T-0113 interactive disconnect observations](../../archive/tasks/0113-fast-command-teardown-race/quality-interactive-disconnects.md).
+- Related: [T-0113 teardown races](../../archive/tasks/0113-fast-command-teardown-race/fast-command-teardown-race.md), [T-0114 unstarted-container recovery](../0114-stop-unstarted-container/stop-unstarted-container.md). Resolve implementation dependencies when selecting a design; do not assume either task is a prerequisite for design research.
 
 ## Problem and intended outcome
 
@@ -24,7 +24,7 @@ Define the exact user experience and implement a supported way to discover and r
 - For a doctor interface, define interactive offers and explicit noninteractive/scriptable behavior, including exit codes and any structured output. Diagnosis must not launch a replacement job or terminate existing work implicitly.
 - Define durable versus one-shot behavior so detaching a recoverable session does not unintentionally destroy it. Coordinate with T-0113's lifecycle fixes while preserving the user's preference for container-owned cleanup rather than mandatory CLI completion acknowledgments.
 - Define how users inspect, cancel, terminate, or reset sessions that cannot be reattached. Keep scope proportional; a doctor-led alternative does not automatically authorize an unrelated broad diagnostic framework.
-- Assess backend packaging/dependencies, terminal ownership/access, host/supervisor compatibility and versioning, and supported platforms. Pre-command CLI-disconnection detection remains deferred under T-0113 unless separately revisited.
+- Assess backend packaging/dependencies, terminal ownership/access, host/supervisor compatibility and versioning, and supported platforms. Pre-command CLI-disconnection detection remains deferred under [npspqj](../npspqj-command-result-delivery/README.md) unless separately revisited.
 
 ## Acceptance and verification
 

@@ -1,8 +1,8 @@
 # T-0113: Diagnose and fix fast-command teardown race
 
 - Authority: user task-recording request, subsequent design/reproduction request, explicit task-update requests, and user preference for the current approach after crash analysis, and evidence/design review with task update, 2026-11-17; user acceptance of shared locking and process identity with task-update request, 2026-11-18; revision r8.
-- Current execution: r9 authorizes and delivers the selected startup/admission repair; see [execution and quality evidence](execution-r9.md) and the authoritative [task README](README.md). The r8 and earlier sections below preserve design history. Docker result delivery after process exit and pre-command CLI-disconnection detection remain deferred.
-- Evidence: [initial observation](../../archive/tasks/0111-reproduce-cold-one-shot-startup-status-137-and/quality-startup-reproduction.md), [deterministic race confirmation](quality-teardown-races.md), and [interactive disconnect observations](quality-interactive-disconnects.md).
+- Current disposition: T-0113 closed under r10 after the verified r9 startup/admission repair. Deferred result delivery and pre-command disconnect research now belong to [npspqj](../../../tasks/npspqj-command-result-delivery/README.md). The r9/r8 and earlier sections below preserve historical scope and decisions; the authoritative [task README](README.md) owns current disposition.
+- Evidence: [initial observation](../0111-reproduce-cold-one-shot-startup-status-137-and/quality-startup-reproduction.md), [deterministic race confirmation](quality-teardown-races.md), and [interactive disconnect observations](quality-interactive-disconnects.md).
 
 ## Problem and outcome
 
@@ -159,7 +159,7 @@ A control connection whose closure identifies an abandoned pending launch could 
 
 No control-channel change, heartbeat/lease mechanism, or timeout removal is selected or authorized here. Preserve current startup timeout behavior while this investigation is deferred. General crash/reset behavior remains relevant when evaluating race fixes; implementing prompt disconnection detection is not an acceptance condition for them.
 
-Created-but-unstarted container recovery is tracked separately in [T-0114](../0114-stop-unstarted-container/stop-unstarted-container.md).
+Created-but-unstarted container recovery is tracked separately in [T-0114](../../../tasks/0114-stop-unstarted-container/stop-unstarted-container.md).
 
 ## Post-launch interactive disconnection experiments
 
@@ -194,7 +194,7 @@ preferred; both teardown races and the task remain open.
 ## CI one-shot registration failure follow-up
 
 On 2026-11-17 the user reported one_shot_container_drains_after_command_without_grace
-failing because dcc exited 137 before its ready marker. [T-0119 diagnosis](../../archive/tasks/0119-diagnose-one-shot-drain-ci-failure-with-status/quality-one-shot-registration-ci.md)
+failing because dcc exited 137 before its ready marker. [T-0119 diagnosis](../0119-diagnose-one-shot-drain-ci-failure-with-status/quality-one-shot-registration-ci.md)
 reproduced the same boundary with the actual dcc 0.3.1 CLI and exact test command,
 using temporary checkpoints: supervisor sampled n=0, wrapper registered/ARRIVED,
 then supervisor resumed before user-command execution. The wrapper had a real

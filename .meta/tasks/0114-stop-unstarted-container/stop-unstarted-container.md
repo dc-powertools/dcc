@@ -2,7 +2,7 @@
 
 - Authority: user task-recording request 2026-11-17; revision r1.
 - Scope: record future implementation and verification; implementation has not started.
-- Related context: [T-0113](../0113-fast-command-teardown-race/fast-command-teardown-race.md), CLI-crash/reset research. No dependency on fixing the teardown races.
+- Related context: [T-0113](../../archive/tasks/0113-fast-command-teardown-race/fast-command-teardown-race.md), CLI-crash/reset research. No dependency on fixing the teardown races.
 
 ## Problem and outcome
 

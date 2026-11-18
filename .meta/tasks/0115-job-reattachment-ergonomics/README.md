@@ -45,9 +45,9 @@ The outcome above and the linked scope/acceptance in supporting evidence define 
 ## Supporting evidence
 
 - [job reattachment ergonomics](job-reattachment-ergonomics.md) — Scope, design or execution evidence.
-- [quality interactive disconnects](../0113-fast-command-teardown-race/quality-interactive-disconnects.md) — Verification and review evidence; canonical owner T-0113.
+- [quality interactive disconnects](../../archive/tasks/0113-fast-command-teardown-race/quality-interactive-disconnects.md) — Verification and review evidence; canonical owner T-0113.
 
-Additional original references: `.meta/tasks/0115-job-reattachment-ergonomics/job-reattachment-ergonomics.md`; `.meta/tasks/0113-fast-command-teardown-race/quality-interactive-disconnects.md`.
+Additional original references: `.meta/tasks/0115-job-reattachment-ergonomics/job-reattachment-ergonomics.md`; `.meta/archive/tasks/0113-fast-command-teardown-race/quality-interactive-disconnects.md`.
 
 ## Provenance
 

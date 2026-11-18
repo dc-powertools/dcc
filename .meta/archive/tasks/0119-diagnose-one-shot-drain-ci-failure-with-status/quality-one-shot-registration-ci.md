@@ -67,7 +67,7 @@ that CI run's Docker events/kernel logs, cannot rule out every other source of
 is already known to be present in the current supervisor. A passing ordinary
 smoke run does not exclude this scheduling-dependent failure.
 
-Repair remains in [T-0113](../../../tasks/0113-fast-command-teardown-race/fast-command-teardown-race.md): synchronize
+Repair remains in [T-0113](../0113-fast-command-teardown-race/fast-command-teardown-race.md): synchronize
 registration/admission and the transition to draining so shutdown cannot use a
 count rendered stale by newly admitted work. Preserve the selected container-owned
 cleanup direction. Neither a longer test timeout nor the T-0117 synchronization

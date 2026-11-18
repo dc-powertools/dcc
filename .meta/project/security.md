@@ -32,7 +32,8 @@ Only the supervisor retires complete wrapper PID/start-time registrations. Unkno
 identity must preserve work and emit bounded diagnostics; stop-now must not signal
 unknown records. Rechecking identity before TERM reduces known PID-reuse mistakes
 but does not provide an atomic pidfd guarantee. The post-exit Docker result-delivery
-hazard remains outside the T-0113 startup/admission repair.
+hazard remains outside the completed T-0113 startup/admission repair and is tracked
+under [npspqj](../tasks/npspqj-command-result-delivery/README.md).
 
 Historical boundary and delivery rationale: `.meta/archive/tasks/0004-dcc-rewrite/threat-dcc-runtime.md`
 and `.meta/archive/tasks/0028-supervisor-delivery-model/decision-0004-embed-supervisor-in-image.md`. The former includes retired
