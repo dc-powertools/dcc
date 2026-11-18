@@ -4,7 +4,7 @@ This is the canonical discovery and lifecycle record for every accepted task. Ph
 row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 
 - Format: 1
-- Next task ID: T-0120
+- Next task ID: T-0121
 - Primary task: T-0108
 - Scheduling: Running
 - Global pause source or reason: None
@@ -155,6 +155,8 @@ row order has no scheduling meaning. The Root Orchestrator is the sole writer.
 | T-0118 | Bump dcc from 0.3.0 to 0.3.1 and commit locally. | User execution request 2026-11-17 / r1 | Done | None | Quick change / Low | None | Stop; local patch bump verified. | None | Updated Cargo.toml and Cargo.lock to 0.3.1. Check, fmt, Clippy, 572 unit +125 integration tests and build passed; binary reports dcc 0.3.1. No push, tag or publication performed. |
 
 | T-0119 | Diagnose one-shot drain CI failure with status 137 before command marker. | User diagnosis request 2026-11-17 / r1 | Done | None | Discover / Low | No product implementation requested | Stop; registration/drain repair remains in open T-0113. | `.meta/quality/0119-one-shot-registration-ci.md` | Actual dcc 0.3.1 + exact test command returned 137 before marker when checkpoints forced stale count plus new ARRIVED. Active record existed, readiness/snapshot succeeded, container exited 0. CI-specific attribution limited without event logs. |
+
+| T-0120 | Migrate framework memory to task directories, random IDs, and separate current/archive indexes. | User design agreement and task-recording request 2026-11-18 / r1 | Ready | None | Initiative / Medium | Recorded for future execution; migration not started | Re-inventory task state and references, then execute the documented migration plan when selected. | `.meta/tasks/0120-task-directory-migration.md` | Agreed design, rationale, target ownership, historical preservation, migration process, and acceptance recorded; implementation pending. |
 
 ## Operating Contract
 
