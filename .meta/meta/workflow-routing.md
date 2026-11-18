@@ -14,12 +14,15 @@ individually. Task status, dependency position, and backlog size are not routes.
 | Clarify | User outcome, scope, examples, or acceptance criteria are materially ambiguous | Defaults-first questions or documented assumptions, then a task brief and a new route |
 | Discover | Goal is clear but current behavior, implementation surface, commands, or constraints are unknown | Repository or source findings, verified context, and a new route or bounded patch |
 | Decide | Hard-to-reverse product, architecture, security, dependency, or feasibility choice | Options and consequences; recorded choice rationale or disposable spike when the choice is significant |
-| Initiative | New or cross-cutting product area requiring multiple artifacts or independently verifiable slices | Product/task brief, active task note, decisions as needed, readiness section in a quality record, sliced plan |
+| Initiative | New or cross-cutting product area requiring multiple artifacts or independently verifiable slices | Scope/acceptance, execution checkpoint, significant choices, readiness evidence and sliced plan in the task README or optional linked supporting files |
 | Correct course | Guidance targeting the selected task, or new evidence, invalidates its scope, criteria, design, or verification | Task-scoped impact note, affected artifacts updated, revised plan and route |
 
 Do not separately choose a work mode, scale path, and lifecycle phase. Specialist roles
 and parallel workers are optional execution techniques within a route, not additional
 classifications.
+
+Required ceremony specifies content, not separate documents. Keep it in the task
+README or optional linked supporting files; applicable quality gates still apply.
 
 ## Risk Overlay
 

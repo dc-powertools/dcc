@@ -23,11 +23,13 @@ dependencies, route/risk, task approvals/blockers, next action and results. Do n
 archive entries during current-state recovery unless a targeted historical question
 requires them.
 
-Create a brief when scope, acceptance, route, or risk needs detail. Create a task note
-for long-running, risky, paused, or parallel execution. A task note contains the
+Record scope, acceptance, route, and risk in the task README; use an optional brief
+when more detail is useful. For long-running, risky, paused, or parallel execution,
+maintain a checkpoint in the task README or an optional linked task note. Include the
 execution checkpoint, work-item status, changed files, commits, observed checks, worker
 roster, relevant decisions, failed approaches, parked-approval detail, and work still
-needed. Link its checkpoint from the task README without copying authoritative fields.
+needed. If a supporting note owns the checkpoint, link it from the task README without
+copying authoritative fields.
 
 ## Resume Loop
 
@@ -47,8 +49,8 @@ needed. Link its checkpoint from the task README without copying authoritative f
    observed failure; never integrate output invalidated for that task.
 7. Re-run only checks needed to establish current state, then resume the active task or
    use the root loop to select an eligible one.
-8. Refresh task README, cursor, discovery links and task note after meaningful progress and before a long
-   pause.
+8. Refresh the task README, cursor, discovery links and any supporting checkpoint note
+   after meaningful progress and before a long pause.
 
 If multiple tasks incorrectly appear primary-`Active`, checkpoint them and reconcile
 ownership before editing. Do not guess which dirty changes belong to which task.

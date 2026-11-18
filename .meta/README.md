@@ -33,9 +33,9 @@ next action and results. Neither discovery index owns those fields.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-11-18 | Three migration review findings corrected (yspqig). | `.meta/archive/tasks/yspqig-migration-review-fixes/README.md` |
 | 2026-11-18 | Task-directory migration, separate discovery/archive and random-ID policy completed (T-0120). | `.meta/archive/tasks/0120-task-directory-migration/README.md` |
 | 2026-11-17 | Readiness regression UID portability and diagnostics verified with actual host UIDs 1000/0/1001 and 35 Docker smokes (T-0117). | `.meta/archive/tasks/0117-readiness-fixture-uid-portability/README.md` |
-| 2026-11-17 | Readiness controls run as supervisor user; regular checks and 34 Docker smokes passed (T-0112). | `.meta/archive/tasks/0112-readiness-fifo-ownership/README.md` |
 
 ## Documentation Map
 
@@ -54,7 +54,7 @@ next action and results. Neither discovery index owns those fields.
 ## Hygiene
 
 - Last general consistency/pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 12 (including T-0120)
+- Completed repository-changing tasks since that pass: 13 (including yspqig)
 - General pass due: 2026-10-08 or after 10 changes; still due.
 - T-0120 performs scoped migration consistency and pruning, not a new application or
   general project-freshness audit. Preserve the broader overdue maintenance action.

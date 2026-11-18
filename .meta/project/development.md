@@ -12,7 +12,7 @@ If the requirement is ambiguous, ask before implementing. The cost of a wrong as
 
 ## The Development Loop
 
-Work in small, verifiable steps. After each meaningful change:
+Work in small, verifiable steps. After each meaningful code change:
 
 ```bash
 cargo check        # fast feedback on types and borrows
@@ -31,7 +31,8 @@ rustup component add rustfmt clippy
 
 ## Before Finishing
 
-Run all three checks and confirm they pass cleanly:
+For changes to code, tests, dependencies, build configuration, or executable behavior,
+run all three checks and confirm they pass cleanly:
 
 ```bash
 cargo fmt --check
@@ -39,7 +40,14 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-These checks are mandatory: a task is not complete until all three pass. Never report work as done on the strength of manual inspection alone. If the Rust toolchain (`cargo`/`rustc`) is not installed in the environment, install it (e.g. via [rustup](https://rustup.rs), then `rustup component add rustfmt clippy`) and run the checks — do not skip them.
+For those changes, these checks are mandatory: a task is not complete until all three pass. Never report work as done on the strength of manual inspection alone. If the Rust toolchain (`cargo`/`rustc`) is not installed in the environment, install it (e.g. via [rustup](https://rustup.rs), then `rustup component add rustfmt clippy`) and run the checks — do not skip them.
+
+For documentation-only changes that do not alter executable behavior, verify affected
+links and anchors, consistency with current requirements and instructions, whitespace,
+and the full diff's scope. Check applicable templates and artifact budgets when changing
+framework documentation. Record observed results in the task evidence; Rust checks
+are not required for this case. Changes to scripts or executable configuration require
+their relevant checks even when accompanied by documentation.
 
 ## Committing
 
@@ -52,13 +60,9 @@ Co-Authored-By: Codex GPT-5 <noreply@openai.com>
 Do not copy this example when using a different coding harness or model; replace the
 name and address with the correct identity for that session.
 
-Every commit must leave the repository in a passing state. Before creating a commit, run the full check suite and fix any failures:
-
-```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-```
+Every commit must leave the repository in a passing state. Before creating a commit,
+complete the applicable checks in [Before Finishing](#before-finishing) and fix any
+failures.
 
 If `cargo fmt --check` reports a diff, run `cargo fmt` to apply the formatting, then re-stage the affected files before committing.
 

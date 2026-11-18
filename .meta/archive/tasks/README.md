@@ -125,3 +125,4 @@ Historical evidence is consulted for a specific question; current project/framew
 - [T-0118](0118-bump-dcc-from-0-3-0-to-0/README.md) — Bump dcc from 0.3.0 to 0.3.1 and commit locally.
 - [T-0119](0119-diagnose-one-shot-drain-ci-failure-with-status/README.md) — Diagnose one-shot drain CI failure with status 137 before command marker.
 - [T-0120](0120-task-directory-migration/README.md) — Migrate framework memory to task directories, random IDs, and separate current/archive indexes.
+- [yspqig](yspqig-migration-review-fixes/README.md) — Resolve optional-evidence wording, documentation-only verification and a migrated formatting escape.

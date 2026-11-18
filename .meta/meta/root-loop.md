@@ -144,7 +144,8 @@ While context is fresh:
 - update the task README's authority/revision, status, dependency, route/risk, approval
   or blocker, next action, evidence links and results;
 - point `.meta/README.md` to the current index and primary task without copying their facts;
-- update a task note when work is long-running, paused, risky, or parallel;
+- maintain a checkpoint in the task README or an optional linked task note when work
+  is long-running, paused, risky, or parallel;
 - record significant choices and update any durable product or technical owner; and
 - avoid storing transient tool output or duplicating facts across artifacts.
 

@@ -43,13 +43,17 @@ cargo check
 cargo test
 ```
 
-Before finishing a change, run:
+Before finishing changes to code, tests, dependencies, build configuration, or
+executable behavior, run:
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+For documentation-only changes, use the integrity and consistency checks in the
+[agent development guide](../.meta/project/development.md#before-finishing).
 
 For behavior that affects the compiled binary or release artifact, also run:
 

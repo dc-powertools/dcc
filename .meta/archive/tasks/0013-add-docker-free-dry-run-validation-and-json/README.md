@@ -36,7 +36,7 @@ Stop; outcome complete.
 
 ## Result
 
-Added global `--dry-run` and `--format text\|json` flags, stable dry-run reports, Docker-boundary exits for build/runtime/stop commands, JSON output for `dcc id`, docs, and CLI tests that use dry-run success instead of fragile Docker error parsing. Kept ignored Docker smokes for real build/exec/run coverage. Verified fmt, tests, clippy, build, help output, dry-run JSON output, ignored-test listing, and workflow lint with `actionlint 1.7.12`.
+Added global `--dry-run` and `--format text|json` flags, stable dry-run reports, Docker-boundary exits for build/runtime/stop commands, JSON output for `dcc id`, docs, and CLI tests that use dry-run success instead of fragile Docker error parsing. Kept ignored Docker smokes for real build/exec/run coverage. Verified fmt, tests, clippy, build, help output, dry-run JSON output, ignored-test listing, and workflow lint with `actionlint 1.7.12`.
 
 ## Scope and acceptance
 
