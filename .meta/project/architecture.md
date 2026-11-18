@@ -737,7 +737,7 @@ every waiter FIFO via a non-blocking `<>` open (so an orphaned FIFO with no read
 cannot wedge PID 1). On success `wait-ready` exits `0`; on hook failure it prints the
 failing hook name and the tail of `/run/dcc/hook.log` to stderr and exits `252`, which
 the host maps to a clear error. Only after readiness does `dcc-exec` run the user
-command and deregister on exit. `dcc start` (which runs no command) calls
+command. Its registration remains until the supervisor proves the wrapper terminated. `dcc start` (which runs no command) calls
 `dcc-ctl wait-ready` host-side so a hook failure surfaces immediately.
 
 Host-side `wait-ready` and `wait-hooks` controls inherit the container's configured
@@ -756,22 +756,41 @@ readiness signal (`wait-ready`) so `postStartCommand` always completes before
 
 **Phase 5 — teardown**
 
-The container retains its relays after foreground commands return. The `dcc-exec` wrapper deregisters the command from the supervisor (via an
-`EXIT` trap) as the command exits. The supervisor's drain decision keys off an
-in-process `arrived` shell variable (set to `1` the moment any command ever registers),
-the active-command count `n`, and — for one-shot containers only — a 10 s orphan
-reaper that starts after `bootstrap-status` is written. The rules are: if `stopping`
-exists and `n == 0`, exit (drain); if one-shot, `arrived == 1`, and `n == 0`, exit
-(normal one-shot teardown); if one-shot, `arrived == 0`, and 10 s have elapsed since
-`bootstrap-status`, exit (orphan reaper — covers the host being killed before
-registering); durable containers without `stopping` stay alive. There is no time-based
-startup grace: `STARTUP_GRACE_SECS`, `PRIMED`, the `started` variable, and the grace
-branch are gone — the 10 s window starts only after bootstrap completes, so a long
-`postStartCommand` never brings it closer. Durable containers never reap, so `dcc
-start` (which runs no command) and the build-preparation container are unaffected.
-Docker's `--rm` removes the container once the supervisor exits. The host does not
-manage teardown state — it only waits for the container to disappear so port
-listeners are cleanly gone. Durable containers remain running until `dcc stop`.
+The container retains its relays after foreground commands return. Command admission,
+record retirement, mode promotion, explicit stop and final idle/orphan decisions use
+one stable container-private `/run/dcc/lifecycle.lock`, taken exclusively with `flock`.
+The wrapper checks `stopping` and publishes a complete PID/kernel-start-time record
+under that lock, then closes its lock descriptor before readiness or user work.
+The supervisor inspects and retires records under the same lock and remembers any
+accepted registration, including a wrapper that already completed between polls.
+There is no separate `arrived` file or wrapper-side deregistration trap.
+
+Process identity comes from `/proc/PID/stat` field 22, parsed after the last closing
+parenthesis of the command name. Matching live or stopped processes protect their
+registrations. Vanished processes, changed start times and terminated states permit
+retirement. Malformed/unreadable or otherwise uncertain identity remains active with
+diagnostics. PID/start time detects reuse during inspection; it is not an exit-status
+channel or an atomic pidfd guarantee for check-then-signal operations.
+
+While holding the lock, PID 1 commits `stopping` when draining with no live/unknown
+registrations, or when a one-shot that has seen work becomes idle. The existing 10 s
+orphan window starts after bootstrap and applies only to one-shots with no accepted
+work (and no initial relay failure). Durable mode never reaps automatically. Promotion
+can win before committed drain; afterwards promotion and registration reject with
+253. No automatic replay, new grace delay, CLI acknowledgement or result journal is
+introduced. Explicit stop closes admission under the lock; stop-now snapshots command
+identities there and signals outside it. Shutdown hooks and readiness/user work also
+run outside critical sections. Lock files are never unlinked/recreated, and lock
+file descriptors are not inherited by arbitrary descendants.
+
+Docker's `--rm` removes the container once the supervisor exits. The host only waits
+for removal; durable containers remain running until stopped. This repairs the
+startup/admission and premature-record-retirement windows but does not guarantee
+Docker delivers status/output after wrapper exit before auto-removal. That separate
+post-exit hazard and pre-command CLI-disconnection detection remain deferred under
+T-0113; the parent task stays open. The changed registration/control contract requires
+version 0.4.0, refusing 0.3 images through the existing minor-version gate. Stop old
+containers, rebuild and recreate them to migrate; no persistent-data migration applies.
 
 `dcc run` command resolution is owned by `run.rs`: project commands are addressed as
 `:<name>`, Feature commands as `<feature-id>:<name>`, and unqualified names are accepted
@@ -1034,6 +1053,8 @@ RUN <updateRemoteUserUID remap: sed-rewrite /etc/passwd + /etc/group,
 # Baked dcc runtime assets:
 COPY .dcc-generated/ /usr/local/share/dcc/
 RUN chmod +x /usr/local/share/dcc/dcc-*
+# Every image with generated assets verifies flock; installs util-linux through
+# apt-get/apk/yum/dnf if absent (including profiles without forwarded ports).
 # Only present when forwardPorts is non-empty (see Port Forwarding below):
 RUN ( /usr/local/share/dcc/dcc-relay --check >/dev/null 2>&1 \
  || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends socat util-linux) \

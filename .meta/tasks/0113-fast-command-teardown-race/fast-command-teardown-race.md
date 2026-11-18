@@ -1,7 +1,7 @@
 # T-0113: Diagnose and fix fast-command teardown race
 
 - Authority: user task-recording request, subsequent design/reproduction request, explicit task-update requests, and user preference for the current approach after crash analysis, and evidence/design review with task update, 2026-11-17; user acceptance of shared locking and process identity with task-update request, 2026-11-18; revision r8.
-- Scope: selected next slice is the startup/admission race repair using supervisor-owned record cleanup, a shared lifecycle lock, and wrapper process identity. Product implementation remains pending. Docker result delivery after process exit and pre-command CLI-disconnection detection remain deferred.
+- Current execution: r9 authorizes and delivers the selected startup/admission repair; see [execution and quality evidence](execution-r9.md) and the authoritative [task README](README.md). The r8 and earlier sections below preserve design history. Docker result delivery after process exit and pre-command CLI-disconnection detection remain deferred.
 - Evidence: [initial observation](../../archive/tasks/0111-reproduce-cold-one-shot-startup-status-137-and/quality-startup-reproduction.md), [deterministic race confirmation](quality-teardown-races.md), and [interactive disconnect observations](quality-interactive-disconnects.md).
 
 ## Problem and outcome
@@ -422,7 +422,7 @@ are not evidence of a repaired race and were not rerun for this investigation.
 
 ## Remaining research
 
-- Prepare the selected r8 shared-lock, supervisor-owned retirement and PID/start-time design for implementation, including deterministic startup/admission regressions and image/protocol qualification. Implementation has not been requested in this update.
+- The selected r8 startup/admission design was implemented and verified under r9; see [execution evidence](execution-r9.md). Parent completion still requires addressing the separately deferred post-exit result-delivery hazard.
 - Deferred: investigate Docker result delivery after process exit. The r7 journal/transport option remains unselected; it is not a prerequisite for the r8 startup-race slice.
 - Preserve automatic cleanup after normal wrapper exit when the CLI disappears; examine abrupt wrapper death, stale records, concurrent commands, and stop/reset behavior explicitly.
 - Use the existing deterministic checkpoints to assess candidates; avoid treating a fixed sleep as a completion guarantee.

@@ -115,7 +115,7 @@ fn generate_dockerfile_inner(
         "LABEL dcc.version={}",
         shell_quote(env!("CARGO_PKG_VERSION"))
     ));
-    if !features.is_empty() || provision_relay {
+    if !features.is_empty() || provision_relay || install_generated_assets {
         // Suppress debconf's Dialog→Readline→Teletype→Noninteractive fallback
         // warnings that appear when apt-get runs without a controlling terminal.
         // ARG (unlike ENV) is not baked into the final image, so interactive
@@ -193,6 +193,19 @@ fn generate_dockerfile_inner(
     if install_generated_assets {
         lines.push("COPY .dcc-generated/ /usr/local/share/dcc/".to_string());
         lines.push("RUN chmod +x /usr/local/share/dcc/dcc-*".to_string());
+        // Every supervisor uses kernel flock, even without forwarded ports.
+        // Keep an already compatible base/Feature implementation; otherwise
+        // provision the supported distro package and fail the build if absent.
+        lines.push(
+            r#"RUN (command -v flock >/dev/null 2>&1 \
+ || (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && apt-get install -y --no-install-recommends util-linux) \
+ || (command -v apk >/dev/null 2>&1 && apk add --no-cache util-linux) \
+ || (command -v yum >/dev/null 2>&1 && yum install -y util-linux) \
+ || (command -v dnf >/dev/null 2>&1 && dnf install -y util-linux) \
+ || (printf '%s\n' 'dcc: unable to install lifecycle flock' >&2; false)) \
+ && sh -c 'exec 9</dev/null; flock -x 9'"#
+                .to_string(),
+        );
     }
     // Validate the baked port relay after features have run. A compatible
     // tool supplied by the base image or a feature needs no package installation;
@@ -743,11 +756,40 @@ mod tests {
         let feature_pos = df.find("ordering-fixture/install.sh").unwrap();
         let copy_pos = df.find("COPY .dcc-generated/").unwrap();
         let relay_pos = df.find("dcc-relay --check").unwrap();
-        let apt_pos = df.find("command -v apt-get").unwrap();
+        let apt_pos = df[relay_pos..].find("command -v apt-get").unwrap() + relay_pos;
         assert!(
             feature_pos < copy_pos && copy_pos < relay_pos && relay_pos < apt_pos,
             "features and the baked wrapper must precede relay provisioning: {df}"
         );
+    }
+
+    #[test]
+    fn supervisor_only_context_provisions_and_checks_flock() {
+        let context = build_context(
+            "alpine:3",
+            &[],
+            &[],
+            "root",
+            false,
+            &crate::supervisor::baked_supervisor_assets(),
+            None,
+        )
+        .unwrap();
+        let mut archive = tar::Archive::new(std::io::Cursor::new(&context));
+        let mut dockerfile = String::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap().as_ref() == std::path::Path::new("Dockerfile") {
+                std::io::Read::read_to_string(&mut entry, &mut dockerfile).unwrap();
+            }
+        }
+        assert!(dockerfile.contains("ARG DEBIAN_FRONTEND=noninteractive"));
+        assert!(dockerfile.contains("RUN (command -v flock"));
+        assert!(dockerfile.contains("exec 9</dev/null; flock -x 9"));
+        assert!(!dockerfile.contains("socat"));
+        for manager in ["apt-get", "apk", "yum", "dnf"] {
+            assert!(dockerfile.contains(&format!("command -v {manager}")));
+        }
     }
 
     #[test]

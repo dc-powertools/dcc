@@ -584,6 +584,19 @@ when no container is active.
   exits.
 - `dcc stop --kill`: unconditionally kills the container with `docker kill`.
 
+Command admission, mode promotion, and drain decisions share one lifecycle lock.
+At the wrapper admission boundary, registration either wins before drain commits
+or rejects with status 253 before user code runs. Retry explicitly on a fresh
+container after that rejection.
+The supervisor retains registrations until their wrapper processes have terminated;
+a disconnected live job still prevents normal one-shot teardown. Unreadable or
+unverifiable process identity retains the registration for diagnosis; `stop --kill`
+remains available for a wedged container.
+
+This startup/admission repair does not resolve the separate Docker result-delivery
+hazard after process exit: container removal can still race retrieval of a completed
+command's status or output.
+
 ## Lifecycle Hooks
 
 `dcc` separates build preparation from runtime startup. This differs from tools
@@ -769,3 +782,8 @@ To apply changes, stop the container, rebuild when needed, and start it again.
 `build` and `build --refresh-only` refuse while the profile
 runtime is running. Upgrading from 0.1.x to 0.2.x requires an explicit stop, rebuild,
 and recreation because the container supervisor protocol changed.
+
+Version 0.4 changes command registration and lifecycle locking. Stop existing
+0.3 containers, rebuild with `dcc build`, and recreate them before using the new
+CLI. Runtime commands refuse images from a different minor version; `stop` remains
+best effort for older containers.

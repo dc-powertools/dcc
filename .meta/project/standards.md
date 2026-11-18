@@ -12,11 +12,11 @@ Record only commands verified by successful execution in this environment.
 | Toolchain check | `cargo --version` | Cargo on `PATH` | Passed; reported `cargo 1.98.0 (797e8a9bc 2026-08-05)`. | 2026-09-28 |
 | Toolchain check | `rustc --version` | Rust on `PATH` | Passed; reported `rustc 1.98.0 (88d9e12ae 2026-08-18)`. | 2026-09-28 |
 | Component check | `rustup component list --installed \| rg 'rustfmt\|clippy'` | `rustup` and `rg` on `PATH` | Passed; `rustfmt` and `clippy` components are installed for the active toolchain. | 2026-07-14 |
-| Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-09-28 |
-| Type check | `cargo check --locked` | Rust toolchain and dependencies available | Passed for `dcc v0.2.0`. | 2026-09-28 |
-| Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-09-28 |
-| Test suite | `cargo test --locked --quiet` | Rust toolchain and dependencies available | Passed; 580 unit tests and 122 runnable integration tests, with 43 ignored by default (5 local relay tests also passed when explicitly selected). | 2026-09-28 |
-| Build | `cargo build --locked` | Rust toolchain and dependencies available | Passed for the dev profile. | 2026-09-28 |
+| Format | `cargo fmt --check` | Rust toolchain with `rustfmt` installed | Passed with no diff. | 2026-11-18 |
+| Type check | `cargo check --locked` | Rust toolchain and dependencies available | Passed for `dcc v0.4.0`. | 2026-11-18 |
+| Lint | `cargo clippy --all-targets -- -D warnings` | Rust toolchain with `clippy` installed | Passed with warnings denied across production and test targets. | 2026-11-18 |
+| Test suite | `cargo test --locked --quiet` | Rust toolchain and dependencies available | Passed; 592 unit and 125 runnable integration tests; 57 ignored by default. All 37 Docker smoke tests also passed explicitly; T-0113 execution evidence records scope. | 2026-11-18 |
+| Build | `cargo build --locked` | Rust toolchain and dependencies available | Passed for `dcc v0.4.0` (dev profile). | 2026-11-18 |
 | CLI smoke run | `cargo run -- --help` | Rust toolchain and dependencies available | Passed; printed CLI help for `dcc`. | 2026-07-14 |
 | Workflow lint | `actionlint .github/workflows/*.yml` | `actionlint` on `PATH` | Passed for every workflow with no findings using `actionlint 1.7.12`. | 2026-09-09 |
 | Release workflow contract | `bash scripts/check-release-workflow.sh` | Bash plus standard `awk` and `grep`; run from the repository root | Passed; verified trusted CI reuse, direct-tag CI gating, release-build gating, final publication gating, and the autotag trust assertion. | 2026-09-28 |

@@ -557,6 +557,116 @@ fn hook_script(cmd: &LifecycleCommand, user: &str, workdir: &str, source: &str) 
 // Script sources
 // ---------------------------------------------------------------------------
 
+/// Shared shell implementation of the container-private lifecycle boundary.
+/// Callers close fd 9 before invoking hooks, readiness waits or user commands.
+fn lifecycle_functions() -> &'static str {
+    r#"
+LOCK="$STATE/lifecycle.lock"
+
+lifecycle_lock() {
+    # Open the existing inode read-only: root controls must also work when
+    # protected_regular forbids O_CREAT on this user's file in sticky /run/dcc.
+    exec 9<"$LOCK"
+    flock -x 9
+}
+
+lifecycle_unlock() {
+    # Closing (rather than just unlocking) prevents children inheriting the lock.
+    exec 9<&-
+}
+
+mark_stopping() {
+    [ ! -f "$STOPPING" ] || return 0
+    stopping_tmp=$(mktemp "$STATE/stopping.XXXXXX")
+    chmod 0644 "$stopping_tmp"
+    mv -f "$stopping_tmp" "$STOPPING"
+}
+
+# Return 0 with proc_state/proc_start, 1 for proven absence, 2 for unknown.
+# The final ') ' terminates comm, which may itself contain spaces and ')'.
+proc_identity() {
+    proc_pid=$1
+    case "$proc_pid" in ''|0*|*[!0-9]*) return 2 ;; esac
+    if proc_stat=$(cat "/proc/$proc_pid/stat" 2>/dev/null); then
+        case "$proc_stat" in "$proc_pid ("*") "*) ;; *) return 2 ;; esac
+        proc_fields=${proc_stat##*) }
+        set -f
+        set -- $proc_fields
+        set +f
+        [ "$#" -ge 20 ] || return 2
+        proc_state=$1
+        case "$proc_state" in R|S|D|T|t|Z|X|x|I|K|W|P) ;; *) return 2 ;; esac
+        shift 19
+        proc_start=$1
+        case "$proc_start" in ''|*[!0-9]*) return 2 ;; esac
+        return 0
+    fi
+    # A failed read alone is not proof of exit (e.g. EACCES). Enumerate the
+    # searchable parent successfully before treating an absent PID as dead.
+    [ -x /proc ] || return 2
+    proc_entries=$(ls -1 /proc 2>/dev/null) || return 2
+    case "
+$proc_entries
+" in *"
+$proc_pid
+"*) return 2 ;; esac
+    return 1
+}
+
+# Sets identity_result to live/dead/unknown and record_pid/record_start only
+# from a complete, valid record. Unknown records must continue blocking drain.
+inspect_record() {
+    identity_result=unknown
+    record_pid=
+    record_start=
+    [ -f "$1" ] && [ ! -L "$1" ] || return 0
+    record_data=$(cat "$1" 2>/dev/null) || return 0
+    set -f
+    set -- $record_data
+    set +f
+    [ "$#" -eq 2 ] || return 0
+    case "$1" in ''|0*|*[!0-9]*) return 0 ;; esac
+    case "$2" in ''|*[!0-9]*) return 0 ;; esac
+    record_pid=$1
+    record_start=$2
+    if proc_identity "$record_pid"; then
+        if [ "$proc_start" != "$record_start" ]; then
+            identity_result=dead
+        else
+            case "$proc_state" in
+                Z|X|x) identity_result=dead ;;
+                *) identity_result=live ;;
+            esac
+        fi
+    else
+        proc_result=$?
+        [ "$proc_result" -ne 1 ] || identity_result=dead
+    fi
+}
+
+# Called only by the supervisor, under the lifecycle lock, in its own shell so
+# arrived remembers even a wrapper that registered and exited between polls.
+retire_records() {
+    n=0
+    unknown_seen=0
+    for record in "$ACTIVE"/*; do
+        [ -e "$record" ] || [ -L "$record" ] || continue
+        inspect_record "$record"
+        if [ -n "$record_pid" ]; then arrived=1; fi
+        case "$identity_result" in
+            dead) rm -f "$record" ;;
+            live) n=$((n + 1)) ;;
+            *) n=$((n + 1)); unknown_seen=1 ;;
+        esac
+    done
+    if [ "$unknown_seen" -eq 1 ] && [ "${unknown_reported:-0}" -eq 0 ]; then
+        echo 'dcc-supervisor: cannot determine wrapper identity; retaining active records' >&2
+    fi
+    unknown_reported=$unknown_seen
+}
+"#
+}
+
 /// PID 1 supervisor. Owns mode, startup hooks, readiness, the active-command set,
 /// drain/teardown, and the one-shot orphan reaper.
 fn supervisor_script() -> String {
@@ -567,7 +677,6 @@ set -eu
 
 STATE="__STATE_DIR__"
 ACTIVE="$STATE/active"
-ARRIVED="$STATE/arrived"
 MODE_FILE="$STATE/mode"
 STOPPING="$STATE/stopping"
 STATUS="__STATUS__"
@@ -575,7 +684,13 @@ WAITERS="__WAITERS__"
 HOOK_LOG="__HOOK_LOG__"
 SHUTDOWN="__DCC_SHARE__/dcc-shutdown"
 
+__LIFECYCLE_FUNCTIONS__
+
 mkdir -p "$ACTIVE" "$WAITERS"
+# PID 1 alone creates this inode once, before publishing mode/readiness. Every
+# participant opens it without O_CREAT; never unlink or replace it.
+(umask 022; set -C; : > "$LOCK")
+chmod 0644 "$LOCK"
 
 # --- Argument parsing: --mode <oneshot|durable> [--expect-command]
 #                        [--start-hooks <dir>] ---
@@ -602,7 +717,9 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+lifecycle_lock
 printf '%s' "$mode" > "$MODE_FILE"
+lifecycle_unlock
 
 __RELAY_FUNCTIONS__
 
@@ -645,31 +762,17 @@ signal_waiters() {
     done
 }
 
-active_count() {
-    if [ ! -d "$ACTIVE" ]; then
-        echo 0
-        return
-    fi
-    n=0
-    for f in "$ACTIVE"/*; do
-        [ -f "$f" ] || continue
-        n=$((n + 1))
-    done
-    echo "$n"
-}
-
 # Run bootstrap in the background so the main loop can start polling
 # immediately. bootstrap writes STATUS and signals waiters when done.
 relay_start
 bootstrap &
-bootstrap_done=0
 arrived=0
+unknown_reported=0
 
 # SIGTERM (e.g. docker stop / docker kill) => run shutdown and exit cleanly.
-trap 'run_shutdown; exit 0' TERM
+trap 'lifecycle_unlock; lifecycle_lock; mark_stopping; lifecycle_unlock; run_shutdown; exit 0' TERM
 
 run_shutdown() {
-    : > "$STOPPING"
     if [ -x "$SHUTDOWN" ]; then
         "$SHUTDOWN" || true
     fi
@@ -687,36 +790,33 @@ while true; do
         bootstrap_started_sec=$(date +%s)
     fi
 
-    n=$(active_count)
-    if [ "$n" -gt 0 ] || [ -f "$ARRIVED" ]; then
-        arrived=1
-    fi
-
+    lifecycle_lock
+    retire_records
+    shutdown=0
     if [ -f "$STOPPING" ]; then
-        if [ "$n" -eq 0 ]; then
-            run_shutdown
-            exit 0
-        fi
-    elif [ "$(cat "$MODE_FILE")" = "oneshot" ]; then
-        if [ "$arrived" -eq 1 ] && [ "$n" -eq 0 ]; then
-            run_shutdown
-            exit 0
-        fi
-        # Orphan reaper: no command ever registered and bootstrap finished
-        # more than REAPER_SECS ago. Only for one-shot containers.
-        if [ "$arrived" -eq 0 ] && [ "$bootstrap_finished" -eq 1 ] && [ ! -f "$STATE/relay-start-failed" ]; then
+        if [ "$n" -eq 0 ]; then shutdown=1; fi
+    elif [ "$(cat "$MODE_FILE")" = "oneshot" ] && [ "$n" -eq 0 ]; then
+        if [ "$arrived" -eq 1 ]; then
+            shutdown=1
+        elif [ "$bootstrap_finished" -eq 1 ] && [ ! -f "$STATE/relay-start-failed" ]; then
+            # The orphan decision shares the registration boundary, including
+            # when no valid work has yet been observed. Unknown records block it.
             now=$(date +%s)
             elapsed=$((now - bootstrap_started_sec))
-            if [ "$elapsed" -ge "__REAPER_SECS__" ]; then
-                run_shutdown
-                exit 0
-            fi
+            if [ "$elapsed" -ge "__REAPER_SECS__" ]; then shutdown=1; fi
         fi
+    fi
+    if [ "$shutdown" -eq 1 ]; then mark_stopping; fi
+    lifecycle_unlock
+    if [ "$shutdown" -eq 1 ]; then
+        run_shutdown
+        exit 0
     fi
     # Durable without stopping: stay alive forever.
     sleep __POLL_SECS__
 done
 "#
+    .replace("__LIFECYCLE_FUNCTIONS__", lifecycle_functions())
     .replace("__RELAY_FUNCTIONS__", include_str!("relay_supervisor.sh"))
     .replace("__RT_MOUNT__", RT_MOUNT)
     .replace("__STATE_DIR__", STATE_DIR)
@@ -741,6 +841,8 @@ STATUS="__STATUS__"
 WAITERS="__WAITERS__"
 HOOK_LOG="__HOOK_LOG__"
 
+__LIFECYCLE_FUNCTIONS__
+
 case "${1:-}" in
     snapshot)
         [ "$#" -eq 1 ] || exit 64
@@ -764,29 +866,51 @@ case "${1:-}" in
         exit "$result"
         ;;
     mode)
-        # Atomic replacement also works when Linux protected_regular forbids
-        # root from truncating a user-owned file in the sticky state tmpfs.
+        [ "$#" -le 2 ] || exit 64
+        case "${2:-durable}" in oneshot|durable) ;; *) exit 64 ;; esac
+        lifecycle_lock
+        if [ -f "$STOPPING" ]; then
+            lifecycle_unlock
+            echo 'dcc: container is shutting down; retry on a fresh container' >&2
+            exit 253
+        fi
+        # Atomic replacement also supports root controls in a sticky state dir.
         tmp=$(mktemp "$STATE/mode.XXXXXX")
         printf '%s' "${2:-durable}" > "$tmp"
         chmod 0644 "$tmp"
         mv -f "$tmp" "$MODE_FILE"
+        lifecycle_unlock
         ;;
     stop)
-        # Graceful: stop accepting new commands, drain, then exit.
-        mkdir -p "$STATE"
-        : > "$STOPPING"
+        lifecycle_lock
+        mark_stopping
+        lifecycle_unlock
         ;;
     stop-now)
-        # Forceful: signal registered commands, run shutdown hooks, exit.
-        mkdir -p "$STATE"
-        : > "$STOPPING"
-        if [ -d "$STATE/active" ]; then
-            for f in "$STATE/active"/*; do
-                [ -f "$f" ] || continue
-                pid=$(cat "$f" 2>/dev/null || true)
-                [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true
-            done
-        fi
+        lifecycle_lock
+        mark_stopping
+        targets=
+        for record in "$STATE/active"/*; do
+            [ -e "$record" ] || [ -L "$record" ] || continue
+            inspect_record "$record"
+            case "$identity_result" in
+                live) targets="$targets $record_pid:$record_start" ;;
+                unknown) echo 'dcc-ctl: cannot determine wrapper identity; not signalling unknown record' >&2 ;;
+            esac
+        done
+        lifecycle_unlock
+        # Signals happen outside the lock. Rechecking start time avoids knowingly
+        # signalling a reused PID, but is not atomic pidfd-level protection.
+        for target in $targets; do
+            target_pid=${target%:*}
+            target_start=${target#*:}
+            if proc_identity "$target_pid" && [ "$proc_start" = "$target_start" ]; then
+                case "$proc_state" in
+                    Z|X|x) ;;
+                    *) kill -TERM "$target_pid" 2>/dev/null || true ;;
+                esac
+            fi
+        done
         ;;
     wait-ready|wait-hooks)
         # Block until the supervisor signals bootstrap completion, then return
@@ -852,6 +976,7 @@ case "${1:-}" in
         ;;
 esac
 "#
+    .replace("__LIFECYCLE_FUNCTIONS__", lifecycle_functions())
     .replace("__RT_MOUNT__", RT_MOUNT)
     .replace("__STATE_DIR__", STATE_DIR)
     .replace("__DCC_SHARE__", DCC_SHARE)
@@ -860,18 +985,17 @@ esac
     .replace("__HOOK_LOG__", HOOK_LOG)
 }
 
-/// Command wrapper. Registers a command, waits for readiness, runs it, deregisters
-/// on any exit. Exits with the command's status.
+/// Command wrapper. Registers its process identity, waits for readiness, and runs
+/// the command. Leaves retirement to PID 1 and exits with the command's status.
 fn exec_script() -> String {
     r#"#!/bin/sh
 # dcc command wrapper. Registers one command with the supervisor, waits for
-# readiness, runs it, and deregisters on exit (normal, error, or signal).
+# readiness and runs it. PID 1 retires its record only after the wrapper exits.
 # Exits with the command's status.
 set -eu
 
 STATE="__STATE_DIR__"
 ACTIVE="$STATE/active"
-ARRIVED="$STATE/arrived"
 STOPPING="$STATE/stopping"
 CTL="__DCC_SHARE__/dcc-ctl"
 
@@ -880,26 +1004,33 @@ if [ "$#" -lt 1 ]; then
     exit 64
 fi
 
-# Refuse new work once a graceful stop is in progress.
+__LIFECYCLE_FUNCTIONS__
+
+# Capture our own identity before publication, then make admission and the full
+# record atomic with respect to retirement, stop, promotion and orphan drain.
+if ! proc_identity "$$"; then
+    echo 'dcc-exec: cannot determine wrapper process identity' >&2
+    exit 254
+fi
+wrapper_start=$proc_start
+lifecycle_lock
 if [ -f "$STOPPING" ]; then
+    lifecycle_unlock
     echo "dcc: container is shutting down; retry on a fresh container" >&2
     exit 253
 fi
+record="$ACTIVE/dcc-$$-$wrapper_start"
+record_tmp=$(mktemp "$STATE/registration.XXXXXX")
+printf '%s %s\n' "$$" "$wrapper_start" > "$record_tmp"
+chmod 0644 "$record_tmp"
+mv -f "$record_tmp" "$record"
+lifecycle_unlock
 
-mkdir -p "$ACTIVE"
-id=$(printf 'dcc-%s-%s' "$$" "$(date +%s%N 2>/dev/null || date +%s)")
-record="$ACTIVE/$id"
-printf '%s' "$$" > "$record"
-# Persist that at least one command reached the supervisor. A very short
-# command can register and deregister between PID 1 polling intervals; this
-# marker prevents one-shot containers from waiting for the orphan reaper.
-: > "$ARRIVED"
-
-# Deregister on any exit, then propagate the child's status.
+# Never retire our own record: even EXIT traps run before the process is dead.
+# The supervisor observes actual death (including zombies) without a CLI ack.
 status=0
-trap 'rm -f "$record"; exit "$status"' EXIT
-trap 'rm -f "$record"; status=130; exit 130' INT
-trap 'rm -f "$record"; status=143; exit 143' TERM
+trap 'status=130; exit 130' INT
+trap 'status=143; exit 143' TERM
 
 # Wait for the supervisor to finish bootstrap (hooks) before running the
 # command. The active record is already created, so the supervisor cannot
@@ -915,9 +1046,14 @@ status=$?
 set -e
 exit "$status"
 "#
+    .replace("__LIFECYCLE_FUNCTIONS__", lifecycle_functions())
     .replace("__STATE_DIR__", STATE_DIR)
     .replace("__DCC_SHARE__", DCC_SHARE)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "supervisor_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1143,10 +1279,8 @@ mod tests {
     fn exec_script_registers_then_waits_then_runs() {
         let s = exec_script();
         assert!(s.contains("ACTIVE"));
-        assert!(s.contains("ARRIVED"));
+        assert!(!s.contains("ARRIVED"));
         assert!(s.contains("record"));
-        assert!(s.contains(": > \"$ARRIVED\""));
-        assert!(s.contains("rm -f \"$record\""));
         assert!(s.contains("\"$@\""));
         // Commands wait for hooks even when relays are degraded.
         let wait_pos = s.find("\"$CTL\" wait-hooks").expect("wait-hooks present");
@@ -1494,9 +1628,9 @@ mod tests {
         assert_eq!(contents, "0");
     }
 
-    /// A very short command can register and deregister between supervisor poll
-    /// intervals. The persistent arrived marker must still make oneshot drain
-    /// immediately instead of waiting for the orphan reaper.
+    /// A very short wrapper can register and exit between supervisor polls.
+    /// Its retained identity record must make oneshot drain immediately instead
+    /// of waiting for the orphan reaper.
     #[cfg(unix)]
     #[test]
     fn oneshot_supervisor_drains_after_fast_exec_command() {

@@ -209,6 +209,15 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_registration_protocol_rejects_old_and_new_images() {
+        let old = SemVer::parse("0.3.1").unwrap();
+        let new = SemVer::parse("0.4.0").unwrap();
+        assert!(!old.compatible_with(&new));
+        assert!(!new.compatible_with(&old));
+        assert!(new.compatible_with(&SemVer::parse("0.4.1").unwrap()));
+    }
+
+    #[test]
     fn semver_incompatible_when_major_differs() {
         let a = SemVer::parse("1.2.3").unwrap();
         let b = SemVer::parse("2.0.0").unwrap();

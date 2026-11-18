@@ -7,8 +7,8 @@ archives supply targeted historical evidence.
 ## Task Cursor and Global Control
 
 - Current tasks: `.meta/tasks/README.md`
-- Primary task: T-0108
-- Primary details: `.meta/tasks/0108-persistence-image-ownership/README.md`
+- Primary task: T-0113
+- Primary details: `.meta/tasks/0113-fast-command-teardown-race/README.md`
 - Scheduling: Running
 - Global pause source or reason: None
 
@@ -33,6 +33,7 @@ next action and results. Neither discovery index owns those fields.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
+| 2026-11-18 | T-0113 startup/admission slice verified and delivered locally; parent remains open for deferred Docker result delivery. | `.meta/tasks/0113-fast-command-teardown-race/execution-r9.md` |
 | 2026-11-18 | Three migration review findings corrected (yspqig). | `.meta/archive/tasks/yspqig-migration-review-fixes/README.md` |
 | 2026-11-18 | Task-directory migration, separate discovery/archive and random-ID policy completed (T-0120). | `.meta/archive/tasks/0120-task-directory-migration/README.md` |
 | 2026-11-17 | Readiness regression UID portability and diagnostics verified with actual host UIDs 1000/0/1001 and 35 Docker smokes (T-0117). | `.meta/archive/tasks/0117-readiness-fixture-uid-portability/README.md` |
@@ -54,7 +55,7 @@ next action and results. Neither discovery index owns those fields.
 ## Hygiene
 
 - Last general consistency/pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 13 (including yspqig)
+- Repository-changing deliveries since that pass: 14 (including yspqig and the T-0113 startup/admission slice)
 - General pass due: 2026-10-08 or after 10 changes; still due.
 - T-0120 performs scoped migration consistency and pruning, not a new application or
   general project-freshness audit. Preserve the broader overdue maintenance action.

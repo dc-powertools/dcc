@@ -12,7 +12,7 @@ Diagnose and fix fast-command teardown returning 137 after successful startup.
 
 ## Authority / Revision
 
-User shared-lock/process-identity acceptance and task-update request 2026-11-18 / r8
+User execution/orchestration request 2026-11-18 / r9
 
 ## Status
 
@@ -24,26 +24,27 @@ None
 
 ## Route / Risk
 
-Initiative / Medium
+Initiative / High
 
 ## Approval Or Blocker
 
-Keep open; product implementation pending; pre-command detection and post-exit Docker result work deferred
+Verified startup/admission slice delivered under r9. Docker post-exit result delivery remains deliberately deferred; no result journal or transport design is selected. Pre-command disconnection detection also remains deferred.
 
 ## Next Safe Action
 
-Prepare selected shared-lock, supervisor-owned record retirement and PID/start-time approach for implementation; qualify startup regressions and image/protocol requirements.
+Select the design and scope for deferred Docker post-exit status/output delivery before claiming full T-0113 completion. Do not treat the verified startup/admission slice as authorization to implement the unselected journal or disconnect-detection work.
 
 ## Result
 
-Both original races and post-exit Docker result hazard documented. User selected startup/admission slice: exclusive lifecycle flock, supervisor retires persistent wrapper records using PID/start time, removes separate ARRIVED, and commits STOPPING under the lock. Retains container-owned cleanup without CLI acknowledgment. Result journal is not selected or a prerequisite; process-exit result work deferred. No product fix; task open.
+Implemented and independently reviewed the selected startup/admission repair: one lifecycle flock, atomic persistent wrapper PID/start-time records, supervisor-owned retirement, no ARRIVED file, and locked drain/promotion/stop. Version 0.4.0 fences incompatible 0.3 images. All 717 runnable default tests, 18 focused lifecycle tests (included in that total), 37 live Docker smokes, fmt, locked check/build and Clippy passed. Debian/Alpine root/non-root packaging and actual CLI/Docker-client loss qualified. The parent remains open for the deferred post-exit Docker result-delivery hazard; this is not a claim that every exit-137/output-loss case is fixed. See execution-r9.md for evidence and limits.
 
 ## Scope and acceptance
 
-The outcome above and the linked scope/acceptance in supporting evidence define this task. For catalog-only completed tasks, the preserved outcome and result are the available acceptance/completion evidence; this migration invents no additional checks or claims.
+Execution r9 delivers the selected shared-lock/process-identity startup/admission slice. The original task remains open for the separately deferred post-exit Docker status/output hazard. The linked design and execution evidence define acceptance and verification; the verified slice does not select a journal, CLI acknowledgment or pre-command disconnect detection.
 
 ## Supporting evidence
 
+- [Execution r9](execution-r9.md) — Implementation, agent ownership, verification and review evidence.
 - [quality teardown races](quality-teardown-races.md) — Verification and review evidence.
 - [quality interactive disconnects](quality-interactive-disconnects.md) — Verification and review evidence.
 - [fast command teardown race](fast-command-teardown-race.md) — Scope, design or execution evidence.

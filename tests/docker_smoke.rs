@@ -1555,3 +1555,145 @@ fn readiness_marker_permission_failure_reports_before_timeout() {
     );
     assert_success(&fx.dcc(&["stop"]));
 }
+
+// Cross-user controls exercise Linux sticky-tmpfs/protected_regular behavior:
+// the configured user owns the lock, while the host sends controls as root.
+#[cfg(unix)]
+#[test]
+#[ignore = "requires Docker daemon and local image builds"]
+fn lifecycle_lock_root_controls_preserve_admission_boundary() {
+    for (image, user) in [
+        (IMAGE, "dev"),
+        (IMAGE, "root"),
+        ("alpine:3.22", "dev"),
+        ("alpine:3.22", "root"),
+    ] {
+        let sync = BootstrapSync::new();
+        let fx = DockerFixture::new();
+        fx.write_config(
+            &serde_json::json!({
+                "image": image,
+                "containerUser": user,
+                "updateRemoteUserUID": false,
+                "mounts": [format!("type=bind,source={},target=/dcc-bootstrap-sync", sync.0.path().display())]
+            })
+            .to_string(),
+        );
+        assert_success(&fx.dcc(&["build"]));
+        assert_success(&fx.dcc(&["start"]));
+        let container = fx.container_id();
+        let mut job = BootstrapRun::start(
+            &fx,
+            &[
+                "exec", "sh", "-c",
+                "touch /dcc-bootstrap-sync/job; while [ ! -f /dcc-bootstrap-sync/finish ]; do sleep 0.05; done",
+            ],
+        );
+        job.wait_for_marker(&sync, &container, "job")
+            .unwrap_or_else(|error| panic!("{error}"));
+        let state = docker(&[
+            "exec", &container, "sh", "-c",
+            "set -e; test -f /run/dcc/lifecycle.lock; test ! -e /run/dcc/arrived; for f in /run/dcc/active/*; do test -f \"$f\" || exit 1; read -r pid started extra < \"$f\"; test -n \"$pid\" && test -n \"$started\" && test -z \"$extra\" || exit 1; done",
+        ]);
+        assert_success(&state);
+        for verb in ["mode", "stop"] {
+            let mut args = vec![
+                "exec",
+                "-u",
+                "0",
+                &container,
+                "/usr/local/share/dcc/dcc-ctl",
+                verb,
+            ];
+            if verb == "mode" {
+                args.push("durable");
+            }
+            assert_success(&docker(&args));
+        }
+        let promotion = docker(&[
+            "exec",
+            "-u",
+            "0",
+            &container,
+            "/usr/local/share/dcc/dcc-ctl",
+            "mode",
+            "durable",
+        ]);
+        assert_eq!(promotion.status.code(), Some(253));
+        let rejected = docker(&[
+            "exec",
+            &container,
+            "/usr/local/share/dcc/dcc-exec",
+            "touch",
+            "/dcc-bootstrap-sync/rejected-command-ran",
+        ]);
+        assert_eq!(rejected.status.code(), Some(253));
+        assert!(!sync.marker("rejected-command-ran").exists());
+        // A second root control must open the same existing lock and tolerate
+        // the already committed stopping marker without truncating it.
+        assert_success(&docker(&[
+            "exec",
+            "-u",
+            "0",
+            &container,
+            "/usr/local/share/dcc/dcc-ctl",
+            "stop-now",
+        ]));
+        std::fs::write(sync.marker("finish"), "").unwrap();
+        let _ = job.wait(&sync, &container);
+        assert_success(&fx.dcc(&["stop"]));
+        assert_no_running_container(&container);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires Docker daemon and local image builds"]
+fn lifecycle_disconnected_finite_job_retires_without_cli_acknowledgment() {
+    for user in ["dev", "root"] {
+        let sync = BootstrapSync::new();
+        let fx = DockerFixture::new();
+        fx.write_config(
+            &serde_json::json!({
+                "image": IMAGE,
+                "containerUser": user,
+                "updateRemoteUserUID": false,
+                "mounts": [format!("type=bind,source={},target=/dcc-bootstrap-sync", sync.0.path().display())]
+            })
+            .to_string(),
+        );
+        assert_success(&fx.dcc(&["build"]));
+        let container = fx.container_id();
+        let mut job = BootstrapRun::start(
+            &fx,
+            &[
+                "exec", "sh", "-c",
+                "touch /dcc-bootstrap-sync/job; while [ ! -f /dcc-bootstrap-sync/finish ]; do sleep 0.05; done; touch /dcc-bootstrap-sync/completed",
+            ],
+        );
+        job.wait_for_marker(&sync, &container, "job")
+            .unwrap_or_else(|error| panic!("{error}"));
+        let instance = running_container_instance_id(&container);
+        job.child.0.kill().unwrap();
+        assert!(!job.child.0.wait().unwrap().success());
+        // Inspect current wrapper liveness rather than treating a stale on-disk
+        // filename as evidence that the disconnected job survived.
+        let live = docker(&[
+            "exec", &instance, "sh", "-c",
+            "set -eu; n=0; for f in /run/dcc/active/*; do test -f \"$f\"; read -r pid start < \"$f\"; kill -0 \"$pid\"; n=$((n + 1)); done; test \"$n\" -eq 1; test ! -e /run/dcc/stopping",
+        ]);
+        assert_success(&live);
+        std::fs::write(sync.marker("finish"), "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !running_container_instance_ids(&container).is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "disconnected finite job failed to drain\n{}",
+                job.diagnostics(&sync, &instance)
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(sync.marker("completed").exists(), "job lost with its CLI");
+        assert_container_removed(&instance);
+    }
+}

@@ -24,6 +24,16 @@ shell assets must quote data, use structured arguments and avoid `eval`. Preserv
 phase/user separation and bounded diagnostics without leaking secrets, environment
 values, tokens or response bodies.
 
+The lifecycle lock is a stable container-private inode, opened read-only by each
+participant so root controls work with a non-root owner under Linux sticky-directory
+protections. Close lock descriptors before hooks, readiness waits and user children;
+never unlink/recreate the inode. Commit stopping under that same exclusive lock.
+Only the supervisor retires complete wrapper PID/start-time registrations. Unknown
+identity must preserve work and emit bounded diagnostics; stop-now must not signal
+unknown records. Rechecking identity before TERM reduces known PID-reuse mistakes
+but does not provide an atomic pidfd guarantee. The post-exit Docker result-delivery
+hazard remains outside the T-0113 startup/admission repair.
+
 Historical boundary and delivery rationale: `.meta/archive/tasks/0004-dcc-rewrite/threat-dcc-runtime.md`
 and `.meta/archive/tasks/0028-supervisor-delivery-model/decision-0004-embed-supervisor-in-image.md`. The former includes retired
 host-hook and netcat-era controls; current behavior uses parse-and-warn host hooks and

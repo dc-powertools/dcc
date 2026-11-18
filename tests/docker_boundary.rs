@@ -580,7 +580,11 @@ fn runtime_refuses_missing_version_label_before_container_work() {
 
 #[test]
 fn runtime_refuses_major_and_minor_incompatibility_with_rebuild_instruction() {
-    for incompatible in [incompatible_major_version(), incompatible_minor_version()] {
+    for incompatible in [
+        incompatible_major_version(),
+        incompatible_minor_version(),
+        "0.3.1".to_string(), // Previous wrapper registration/control protocol.
+    ] {
         let fx = FakeDockerFixture::new(root_image_config());
         let output = fx.output(&["--strict", "start"], Some(&incompatible));
         assert_failure(&output);
