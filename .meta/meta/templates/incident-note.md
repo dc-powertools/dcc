@@ -1,5 +1,9 @@
 # Incident Or Near-Miss Note
 
+Optional task-local supporting structure: use only useful sections and link from the
+authoritative task README. Applicable quality/security gates remain required regardless
+of filename or whether this template is used.
+
 Use for production incidents, escaped defects, security near misses, failed releases, repeated failed agent runs, or serious issues caught late.
 
 ## Summary
@@ -38,6 +42,6 @@ Use for production incidents, escaped defects, security near misses, failed rele
 
 - New or updated test:
 - New or updated standard:
-- New or updated decision record:
+- New or updated recorded decision:
 - New or updated framework rule:
 - Residual risk:

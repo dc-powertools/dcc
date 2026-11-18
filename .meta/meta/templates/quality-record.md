@@ -1,5 +1,9 @@
 # Quality Record
 
+Optional task-local supporting structure: use only useful sections and link from the
+authoritative task README. Applicable quality/security gates remain required regardless
+of filename or whether this template is used.
+
 Use only the sections applicable to this change. This is the single durable template for
 implementation readiness, acceptance and consistency review, verification results,
 formal findings, and completion status.

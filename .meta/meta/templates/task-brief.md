@@ -1,14 +1,14 @@
 # Task Brief
 
-Create this only when the catalog row is insufficient for selection, acceptance,
-routing, or review. The catalog remains the owner of status, dependencies, approvals or
-blockers, next action, and result.
+Use only when the task README needs linked scope or acceptance detail. The task
+README remains authoritative for lifecycle, dependencies, approvals/blockers, next
+action and result. This supporting file does not duplicate those fields.
 
 ## Identity And Source
 
 - Task ID:
 - Initial revision: r1
-- Catalog: `.meta/tasks/README.md`
+- Authoritative task README: `README.md`
 - Accepted source: User instruction / accepted in-scope finding / decision
 - Source reference and date:
 - Parent or split task IDs: None
@@ -54,7 +54,7 @@ Out of scope:
 
 Complete when the task is selected or framing makes the route clear.
 
-- Cataloged route and risk: See this task's catalog row.
+- Route and risk: See this task's README.
 - Why this route:
 - Why this risk gate:
 - Upstream artifacts required:

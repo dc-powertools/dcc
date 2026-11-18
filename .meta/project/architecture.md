@@ -465,8 +465,9 @@ post-`${containerEnv:VAR}` resolution:
   cache targets such as `/usr/local/cargo`, `/var/cache/apt`, `/home/dev/.cargo`,
   `/root/.cargo`, and `/workspace/target` nest beneath these and remain accepted.
 
-The guards are textual; a state path that is a symlink in the image resolving
-outside itself is not detected in `normalize_state_path`.
+The normalization guards are textual. Persistence preparation separately rejects
+symlinked durable roots and ancestors, and verifies exclusion targets and ancestors
+in the image; do not treat textual normalization alone as the filesystem boundary.
 
 ### Persistence and image ownership
 
@@ -1054,8 +1055,9 @@ already creates the user does not cause a conflict.
 
 The `updateRemoteUserUID` remap (`src/uid.rs`) follows the reference
 `devcontainers/cli` `scripts/updateUID.Dockerfile` logic and runs immediately
-after user creation so features install into the already-remapped home
-ownership. It is planned by `plan_uid_remap` from the resolved `containerUser`,
+after user creation. Features may already have installed defaults with the old
+numeric ownership; absence-only initialization handles new persistent copies as
+described below. It is planned by `plan_uid_remap` from the resolved `containerUser`,
 the `updateRemoteUserUID` config flag (default `true`), and the host process
 uid/gid (`host_ids`, captured via `id -u`/`id -g` on Linux and macOS). Windows
 and unsupported hosts return no host IDs and explicitly skip remap planning.
@@ -1106,7 +1108,7 @@ must include the full command that was attempted.
 dcc [--strict] [--dry-run] [--debug] [--format text|json] [-p/--profile <name>] <command> [global-flags] [command-flags] [--] [args...]
 
 Commands:
-  build  [--no-cache] [--refresh-only] [--reseed-state]
+  build  [--no-cache] [--refresh-only]
   run    [--memory <size>] [--cpus <n>] [command-name]
   exec   [--memory <size>] [--cpus <n>] <command...>
   start  [--memory <size>] [--cpus <n>]
@@ -1203,3 +1205,28 @@ boundary; the trusted path builds and runs the marker image. Exact-name resource
 guards, listener shutdown, temporary-directory closure, and post-cleanup Docker
 inspection cover success and forced-failure cleanup without changing host or daemon
 trust.
+
+
+## Current requirements and historical rationale
+
+This document owns the applicable architecture. Task evidence records why it changed;
+accepted historical text does not override newer requirements here. Read
+[security.md](security.md) for cross-cutting trust and release constraints.
+
+| Historical choice | Applicable requirement and evolution | Rationale evidence |
+| --- | --- | --- |
+| State initialization | Initialize wholly absent roots from the finished image without durable mounts; keep existing roots, including empty ones, unchanged. Do not bake a duplicate seed store. T-0108 replaces T-0022's digest reconciliation and seed ledger with absence-only initialization and verified exclusions. Same-installation-layer relocation by installers is permitted; moving earlier-layer bytes does not reclaim them. | T-0022: `.meta/archive/tasks/0022-state-seeding/decision-0001-state-seeding-from-image.md`; T-0108: `.meta/tasks/0108-persistence-image-ownership/decision-0010-persistence-image-ownership.md` |
+| UID mapping | Bake the reference-compatible remap into the generated build stage on Linux and macOS; skip disabled, root, numeric-user, unavailable-ID and unsupported-host cases. Keep target-UID collision no-op and target-GID collision handling; never re-own existing host data as a workaround. | T-0026: `.meta/archive/tasks/0026-update-remote-user-uid/decision-0002-update-remote-user-uid-in-build-stage.md`; macOS amendment T-0054 |
+| Uniform image build | Every profile uses the generated dcc stage and version label; no pull/tag fast path. Current base freshness follows `--no-cache` as described above; the earlier `--update` option in the decision is historical. Feature lockfiles and their former emission rules were removed by T-0041. | T-0027: `.meta/archive/tasks/0027-remove-image-fast-path/decision-0003-remove-image-fast-path.md` |
+| Supervisor delivery | Bake supervisor/control/wrapper scripts, preserve runtime host substitution for startup hooks, and refuse incompatible runtime protocols. Patch releases remain protocol compatible; `build` repairs old images and `stop` retains legacy best effort. | T-0028: `.meta/archive/tasks/0028-supervisor-delivery-model/decision-0004-embed-supervisor-in-image.md`; implementation T-0029/T-0030 |
+| Missing image variables | Require explicit defaults for absent `${containerEnv:VAR}`; a present empty value stays empty and bypasses a fallback. Structured validation follows substitution. T-0056 supersedes T-0051's absent-to-empty upstream behavior; `${localEnv:…}` keeps its own compatibility semantics. | T-0056: `.meta/archive/tasks/0056-missing-container-env-error/decision-0006-require-missing-container-env-default.md`; superseded T-0051: `.meta/archive/tasks/0051-container-env-contract/decision-0005-container-env-substitution.md` |
+| Registry trust | Exact-authority additive trust, bounded strict certificate-only PEM validation, declaration-relative paths, independently selected redirect/realm trust, and sanitized diagnostics remain required. | T-0071: `.meta/archive/tasks/0071-decide-the-production-custom-ca-configuration-and-security/decision-0007-registry-scoped-custom-ca.md`; implementation T-0072 |
+| Forwarding and reuse | Existing PID 1 owns packaged socat relays with native `-t 2`; snapshot reuse warns and defers detectable changes. No separate relay container, automatic runtime replacement, or custom deadline timer. Build/refresh preflight refuses running or indeterminate runtimes before mutation; dry-run reports the skipped Docker check. | T-0095: `.meta/archive/tasks/0095-relay-placement/decision-0008-relay-in-development-container.md`, `.meta/archive/tasks/0095-relay-placement/decision-0009-warn-and-defer-running-config-changes.md`; detailed design T-0096 |
+
+These are implementation requirements, not blanket qualification claims. T-0097 still
+requires its remaining Docker/Desktop/distro matrix. T-0108 keeps Desktop/macOS and
+package/updater qualification and broad Feature rollout gates open; only its bounded
+Linux slice and unpublished local Codex pilot have recorded completion. Preserve mixed
+Codex daemon preferences, `.tmp` marketplace state and symlink-sensitive
+`app-server-control`; prepare daemon software in image packages. Release supporting
+dcc before dependent Feature metadata; this does not authorize publication.

@@ -1,4 +1,7 @@
-# NNNN: Decision Title
+# Choice Analysis
+
+Optional task-local rationale, not a separate decision system. Reflect accepted
+requirements in the owning current project/framework document and link this evidence.
 
 Status: Proposed
 

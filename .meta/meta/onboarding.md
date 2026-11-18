@@ -14,15 +14,17 @@ owns onboarding and records the result in `.meta/README.md`.
    links, and then instantiate the cursor. If relocation could break an external link,
    published contract, or tool, record the collision and obtain the owner's destination
    decision first. Never copy state from the framework source repository or another
-   project. Preserve an existing valid cursor as project evidence. A valid catalog
-   begins with `# Task Catalog`. If `.meta/tasks/README.md` is absent, instantiate it
-   from [templates/task-catalog.md](templates/task-catalog.md), capturing the onboarding
-   request as the first task. If that path contains other documentation, never overwrite
-   it: inventory and relocate it to an appropriate non-catalog home, then update
+   project. Preserve an existing valid cursor as project evidence. A valid current index
+   begins with `# Current Tasks`. If `.meta/tasks/README.md` is absent, instantiate it
+   from [templates/task-index.md](templates/task-index.md), capturing the onboarding
+   request in a task directory README with a collision-checked random six-letter ID.
+   The index links that record and owns discovery only; global scheduling and the
+   primary pointer belong in the cursor. If that path contains other documentation, never overwrite
+   it: inventory and relocate it to an appropriate non-index home, then update
    repository-local inbound links. If relocation could break an external link, published
    contract, or tool, record the collision and obtain the owner's destination decision
-   before instantiating the catalog. If an established project already has task records,
-   assign stable IDs and link them without inventing missing history.
+   before instantiating the index. If an established project already has task records,
+   preserve existing stable IDs and link their authoritative READMEs without inventing missing history.
 2. **Inventory the repository.** Read instruction files, manifests, lockfiles, CI and
    release configuration, contributor docs, source entry points, tests, recent commits,
    and current working-tree state. Classify the project as greenfield or established.
@@ -41,12 +43,15 @@ owns onboarding and records the result in `.meta/README.md`.
    the product outcome, safety boundary, architecture, or acceptance criteria. State
    what default will be used if the owner does not answer.
 6. **Seed useful memory.** Create `.meta/project/brief.md`,
-   `.meta/project/context.md`, assumptions, glossary, source map, standards, decisions,
-   or other categorized project records only when the inventory produced real content.
+   `.meta/project/context.md`, assumptions, glossary, source map, standards,
+   current requirements or optional task evidence only when the inventory produced real content.
 7. **Prove cold-start readiness.** From the recorded files, confirm that a new agent can
-   identify the product outcome, task catalog, primary and eligible tasks, dependency-
+   identify the product outcome, current index, primary and eligible tasks, dependency-
    blocked or parked work, next safe action, canonical commands, important constraints,
-   and approvals without asking the owner to repeat repository-recoverable facts.
+   and approvals without asking the owner to repeat repository-recoverable facts or
+   reading historical entries. Separately prove a targeted archive lookup can recover
+   historical rationale and conflicting decisions. Check both line and byte/content
+   budgets; a short table can still contain excessive startup context.
 
 ## Greenfield Variant
 

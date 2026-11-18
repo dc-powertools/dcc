@@ -11,40 +11,40 @@ irreversible, or external actions still govern when a novel case is not listed.
 
 Agents may do these without asking when they are relevant to the current task:
 
-- Read project docs, source code, tests, and decision records.
+- Read project docs, source code, tests, and decision rationale.
 - Search current external sources when facts may have changed.
-- Create or update the task catalog, task briefs or notes, product briefs, assumptions,
-  glossary entries, source maps, standards, and decision records.
+- Create or update task READMEs and indexes, task evidence, product briefs, assumptions,
+  glossary entries, source maps, standards, and current requirements.
 - Add or update tests that verify touched behavior.
 - Run build, lint, typecheck, test, format, and local app commands.
 - Install local development utilities needed to inspect, test, or format the project when repository policy allows it.
 - Refactor narrowly when required to implement the requested change safely.
 - Patch this framework when a clear repeated gap or user preference should become durable.
 - Read and maintain `.meta/README.md`; append concrete learnings and framework edits to
-  their canonical logs when triggered.
+  the originating task evidence when triggered.
 - Create a local, task-scoped commit after completing and verifying file changes in a Git repository, following [Local Commit Completion](#local-commit-completion).
 - Continue after a clarification window using explicit assumptions.
 - Resume interrupted work from repository state, task notes, plans, and agent rosters without asking the product owner to reconstruct context.
-- Delegate bounded in-scope work under the standing request in root `AGENTS.md` when
+- Delegate bounded in-scope work when authorized by the user or applicable instructions and when
   [the decomposition rules](agent-definitions.md#decomposition-rules) justify it.
 - Re-spawn stale or lost sub-agents only when their work is still needed and their ownership boundaries remain safe.
 
 ## Task Intake Persistence
 
-The Root Orchestrator may persist newly delivered instructions to
-`.meta/tasks/README.md` without waiting for the active implementation task to finish.
-Write the minimal row immediately as working-tree state and preserve it through
-interruptions. Do not create a commit for an unfinished task merely to persist intake;
+The Root Orchestrator persists newly delivered independent instructions in their own
+task README and adds a current-index discovery link immediately, without waiting for
+the active implementation task. Allocate IDs through the collision-checked random
+procedure in knowledge-management. Preserve these records through interruptions. Do not create a commit for an unfinished task merely to persist intake;
 that requires separate explicit user direction or established repository authority.
-At task completion, stage only that task's catalog hunks and preserve unrelated pending
-rows. Intake does not mark a task complete or grant implementation authority.
+At task completion, stage only that task's records and relevant index hunks; preserve unrelated pending
+records. Intake does not mark a task complete or grant implementation authority.
 
 ## Local Commit Completion
 
 A completed task that changes files in a Git repository must end with a local commit.
 The agent does this without asking for separate approval after implementation and
-verification are complete. Include that task's catalog/result update in the same
-commit. Adjacent catalog rows or satisfied dependencies do not justify bundling
+verification are complete. Include that task's README/result update in the same
+commit. Adjacent discovery entries or satisfied dependencies do not justify bundling
 unrelated implementations.
 
 Use this sequence:
@@ -84,7 +84,7 @@ Agents must stop or ask before:
 - Publishing releases, sending external communications, charging money, or changing customer data.
 - Adding high-risk production dependencies when no project policy covers dependency approval.
 - Making legal, compliance, medical, financial, or employment decisions.
-- Changing security boundaries or access policy without clear requirements or a decision record.
+- Changing security boundaries or access policy without clear requirements or a recorded decision.
 - Expanding CI/CD, deployment, credential, production, or agent-tool permissions without an accepted approval path.
 - Violating the canonical source-trust and hostile-instruction rules in
   [knowledge-ingestion.md](knowledge-ingestion.md).
@@ -116,16 +116,16 @@ stale-worker, and final-response behavior.
 
 At the end of each non-trivial task, the agent should decide whether to update:
 
-- `.meta/tasks/README.md` for task intake, lifecycle, dependencies, and results.
+- Task READMEs for intake, lifecycle, dependencies, approvals and results; indexes for discovery.
 - `.meta/README.md` for the primary-task pointer, recent outcome, and hygiene counter.
 - `.meta/project/brief.md` for stable product facts.
 - `.meta/project/assumptions.md` for unresolved uncertainty.
 - `.meta/project/source-map.md` for important sources and freshness.
 - `.meta/project/glossary.md` for domain vocabulary.
-- `.meta/decisions/` for meaningful choices.
+- Current project/framework owners for meaningful choices; task evidence for rationale.
 - `.meta/project/standards.md` for project-specific rules.
-- `.meta/tasks/` for briefs and resumable execution detail.
-- `.meta/learning/retrospectives.md` for concrete cross-session learning signals.
+- Task-local supporting files for proportional analysis and resumable execution detail.
+- Originating task evidence for concrete cross-session learning signals.
 - This framework for process improvements.
 
 If no durable knowledge changed, do not create noise.
@@ -185,8 +185,8 @@ A required approval blocks the dependent action, not unrelated safe work within 
 existing scope. Checkpoint the gated item, continue independent work when useful, and
 batch compatible decision requests so the product owner can resolve them together.
 
-Park each task-specific approval in the catalog and put necessary detail in its linked
-task record. Reserve `.meta/README.md` for global or cross-task approvals. Present a
+Park each task-specific approval with complete source, action, boundary, status and
+bound revision in its authoritative task README; link detailed evidence as useful. Reserve `.meta/README.md` for global or cross-task approvals. Present a
 decision in ten lines or fewer using:
 
 ```md

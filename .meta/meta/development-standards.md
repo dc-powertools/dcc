@@ -1,6 +1,6 @@
 # Development Standards
 
-These standards apply unless the project has a more specific standard in `.meta/project/standards.md` or an accepted decision record.
+These standards apply unless the project has a more specific standard in `.meta/project/standards.md` or an accepted current requirement.
 
 ## General Engineering
 

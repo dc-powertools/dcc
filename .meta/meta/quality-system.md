@@ -28,7 +28,7 @@ Escalate the path when the change is hard to reverse, touches multiple ownership
 
 Small-batch target: one user outcome, one process decision, or one refactor theme that a reviewer can understand without reconstructing the whole project.
 
-Catalog adjacency, shared dependencies, or receipt in one message does not make
+Index adjacency, shared dependencies, or receipt in one message does not make
 unrelated tasks one batch. Combine instructions only when they are deliberately
 reframed before material work as one coherent outcome with compatible acceptance,
 route, risk, verification, and commit boundaries.
@@ -70,7 +70,7 @@ checks Not applicable; do not call a required check optional after seeing its re
 ## Task Isolation
 
 Each selected task has its own route, risk gate, acceptance criteria, verification
-evidence, completion status, and commit boundary. The number or risk of pending catalog
+evidence, completion status, and commit boundary. The number or risk of pending
 tasks does not change the selected task's route or permit weaker gates.
 
 A `Blocked` or `Needs verification` task blocks its dependents. Independent eligible
@@ -81,7 +81,7 @@ earlier task's acceptance, reopen it or create a corrective task and withhold an
 aggregate completion claim.
 
 `Done`, `Needs verification`, `Blocked`, `Cancelled`, and `Superseded` are task-scoped.
-The presence of one `Done` task does not make pending catalog work complete, and the
+The presence of one `Done` task does not make other pending work complete, and the
 presence of one blocked task does not stall unrelated safe work.
 
 ## Verification Outcomes
@@ -121,16 +121,20 @@ be tailored to an already-known implementation, protect the integrity of the evi
 
 ## Quality Record
 
-Use [templates/quality-record.md](templates/quality-record.md) when a change is high or
+Store required readiness, verification, review and completion evidence in the owning
+task README or linked task-local files. Filenames and template use are optional;
+applicable gates and evidence fields remain required.
+
+Record durable quality evidence when a change is high or
 critical risk, major or cross-cutting, release-bound, unusually large, kept together
-despite a split trigger, formally reviewed, or Needs verification. Its applicable
-sections provide one home for readiness, acceptance, checks, review findings,
+despite a split trigger, formally reviewed, or Needs verification. The applicable
+sections of [templates/quality-record.md](templates/quality-record.md) guide one home for readiness, acceptance, checks, review findings,
 consistency, and residual risk. Low and medium changes may use the final response when
 it records scope and observed required results.
 
 ## Implementation Readiness Gate
 
-Use the readiness section of [templates/quality-record.md](templates/quality-record.md)
+Record readiness evidence, guided by [templates/quality-record.md](templates/quality-record.md),
 before implementation when work is major, cross-cutting, high-risk, ambiguous, or
 depends on several upstream artifacts.
 
@@ -193,7 +197,7 @@ Run for security-sensitive changes:
 
 ## Threat Model Card Trigger
 
-Use [templates/threat-model-card.md](templates/threat-model-card.md) before implementation or release when a change touches:
+Record a threat analysis, guided by [templates/threat-model-card.md](templates/threat-model-card.md), before implementation or release when a change touches:
 
 - Authentication, authorization, permissions, secrets, payments, personal data, or regulated data.
 - External input, file upload/download, webhooks, plugins, browser automation, or AI tool calls.
@@ -235,7 +239,7 @@ Before release or merge, confirm:
 
 - Acceptance criteria are met.
 - Required tests and builds pass.
-- Decision records are updated for significant choices.
+- Current requirements and task rationale are updated for significant choices.
 - Documentation reflects current behavior.
 - Rollback, migration, or mitigation path exists for high-risk changes.
 - Monitoring, logging, or audit needs are covered.
@@ -255,15 +259,15 @@ When a defect is found:
 
 ## Incident And Near-Miss Learning
 
-Use [templates/incident-note.md](templates/incident-note.md) for production incidents, escaped defects with user impact, security near misses, failed releases, repeated failed agent runs, or checks that caught a serious issue late.
+Record incident learning, guided by [templates/incident-note.md](templates/incident-note.md), for production incidents, escaped defects with user impact, security near misses, failed releases, repeated failed agent runs, or checks that caught a serious issue late.
 
 The note should be blameless and short. Capture impact, detection, timeline,
 contributing factors, what worked, what failed, and concrete follow-up. At least one
-follow-up should consider whether a test, standard, decision record, runbook, quality
+follow-up should consider whether a test, standard, recorded decision, runbook, quality
 record, or framework rule would prevent recurrence.
 
 ## Formal Review Record
 
-Use the review section of [templates/quality-record.md](templates/quality-record.md)
-when a change needs a durable formal review. Keep findings concrete and ordered by
+Record a durable formal review when the risk gate requires one, guided by the review
+section of [templates/quality-record.md](templates/quality-record.md). Keep findings concrete and ordered by
 severity.

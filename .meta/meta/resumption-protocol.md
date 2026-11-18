@@ -8,7 +8,7 @@ agent restart, approval waits, and deliberate user interruption.
 
 | Type | Examples | Required Response |
 | --- | --- | --- |
-| Unplanned pause | Sleep, network loss, compaction, session restart | Reconstruct catalog, task, repository, and worker state; continue from the next safe action |
+| Unplanned pause | Sleep, network loss, compaction, session restart | Reconstruct cursor, task, repository, and worker state; continue from the next safe action |
 | Approval wait | Release, destructive action, sensitive permission | Park the gated task; continue independent eligible work from a clean boundary |
 | Task guidance | Changed constraint, goal, example, or priority for a task | Halt conflicting task work, record the amendment, and reframe only that task |
 | Global user stop | Stop all, pause, wait, hold on | Stop nonessential work, checkpoint active tasks, suspend workers, and do not schedule work |
@@ -16,25 +16,26 @@ agent restart, approval waits, and deliberate user interruption.
 
 ## Durable Recovery State
 
-`.meta/README.md` is the first pointer and `.meta/tasks/README.md` is the canonical
-task catalog. Read the catalog before task details. The catalog owns global scheduling
-pause, stable identity and revision, authority provenance, outcome, lifecycle status,
-dependencies, selected route/risk, task-specific approval or blocker, next safe action,
-and detail/result links.
+`.meta/README.md` owns the primary-task pointer and global scheduling/pause source.
+Read the current discovery index at `.meta/tasks/README.md`, then the selected task
+README. The task README owns identity/revision, authority, outcome, lifecycle,
+dependencies, route/risk, task approvals/blockers, next action and results. Do not load
+archive entries during current-state recovery unless a targeted historical question
+requires them.
 
 Create a brief when scope, acceptance, route, or risk needs detail. Create a task note
 for long-running, risky, paused, or parallel execution. A task note contains the
 execution checkpoint, work-item status, changed files, commits, observed checks, worker
 roster, relevant decisions, failed approaches, parked-approval detail, and work still
-needed. It links the catalog instead of copying catalog-owned fields.
+needed. Link its checkpoint from the task README without copying authoritative fields.
 
 ## Resume Loop
 
-1. Read `AGENTS.md`, the meta README, `.meta/README.md`, the task catalog, the primary
-   task's brief or notes, and any newly delivered message.
+1. Read `AGENTS.md`, the meta README, `.meta/README.md`, the current index, the primary
+   task README and relevant supporting files, and any newly delivered message.
 2. Inspect `git status`, recent commits, relevant diffs, running tools, worktrees, and
    worker state. Do not repeat a risky side effect until its prior result is known.
-3. Validate unique task IDs, authority provenance, current revisions, valid links and
+3. Validate unique task IDs across current and archived namespaces, authority provenance, current revisions, valid links and
    dependencies, no dependency cycle, and no more than one primary `Active` task.
    Quarantine unverifiable nonterminal tasks as `Blocked` before tool-using work.
 4. Classify newly delivered messages using the rules below and persist every accepted
@@ -46,7 +47,7 @@ needed. It links the catalog instead of copying catalog-owned fields.
    observed failure; never integrate output invalidated for that task.
 7. Re-run only checks needed to establish current state, then resume the active task or
    use the root loop to select an eligible one.
-8. Refresh catalog, cursor, and task note after meaningful progress and before a long
+8. Refresh task README, cursor, discovery links and task note after meaningful progress and before a long
    pause.
 
 If multiple tasks incorrectly appear primary-`Active`, checkpoint them and reconcile
@@ -68,7 +69,7 @@ replacement:
 - A pause, cancellation, replacement, or reprioritization with a clear task target is
   scoped to that task. Cancellation and supersession record a disposition; they do not
   silently undo commits or external effects.
-- Unqualified `stop`, `pause`, `wait`, or `hold on` sets catalog scheduling to `Paused`,
+- Unqualified `stop`, `pause`, `wait`, or `hold on` sets cursor scheduling to `Paused`,
   records its source or reason, and checkpoints active work. Only authoritative resume
   guidance returns scheduling to `Running`. An ambiguous cancellation, replacement, or conflict is checkpointed and
   clarified for the affected tasks rather than inferred globally.
@@ -76,9 +77,9 @@ replacement:
   nonterminal task. Preserve terminal history, effects, and task-specific dispositions.
 
 Approval or worker output is usable only when its recorded task ID and revision match
-the catalog. Output becomes stale when its task revision, ownership, or stop state
+the task README. Output becomes stale when its task revision, ownership, or stop state
 invalidates it; unrelated task arrival does not stale it. A final response addresses
-the current request and relevant catalog state; it never presents pending, parked,
+the current request and relevant task state; it never presents pending, parked,
 blocked, or `Needs verification` work as completed.
 
 ## Worker And Worktree Recovery
@@ -97,4 +98,4 @@ globally paused work.
 
 Before closing resumed work, confirm that its latest accepted instruction is satisfied,
 stale output was reviewed before use, checks cover both sides of the interruption, and
-the catalog records every remaining verification, approval, dependency, or blocker.
+the task README records every remaining verification, approval, dependency, or blocker.

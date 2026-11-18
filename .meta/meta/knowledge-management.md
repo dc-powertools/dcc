@@ -1,201 +1,156 @@
 # Knowledge Management
 
-Repository memory must let a cold-start agent find the current cursor, durable facts,
-decisions, and recurrence evidence without asking the product owner to reconstruct them.
+Repository memory must let a cold-start agent recover current requirements and task
+state without treating historical execution or superseded analysis as instructions.
 
 ## Canonical Artifacts
 
-| Artifact | Canonical Purpose | Owner |
+| Artifact | Purpose | Owner |
 | --- | --- | --- |
-| `.meta/README.md` | Always-read pointer to the task catalog and primary task, global approvals, recent outcomes, and maintenance cursor | Root Orchestrator, every session and close |
-| `.meta/project/brief.md` | Product purpose, users, outcomes, and constraints | Agents update from product evidence |
-| `.meta/project/context.md` | Concise stack, technical conventions, and conflict-prone implementation rules | Agents update from code and decisions |
-| `.meta/project/standards.md` | Project-specific rules and the sole canonical command catalog | Agents update only from observed practice and executed commands |
-| `.meta/project/assumptions.md` | Open uncertainty, confidence, impact, and validation | Agent that introduces or resolves the assumption |
-| `.meta/project/glossary.md` | Canonical domain terms and deprecated synonyms | Agent ingesting or changing domain language |
-| `.meta/project/source-map.md` | Important sources, trust, ownership, and freshness | Agent relying on the source |
-| `.meta/project/automation-backlog.md` | Evidence-backed candidates for removing repeated manual work | Agent observing the candidate |
-| `.meta/project/agents.md` | Durable project-specific roles or agent rules justified by repeated use | Root Orchestrator |
-| `.meta/decisions/` | Append-only significant choices and consequences | Decision owner or Root Orchestrator |
-| `.meta/tasks/README.md` | Stable task IDs and revisions, authority provenance, global scheduling pause, outcomes, lifecycle, dependencies, selected route/risk, task approvals or blockers, next actions, detail links, and results | Root Orchestrator, sole writer |
-| `.meta/tasks/NNNN-*-brief.md` | Task-specific scope, acceptance, route/risk rationale, and amendments when the catalog row is insufficient | Root Orchestrator or assigned analyst |
-| `.meta/tasks/NNNN-*-notes.md` | Execution checkpoints for long-running, risky, paused, or parallel work | Root Orchestrator |
-| `.meta/quality/` | Durable readiness, verification, review, and completion evidence | Root Orchestrator or QA owner |
-| `.meta/threat-models/` | Security and trust-boundary analysis | Security or risk owner |
-| `.meta/incidents/` | Blameless incident and near-miss learning | Incident owner |
-| `.meta/learning/retrospectives.md` | Searchable cross-session correction and process-learning signals | Agent observing the signal |
-| `.meta/learning/framework-changelog.md` | Auditable framework edits, pilots, and sunset triggers | Agent changing the framework |
+| `.meta/README.md` | Project cursor, primary-task pointer, global scheduling/pause source, global approvals, recent outcomes, hygiene | Root Orchestrator |
+| `.meta/project/` | Current product, architecture, security, standards, assumptions, glossary, source map, commands and project-specific guidance | Relevant project owner |
+| `.meta/tasks/README.md` | Current task discovery: short summaries, links, optional keywords | Root Orchestrator |
+| `.meta/tasks/<id>-<slug>/README.md` | Authoritative task identity/revision, authority, outcome, scope/acceptance, lifecycle, dependencies, route/risk, approvals/blockers, next safe action and results | Root Orchestrator or explicitly assigned task owner |
+| Task supporting files | Proportional design, research, checkpoints, verification, reviews, threats, incidents, rationale and learning | Assigned evidence owner |
+| `.meta/archive/tasks/README.md` | Separate historical task discovery index | Root Orchestrator |
+| `.meta/archive/tasks/<id>-<slug>/` | Terminal task README and supporting evidence | Retained historical owner |
 
-`.meta/README.md` and `.meta/tasks/README.md` are mandatory after onboarding because
-they are the cold-start cursor and task discovery surface. Create every other project
-artifact only when it has real content.
+The cursor and current index are mandatory after onboarding. Create optional files only
+when they have useful content. Supporting filenames are descriptive and unrestricted;
+no report categories, empty scaffolding or fixed report filenames are mandatory. Task
+READMEs explain and link their supporting material so readers can select relevant files.
+Shared evidence has one explicit canonical owner, with links from other tasks. Filename
+numbers alone never establish ownership. Existing conventional documentation can remain
+in its established home; link its canonical owner.
 
 ## One Home Per Fact
 
-Give each durable fact, rule, decision, or command catalog one canonical home. Other
-artifacts link to that owner instead of restating it. A short entrypoint or handoff
-summary is allowed only when it links the canonical source and is updated in the same
-change. If copies diverge, reconcile the owner and replace the copies with links.
+Current project or reusable framework documents own applicable requirements and
+significant choices. Task READMEs own task state; indexes own discovery only. Indexes
+must not repeat status, dependencies, approvals, next action or results. The cursor owns
+global scheduling and its pause source, and the single primary-task pointer. It may
+summarize recent outcomes without becoming a second work list.
 
-Templates define structure; instantiated project artifacts own facts. A fact appearing
-in a blank example is not a second home, but product-specific values must not be copied
-between the brief, assumptions, glossary, and source map.
-
-For task state, the catalog owns global scheduling pause, identity and revision,
-authority provenance, concise outcome, status, dependencies, selected route/risk,
-task-specific approval or blocker, one next safe action, and detail/result pointers. A
-task brief expands scope, criteria, route/risk rationale, and material amendments. A task note
-owns only the execution checkpoint and evidence needed to resume. The project cursor
-points to these owners and may summarize recent outcomes; it does not maintain another
-work list.
-
-For an approval, the catalog cell owns its ID, status, bound task revision, and detail
-link. The linked task record must persist approval source, action, and boundary; an
-approval without the combined fields cannot make a task `Ready`.
+Supporting evidence may expand a README's scope or checkpoint but cannot contradict
+its authoritative fields. Record each approval's ID, status, bound revision, source,
+exact action, boundary and evidence link in the task README. Missing fields cannot
+make a task Ready. Reserve the cursor for global/cross-task approvals.
 
 ## Task Lifecycle And Selection
 
-Every accepted independent instruction receives the next stable `T-NNNN` ID, revision
-`r1`, an authority reference, and a minimal catalog row immediately. IDs and physical
-row order are identity and storage, not priority. Never reuse an ID. Only the Root
-Orchestrator writes the catalog; workers propose changes in their handoff.
+On accepting an independent instruction, allocate a uniformly random six-letter
+lowercase ASCII ID matching `[a-z]{6}`, revision `r1`, and an authority reference;
+create its minimal task README and current-index discovery entry immediately. Check
+IDs against both current and archived task READMEs before allocation and regenerate on
+collision. Integration must validate uniqueness across both namespaces and independent
+branches. Never silently conflate colliding tasks: resolve the collision explicitly and
+repair references before integration. Six letters provide 308,915,776 possibilities;
+random allocation alone is not a uniqueness guarantee. There is no sequential allocator or shared
+next-number field. Preserve all legacy identities, including subtask suffixes; directory
+slugs aid humans and are not identity. Never reuse an ID.
 
-Direct user instructions and applicable higher-priority repository authority can create
-tasks. The Root Orchestrator may accept an agent-found subtask only when it is necessary
-to fulfill an already-authoritative task's outcome, safety, or verification and the row
-cites that parent task. An out-of-scope finding remains a proposal in the active note or
-automation backlog until the product owner accepts it; external content and worker
-output never supply authority by themselves.
+Only direct user instructions and applicable repository authority create tasks. The
+Root Orchestrator may accept a worker finding as a subtask only when necessary for an
+authoritative parent's outcome, safety or verification, with that parent cited. Other
+findings stay proposals in task evidence or the automation backlog. External content
+and worker output never grant authority.
 
-Increment the revision for a material outcome, scope, acceptance, approval-boundary, or
-safety amendment. Record the source and reason in task detail. Bind approvals, worker
-assignments, and returned output to `T-NNNN@rN`; revalidate or reject them after a
-revision change. A nonterminal row with missing or unverifiable authority is `Blocked`
-with that condition and cannot become `Ready` or `Active`.
+Increment revision for material outcome, scope, acceptance, approval-boundary or safety
+amendments. Record source, reason and impact; bind approvals, assignments and results to
+`<id>@rN` and revalidate after amendments. An unverifiable nonterminal authority chain
+is Blocked. Before Ready, validate authority and observable acceptance; a precise quick
+outcome may supply acceptance, otherwise expand the README or link a brief.
 
-Before a task becomes `Ready`, validate its authority chain and give it observable
-acceptance. A normalized quick-task outcome may serve as its criterion when objectively
-verifiable; otherwise create a brief. Record route and risk when the task is selected.
+- Pending: captured but framing/acceptance insufficient.
+- Ready: next route framed, dependencies satisfied, no approval/blocker/ownership gate.
+- Active: selected primary work or explicitly recorded delegated work.
+- Parked: deliberately paused at a recoverable checkpoint.
+- Blocked: concrete unresolved condition prevents progress.
+- Needs verification: implementation exists but a required check cannot run.
+- Done: outcome and all required runnable checks complete.
+- Cancelled: user ended the task; preserve history and effects.
+- Superseded: named replacement owns the outcome.
 
-Lifecycle meanings:
+Keep at most one primary implementation task Active by default. Select using user
+intent, dependency readiness, approvals, repository safety, unblock value, risk and
+coherent boundaries, never index order or ID. Unverified/blocked tasks block their
+dependents, not independent safe work. Arrival order breaks only immaterial ties.
+`Scheduling: Paused` in the cursor prevents all new selection until authoritative user
+resume guidance. A task pause uses Parked and does not change global scheduling.
 
-- `Pending`: captured, but framing or acceptance is insufficient for selection.
-- `Ready`: framed enough for its next route, with dependencies satisfied and no
-  approval, blocker, ownership, or repository-safety gate.
-- `Active`: selected primary work or explicitly recorded delegated work.
-- `Parked`: deliberately paused at a recoverable checkpoint.
-- `Blocked`: a concrete unresolved condition prevents progress.
-- `Needs verification`: implementation exists but a required check cannot run.
-- `Done`: its outcome and every required runnable check are complete.
-- `Cancelled`: the user ended the task; history and effects remain recorded.
-- `Superseded`: a named task now owns the outcome.
+## Retrieval And Archiving
 
-Keep at most one primary implementation task `Active` by default. Select eligible work
-from dependencies, approvals, blockers, repository safety, user intent, unblock value,
-risk, and coherent boundaries—not catalog order. A blocked or unverified task blocks its
-dependents, not independent eligible work at a clean boundary. Arrival order may break
-only an otherwise immaterial tie.
+Startup reads the cursor, current index and selected task README; search current tasks
+and current project guidance first. Do not require archive entries for current-work
+discovery. Use archives only for targeted historical evidence, failures or conflicting
+decisions; a directory boundary alone does not prevent context contamination.
 
-`Scheduling: Paused` is a durable global stop: checkpoint active tasks and select or
-start nothing until authoritative user guidance resumes scheduling. Task-scoped pauses
-use `Parked` without changing the global field.
+Keep every nonterminal task current, including Needs verification. Before archiving
+Done, Cancelled or Superseded bundles, reconcile still-operative product/process and
+system-wide security requirements into current documentation. Then move the whole
+bundle to `.meta/archive/tasks/`, preserving identity and revision, and update both
+indexes, inbound links, dependencies and cursor references. Reopening reverses the move
+and updates location/references while preserving identity. Do not upgrade historical
+completion claims or invent evidence.
 
-## State Rules
+## Significant Choices
 
-Read the cursor and task catalog at every session start and refresh both at every task
-close. During active work the cursor answers:
-
-- Where is the catalog, and which task is primary?
-- Which global approvals are parked, and what action does each gate?
-- Which dead ends are still relevant?
-- What recently completed, and what durable record explains it?
-- When is the next hygiene pass due?
-
-Keep one primary-task pointer, at most five recently completed entries, and only
-currently relevant global dead ends. Task status and detail belong in the catalog and
-linked task records.
-
-## Decision Records
-
-Create a decision record for a choice that is hard to reverse; materially changes
-product scope, architecture, security, privacy, reliability, cost, workflow, or policy;
-selects a major dependency; or resolves an important conflict.
-
-- One decision per `.meta/decisions/NNNN-short-title.md`.
-- Status is `Proposed`, `Accepted`, `Superseded`, or `Rejected`.
-- Accepted records are append-only. Supersede them with a linked new record.
-- Include context, options, decision, consequences, confidence, sources, and trigger.
-
-Use [templates/decision-record.md](templates/decision-record.md).
+For hard-to-reverse changes or material product, architecture, security, privacy,
+reliability, cost, workflow, policy or dependency choices, update the owning current
+project/framework requirements. Preserve context, alternatives, consequences,
+confidence, sources, acceptance and review triggers in the originating task's evidence;
+[templates/decision-record.md](templates/decision-record.md) is an optional analysis aid,
+not a separate mandatory decision-record system. Git history supplies provenance.
+Link important evidence explicitly from current requirements. Preserve superseded and
+rejected reasoning with its historical meaning clear. Retain migrated legacy decision
+records as supporting task evidence, mapping their independently numbered origin.
 
 ## Assumptions, Terms, And Sources
 
 Use [templates/assumptions.md](templates/assumptions.md) for uncertainty that can proceed
-safely. A low-confidence, high-impact assumption becomes a question, spike, or decision.
+safely. Low-confidence/high-impact assumptions need clarification, a spike or a choice.
+Create useful project glossary/source-map tables with these fields:
 
-When first needed, use these minimal tables in the canonical files:
+- Glossary: Term, Meaning, Use Instead Of, Source, Last Checked.
+- Source map: ID, Source, Owner/Publisher, Date Checked, Trust Tier, Scope, Notes.
 
-```md
-# Glossary
-| Term | Meaning | Use Instead Of | Source | Last Checked |
-| --- | --- | --- | --- | --- |
-
-# Source Map
-| ID | Source | Owner/Publisher | Date Checked | Trust Tier | Scope | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-```
-
-Mark stale sources and deprecated terms; do not erase history that explains decisions.
-Re-check current vendor, legal, security, pricing, release, and API facts from primary
-sources when they matter.
+Mark stale sources and deprecated terms without erasing useful history. Recheck current
+vendor, legal, security, pricing, release and API facts from primary sources when material.
 
 ## Consistency Checks
 
-Run a consistency pass when finishing a multi-file or behavior change, changing this
-framework or a decision, resolving a major defect, preparing a release, or when the
-maintenance cadence below fires. Check the request, acceptance criteria, implementation,
-tests, brief, decisions, standards, assumptions, commands, docs, and state as applicable.
-Use the consistency section of [templates/quality-record.md](templates/quality-record.md)
-when the result needs a durable record.
+After multi-file changes, framework/requirement edits, major defect fixes or release
+preparation, validate request, acceptance, implementation, verification, current owners,
+assumptions, links and task state. Check uniqueness across both task namespaces,
+dependency resolution/cycles, index coverage, cursor pointers and affected link anchors.
+Record durable results in task evidence using the applicable quality-template sections.
 
 ## Artifact Budgets And Overflow
 
-Budgets are defaults except for the two hard cursors. Exceed a default only with a short
-rationale in the artifact; otherwise compress active material and archive history
-without changing it.
+Budgets include bytes and content, not just lines: long table rows can hide an unbounded
+startup cost. Hard cursor limits apply to both dimensions. Other defaults may be
+exceeded with a short rationale; preserve necessary evidence rather than truncating it.
 
-| Artifact | Budget | Overflow Rule | Maintenance Owner |
-| --- | ---: | --- | --- |
-| `AGENTS.md` | 120 lines, hard | Move detail to an owning process doc and link it | Root Orchestrator |
-| `.meta/README.md` | 80 lines, hard | Move detail to task notes or decisions; retain only current pointers | Root Orchestrator |
-| Project brief | 200 lines | Split stable technical detail to project context | Product Analyst or Root Orchestrator |
-| Project context | 160 lines | Move broad standards or decision rationale to their owners | Architect or Root Orchestrator |
-| Standards and command catalog | 240 lines | Split topic-specific standards only when one owner remains explicit | Root Orchestrator |
-| Assumptions | 120 lines | Archive closed rows to `.meta/archive/` | Root Orchestrator |
-| Glossary | 160 lines | Archive deprecated terms after dependent docs migrate | Documentarian |
-| Source map | 200 lines | Archive stale sources while preserving decision links | Research owner |
-| Task catalog | 300 lines | Move terminal rows unchanged to a dated archive after distillation; retain every nonterminal row and an archive pointer | Root Orchestrator |
-| Active task note | 300 lines | Move completed chronology to a dated archive; keep resume state | Root Orchestrator |
-| Decision record | 220 lines each | Prefer linked supporting evidence; never truncate an accepted decision | Decision owner |
-| Retrospective or framework changelog | 20 entries or 160 lines | Move old entries unchanged to a dated archive and link it | Root Orchestrator |
-| Core framework process doc | 300 lines | Split only by a clear ownership boundary and update the index | Root Orchestrator |
+| Artifact | Budget | Overflow Rule |
+| --- | --- | --- |
+| `AGENTS.md` | 120 lines and 12 KiB, hard | Link owning process details |
+| `.meta/README.md` | 80 lines and 8 KiB, hard | Keep current pointers, move detail to owners |
+| Current task index | 150 lines and 16 KiB | Short discovery entries; archive terminal bundles, never omit nonterminal tasks |
+| Project brief/context | 200/160 lines, 20/16 KiB | Split by stable ownership boundary |
+| Standards/commands | 240 lines, 24 KiB | Link topic-specific rules with one explicit owner |
+| Assumptions/glossary/source map | 120/160/200 lines, 12/16/20 KiB | Preserve closed/deprecated history in targeted archives |
+| Task README/checkpoint | 300 lines, 32 KiB | Link descriptive supporting evidence; retain safe resume state |
+| Framework process document | 300 lines, 32 KiB | Split by clear ownership and update index |
 
-Archive under `.meta/archive/` with a date or sequence in the filename. Do not create an
-empty archive directory. Archives are read on a targeted lookup, not every task.
+The archive index can grow with history and is never a startup requirement. Search
+rather than loading it wholesale. Preserve terminal evidence without rewriting history.
 
 ## Maintenance Cadence
 
-The Root Orchestrator runs a consistency and pruning pass after 10 completed
-repository-changing tasks or 30 days since the last pass, whichever occurs first. The
-project cursor holds both counters. The pass must:
-
-1. validate cursor pointers, catalog links, unique IDs, acyclic dependencies, at most
-   one primary active task, parked approvals, and canonical command links;
-2. find budgets over limit and apply their overflow rules;
-3. mark or supersede stale guidance and sources;
-4. search retrospective repeats and evaluate due framework pilots or sunsets;
-5. reconcile duplicated or conflicting guidance at its canonical owner; and
-6. record the date, reset the task counter, and name any incomplete maintenance action.
-
-This scheduled pass owns pruning; agents should still correct dangerous stale guidance
-immediately when they encounter it.
+After 10 completed repository-changing tasks or 30 days, whichever comes first, the
+Root Orchestrator runs a consistency/pruning pass. The cursor holds dates and counters.
+Validate IDs, links, dependencies, authority, primary pointer, global/task approvals and
+command links; check line/byte/content budgets; reconcile stale or duplicated current
+guidance; search task learning and targeted historical evidence for repeated failures;
+review due framework pilots/sunsets. Record the date, reset the counter, and name any
+incomplete maintenance. Correct dangerous stale guidance immediately when encountered.

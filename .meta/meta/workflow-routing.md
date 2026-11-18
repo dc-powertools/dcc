@@ -4,7 +4,7 @@ Choose one route that best describes the work now. Routes are provisional: upgra
 change the route when discovery, review, or testing exposes more ambiguity or impact.
 Risk is not a second workflow taxonomy; it is an independent safety overlay used only
 to select the gates in [quality-system.md](quality-system.md). Route each selected task
-individually. Catalog status, dependency position, and backlog size are not routes.
+individually. Task status, dependency position, and backlog size are not routes.
 
 ## Route Table
 
@@ -13,7 +13,7 @@ individually. Catalog status, dependency position, and backlog size are not rout
 | Quick change | Clear, contained, reversible change with known verification | Short task frame, focused change, relevant checks, diff review |
 | Clarify | User outcome, scope, examples, or acceptance criteria are materially ambiguous | Defaults-first questions or documented assumptions, then a task brief and a new route |
 | Discover | Goal is clear but current behavior, implementation surface, commands, or constraints are unknown | Repository or source findings, verified context, and a new route or bounded patch |
-| Decide | Hard-to-reverse product, architecture, security, dependency, or feasibility choice | Options and consequences; decision record or disposable spike when the choice is significant |
+| Decide | Hard-to-reverse product, architecture, security, dependency, or feasibility choice | Options and consequences; recorded choice rationale or disposable spike when the choice is significant |
 | Initiative | New or cross-cutting product area requiring multiple artifacts or independently verifiable slices | Product/task brief, active task note, decisions as needed, readiness section in a quality record, sliced plan |
 | Correct course | Guidance targeting the selected task, or new evidence, invalidates its scope, criteria, design, or verification | Task-scoped impact note, affected artifacts updated, revised plan and route |
 
@@ -44,7 +44,7 @@ Re-route immediately when:
 ## Next-Action Router
 
 At the end of substantial work, record one concrete next action in the selected task's
-catalog row:
+README:
 
 - implement the next ready slice;
 - review a named diff or artifact;

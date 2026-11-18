@@ -58,13 +58,14 @@ Responsibilities:
 
 - Run the root loop.
 - Run the resume check before continuing interrupted work.
-- Solely own task intake, catalog writes, eligibility, and primary-task selection.
+- Own task intake, discovery-index integration, eligibility and primary-task selection;
+  assign task-record writers explicitly.
 - Decide whether selected work stays single-agent or is decomposed.
 - Maintain the plan, quality bar, and final integration.
 - Maintain the agent roster for multi-agent work: assignment, ownership, status, last known output, and restart policy.
 - Assign clear scopes to specialist agents.
 - Resolve conflicts between agent outputs.
-- Ensure verification, docs, and decision records are complete.
+- Ensure verification, current requirements and task rationale are complete.
 
 Exit criteria:
 
@@ -111,7 +112,7 @@ Responsibilities:
 
 - Compare options against product goals and quality attributes.
 - Minimize complexity while preserving future change paths.
-- Create or update decision records.
+- Update current architecture requirements and preserve rationale in task evidence.
 - Define interfaces, boundaries, migration strategy, and risk controls.
 
 Use when:
@@ -198,7 +199,7 @@ Use when:
 
 ## Decomposition Rules
 
-Root `AGENTS.md` supplies standing authorization; task-level decomposition remains a
+User or applicable repository instructions supply authorization; task-level decomposition remains a
 separate decision with no minimum worker count. Keep work primary when it is small,
 tightly coupled, shares mutable canonical files, or costs more to coordinate than to
 complete. Keep at most one primary implementation task active by default. Delegate only
@@ -223,7 +224,7 @@ isolated checkout needs an approved shared commit, patch, or equivalent transfer
 safe transfer exists, do not decompose. Do not create unauthorized checkpoint commits
 merely to satisfy parallelism.
 
-- Use one writer at a time for `.meta/README.md`, task notes, decisions, command
+- Use one writer at a time for `.meta/README.md`, task records, current requirements, command
   catalogs, and other shared knowledge files. Workers return proposed knowledge updates
   to the Root Orchestrator unless explicitly assigned ownership.
 - Integrate the smallest coherent worker result first. Run its focused checks before

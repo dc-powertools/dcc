@@ -15,13 +15,15 @@ process owner to load next.
 1. Read the applicable root `AGENTS.md` instructions.
 2. Read this meta README in full.
 3. Read `.meta/README.md` when it exists; it is the bounded current-project cursor.
-4. Read `.meta/tasks/README.md` when it exists; it is the canonical task catalog.
+4. Read `.meta/tasks/README.md` when it exists; it is the current task discovery index.
+   Read the selected task README and current project requirements next. Consult archives
+   only for targeted historical evidence, never as mandatory startup context.
 5. Read only the process and project documents relevant to the assignment.
 
 If `.meta/README.md` is missing or does not begin with `# Project State`, or
-`.meta/tasks/README.md` is missing or does not begin with `# Task Catalog`, the add-on
+`.meta/tasks/README.md` is missing or does not begin with `# Current Tasks`, the add-on
 is not fully onboarded. A primary session follows [onboarding.md](onboarding.md),
-preserving colliding documentation, and instantiates the missing cursor or catalog. A
+preserving colliding documentation, and instantiates the missing cursor or index. A
 delegated agent does not initialize shared documentation unless the orchestrator
 assigned that ownership.
 
@@ -35,17 +37,14 @@ The host project's agent-maintained documentation uses these mutable paths:
 
 | Path | Purpose |
 | --- | --- |
-| `.meta/README.md` | Always-read catalog and primary-task pointer, global approvals, recent outcomes, and documentation index |
-| `.meta/project/` | Stable project brief, context, standards, assumptions, glossary, source map, automation backlog, and project-specific agent guidance |
-| `.meta/decisions/` | Append-only significant project or local-framework decisions |
-| `.meta/tasks/` | Canonical `README.md` task catalog plus proportional briefs and resumable notes |
-| `.meta/quality/` | Durable readiness, verification, and review records |
-| `.meta/threat-models/` | Lightweight security and trust-boundary analyses |
-| `.meta/incidents/` | Incident and near-miss records |
-| `.meta/learning/` | Retrospectives and the local framework changelog |
-| `.meta/archive/` | Overflow moved from active artifacts without rewriting history |
+| `.meta/README.md` | Bounded project cursor, primary-task pointer, global scheduling and approvals |
+| `.meta/project/` | Current project knowledge, applicable requirements, standards and command catalog |
+| `.meta/tasks/README.md` | Current task discovery index; no lifecycle state |
+| `.meta/tasks/<id>-<slug>/README.md` | Authoritative task state and links to optional supporting evidence |
+| `.meta/archive/tasks/README.md` | Separate historical discovery index |
+| `.meta/archive/tasks/<id>-<slug>/` | Terminal task bundles with stable identities and revisions |
 
-The project cursor and task catalog are mandatory after onboarding. Create other
+The project cursor and current index are mandatory after onboarding. Create other
 optional files and directories only when they will contain useful information.
 Established host documentation may remain at its required conventional location; link
 to its canonical owner instead of copying facts into framework-managed records.
@@ -68,7 +67,7 @@ These files are optional integration surfaces, not additional policy owners. The
 - can be omitted or removed without changing the core framework workflow.
 
 The current adapter pilot covers Reviewer, QA And Verification Agent, and Security And
-Risk Agent. The source framework's decision and changelog own its promotion or sunset;
+Risk Agent. The source framework's current policy and originating task evidence own its promotion or sunset;
 host projects may omit the pilot entirely.
 
 ## Principles
@@ -118,19 +117,17 @@ host projects may omit the pilot entirely.
   and verified command catalog.
 - [assumptions.md](templates/assumptions.md) → `.meta/project/assumptions.md`:
   consequential uncertainty.
-- [decision-record.md](templates/decision-record.md) → `.meta/decisions/`: significant
-  choices.
-- [task-catalog.md](templates/task-catalog.md) → `.meta/tasks/README.md`: durable task
-  identity, lifecycle, dependencies, discovery, and results.
-- [task-brief.md](templates/task-brief.md) and
-  [task-notes.md](templates/task-notes.md) → `.meta/tasks/`: scoped outcomes and
-  resumable work.
-- [quality-record.md](templates/quality-record.md) → `.meta/quality/`: readiness,
-  verification, review, consistency, and completion evidence.
-- [threat-model-card.md](templates/threat-model-card.md) → `.meta/threat-models/`:
-  lightweight agent-aware threats.
-- [incident-note.md](templates/incident-note.md) → `.meta/incidents/`: blameless
-  incident and near-miss learning.
+- [task-index.md](templates/task-index.md) → `.meta/tasks/README.md`: current discovery;
+  use the same short-entry structure with `# Archived Tasks` for the separate archive index.
+- [task-record.md](templates/task-record.md) → each task's `README.md`: authoritative state.
+- [task-brief.md](templates/task-brief.md) and [task-notes.md](templates/task-notes.md):
+  optional task-local scope detail and resumable checkpoints.
+- [decision-record.md](templates/decision-record.md): optional task-local choice analysis;
+  applicable requirements belong in current project/framework documentation.
+- [quality-record.md](templates/quality-record.md),
+  [threat-model-card.md](templates/threat-model-card.md), and
+  [incident-note.md](templates/incident-note.md): optional task-local evidence structures.
+  Required quality gates apply regardless of filenames or use of these templates.
 
 Blank templates are schemas, not additional homes for project facts. The glossary and
 source-map schemas live in [knowledge-management.md](knowledge-management.md); create
@@ -149,16 +146,16 @@ to simulate a reset.
 On first use:
 
 1. The primary session reads root instructions and this file.
-2. It runs [onboarding.md](onboarding.md) because the project cursor or task catalog is
+2. It runs [onboarding.md](onboarding.md) because the project cursor or current index is
    absent, or recognizes and safely resolves a non-framework document at either
    mandatory path.
-3. It instantiates the project cursor and task catalog from
+3. It instantiates the project cursor and current index from
    [project-state.md](templates/project-state.md) and
-   [task-catalog.md](templates/task-catalog.md).
+   [task-index.md](templates/task-index.md).
 4. It derives commands from manifests and CI, executes safe candidates, and records
    only observed successes in `.meta/project/standards.md`.
 5. It creates project knowledge categories only when inventory produces real content.
-6. It proves a new agent can recover the outcome, catalog, primary and eligible tasks,
+6. It proves a new agent can recover the outcome, current index, primary and eligible tasks,
    next action, commands, constraints, and approvals from repository evidence.
 
 For greenfield work, record product and technology choices as decisions rather than

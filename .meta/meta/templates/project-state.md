@@ -1,24 +1,24 @@
 # Project State
 
-Read this file at the start of every session. It is the bounded project-wide cursor and
-documentation index, not a task list or history log. Keep it at or below 80 lines and
-link to canonical records for detail.
+Bounded current-project cursor: at most 80 lines and 8 KiB. Link authoritative owners;
+keep no parallel task list or detailed execution history here.
 
-## Task Cursor
+## Task Cursor And Global Scheduling
 
-- Task catalog: `.meta/tasks/README.md`
+- Current tasks: `.meta/tasks/README.md`
 - Primary task: None
 - Primary details: None
+- Scheduling: Running
+- Global pause source or reason: None
 
-The task catalog owns outcomes, status, dependencies, task-specific approvals or
-blockers, next actions, detail links, and results. Do not copy them here.
+Task READMEs own task authority/revision, outcome, status, dependencies, route/risk,
+approvals/blockers, next action and results. Indexes contain discovery only.
 
 ## Global Parked Approvals
 
-Task-specific approvals belong in the catalog. Use this table only for an approval that
-gates several tasks or the whole project.
+Use only for global/cross-task approvals; task-specific approvals belong in task READMEs.
 
-| ID | Gated Action | Status | Affected Tasks | Decision Record |
+| ID | Gated Action And Boundary | Status | Source / Bound Revisions | Affected Tasks / Evidence |
 | --- | --- | --- | --- | --- |
 | None | | | | |
 
@@ -28,7 +28,7 @@ gates several tasks or the whole project.
 
 ## Recently Completed
 
-Keep at most five linked summaries; detailed results remain in the catalog.
+Keep at most five linked summaries; full results belong in task READMEs.
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
@@ -37,17 +37,13 @@ Keep at most five linked summaries; detailed results remain in the catalog.
 ## Documentation Map
 
 - Reusable framework: `.meta/meta/README.md`
-- Task catalog: `.meta/tasks/README.md`
-- Stable project knowledge: `.meta/project/` (created on demand)
-- Decisions: `.meta/decisions/`
-- Task details: `.meta/tasks/`
-- Quality and threats: `.meta/quality/` and `.meta/threat-models/`
-- Incidents and learning: `.meta/incidents/` and `.meta/learning/`
-- Archives: `.meta/archive/` (created on demand)
+- Current tasks: `.meta/tasks/README.md`
+- Stable current requirements and knowledge: `.meta/project/` (created as useful)
+- Historical task discovery: `.meta/archive/tasks/README.md` (created with first archive)
 
 ## Hygiene
 
 - Last consistency and pruning pass: YYYY-MM-DD
 - Completed repository-changing tasks since that pass: 0
-- Next pass due: YYYY-MM-DD or after 10 completed repository-changing tasks, whichever
-  comes first
+- Next pass due: YYYY-MM-DD or after 10 completed repository-changing tasks, whichever comes first
+- Incomplete maintenance actions: None

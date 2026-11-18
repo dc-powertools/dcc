@@ -1,5 +1,9 @@
 # Threat Model Card
 
+Optional task-local supporting structure: use only useful sections and link from the
+authoritative task README. Applicable quality/security gates remain required regardless
+of filename or whether this template is used.
+
 Use for security-sensitive or trust-boundary changes. Keep it short unless the risk level requires deeper analysis.
 
 ## Scope
@@ -32,5 +36,5 @@ Use for security-sensitive or trust-boundary changes. Keep it short unless the r
 ## Residual Risk
 
 - Accepted risk:
-- Approval or decision record:
+- Approval or recorded decision:
 - Review trigger:

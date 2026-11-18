@@ -7,7 +7,7 @@ while this file captures technical conventions that prevent inconsistent impleme
 ## Scope
 
 - Project/service: `dcc` Rust CLI.
-- Last updated: 2026-09-28
+- Last updated: 2026-11-18
 - Applies to: Rust source, tests, CLI behavior, devcontainer config handling, Docker
   integration, and project documentation.
 - Does not apply to: The reusable framework under `.meta/meta/`, except when explicitly
@@ -17,7 +17,7 @@ while this file captures technical conventions that prevent inconsistent impleme
 
 | Area | Choice | Version/Constraint | Source |
 | --- | --- | --- | --- |
-| Runtime | Rust binary | Edition 2021; observed Rust/Cargo 1.96.0 locally | `Cargo.toml`; command verification |
+| Runtime | Rust binary | Edition 2021; observed toolchain versions belong in the command catalog | `Cargo.toml`; `.meta/project/standards.md` |
 | CLI | `clap` derive | Dependency version `4` | `Cargo.toml`; `src/cli.rs` |
 | Async/process/network | Tokio | Selected features only | `Cargo.toml`; `.meta/project/architecture.md` |
 | Config parsing | `serde`, `serde_json`, `json5`, `indexmap` | JSONC-compatible parsing; ordered `features` map | `Cargo.toml`; `.meta/project/architecture.md` |
@@ -56,12 +56,12 @@ while this file captures technical conventions that prevent inconsistent impleme
 | Workspace/profile/cache identity | `src/workspace.rs`, `src/profile.rs`, `src/cache.rs` | Use domain newtypes and path-aware tests. | Profile names and paths affect container and image identity. |
 | Config resolution | `src/config/` | Preserve cycle detection, merge semantics, variable substitution phases, and strict-mode behavior. | Host-specific variables must not be baked into `containerEnv`. |
 | Docker operations | `src/docker.rs`, `src/build.rs`, `src/run.rs`, `src/exec.rs`, `src/stop.rs` | Wrap Docker CLI calls and keep errors diagnosable. | Real Docker commands can create external state; distinguish tests from runtime workflows. |
-| In-container supervisor | `src/supervisor.rs` | PID 1 owns lifecycle; keep host↔supervisor protocol patch-stable (decision 0004). | Protocol changes require a minor version bump so the semver gate refuses old images. |
+| In-container supervisor | `src/supervisor.rs` | PID 1 owns lifecycle; keep host↔supervisor protocol patch-stable (see architecture and standards). | Protocol changes require a minor version bump so the semver gate refuses old images. |
 | Forwarding and frozen reuse | `src/runtime.rs`, `src/runtime_snapshot.rs`, `src/forward.rs`, `src/relay*.sh` | Discover before mutable planning; Docker owns loopback publications and PID 1 owns socat relays. | Runtime config changes warn and defer; 0.2 protocol requires explicit migration. Never retry an uncertain container start. |
 | Persistence | `src/persistence.rs` | Initialize only absent roots; no durable scans or seed ledger. Verify image-owned exclusions and preserve displaced paths by rename before hooks. | Existing roots and credentials/history/caches stay untouched; never reconcile software into persistence. |
 | UID remap | `src/uid.rs` | On Linux and macOS, `updateRemoteUserUID` bakes a root RUN remapping the container user to the host uid/gid; Windows is an explicit no-op. | Remap is baked at image build; initialization sees the remapped `/etc/passwd` and owns only newly copied state for non-root users so pre-remap Dockerfile-owned paths stay writable. |
 | Version compatibility | `src/version.rs` | `dcc.version` label interpreted with semver: equal or patch drift proceeds; major/minor or missing label refuses. | `dcc build` is exempt; runtime commands gate on the label. |
-| `containerEnv` substitution | `src/config/vars.rs`; `.meta/decisions/0006-require-missing-container-env-default.md` | Error when a variable is absent without an explicit default; preserve present-empty and present-nonempty values; validate structured consumers after substitution. | Explicitly defaulted or present-empty substitutions in paths must still pass absolute/reserved/overlap guards. |
+| `containerEnv` substitution | `src/config/vars.rs`; `.meta/project/architecture.md#variable-substitution` | Error when a variable is absent without an explicit default; preserve present-empty and present-nonempty values; validate structured consumers after substitution. | Explicitly defaulted or present-empty substitutions in paths must still pass absolute/reserved/overlap guards. |
 | Devcontainer Features | `src/features/` | Preserve OCI/local feature loading, install order, generated Dockerfile behavior, and metadata labels. | Feature scripts run as root but receive remote-user environment metadata. |
 | Tests | `tests/`, inline `#[cfg(test)]` modules | Unit-test internals near code; use integration tests for CLI behavior. | Avoid tests that only assert parser acceptance without behavior. |
 
@@ -74,5 +74,10 @@ while this file captures technical conventions that prevent inconsistent impleme
   user-facing behavior or configuration changes, also load `docs/index.md`; for
   devcontainer Feature package behavior, also load `docs/features.md`.
 - Use `.meta/project/standards.md` for exact verified commands.
+- Read `.meta/project/security.md` when changing trust boundaries, Docker/runtime
+  integration, OCI acquisition, snapshots, fixtures, or CI/release behavior. Current
+  project guidance owns requirements; consult linked task evidence for rationale.
+- Discover current work through `.meta/tasks/README.md` and its task READMEs; search
+  the archive only for targeted historical evidence, not current execution authority.
 - Update this file after architecture changes, major dependency changes, or repeated
   implementation drift.

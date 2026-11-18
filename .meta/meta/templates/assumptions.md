@@ -8,6 +8,6 @@ Use this file for uncertainty that matters but does not need to block current wo
 
 ## Notes
 
-- Low-confidence, high-impact assumptions should become clarification questions, spikes, or decision records.
+- Low-confidence, high-impact assumptions should become clarification questions, spikes, or explicit choices with recorded rationale.
 - Close assumptions when they are validated, invalidated, or made obsolete by a later decision.
 

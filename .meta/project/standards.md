@@ -25,7 +25,7 @@ Record only commands verified by successful execution in this environment.
 ## Architecture
 
 - `dcc` is a single Rust binary crate; do not add a library layer without a recorded
-  architectural decision.
+  architectural choice recorded in current architecture and supporting task evidence.
 - Modules are organized by feature area and should remain shallow.
 - Docker integration is through Docker CLI subprocesses.
 - Release builds keep `overflow-checks = true`.
@@ -54,6 +54,8 @@ Record only commands verified by successful execution in this environment.
 ## Security And Privacy
 
 - Never log secrets, tokens, or credentials.
+- `.meta/project/security.md` owns cross-cutting runtime, OCI, snapshot, test-fixture,
+  and CI/release security requirements; read it when changing those boundaries.
 - Use explicit checked, saturating, or wrapping arithmetic for untrusted input where
   overflow behavior matters.
 - Treat real Docker build, run, exec, and stop commands as external-state operations when
@@ -75,7 +77,11 @@ Record only commands verified by successful execution in this environment.
 - Agent-facing development workflow and commit policy belongs in
   `.meta/project/development.md`.
 - Detailed Rust style rules belong in `.meta/project/rust-style.md`.
-- Framework-owned project memory belongs under `.meta/project/` and `.meta/tasks/`.
+- Current project requirements belong under `.meta/project/`; authoritative task
+  records and optional evidence belong in `.meta/tasks/<id>-<slug>/`. Terminal tasks
+  move to `.meta/archive/tasks/` after current requirements are reconciled. Indexes
+  provide discovery only. Significant choices update current guidance and link task
+  rationale; no separate decision or report-category directory is required.
 - Project state must not live in unmanaged sidecar docs. Move durable project guidance
   into a framework-owned path and update the source map.
 - Backup or collision files, such as `*.bak.md`, are temporary evidence only. Evaluate
@@ -88,7 +94,7 @@ Record only commands verified by successful execution in this environment.
 - Do not push, publish releases, or run release workflows without explicit owner
   direction.
 - **Patch releases must not change the host↔supervisor protocol.** The `dcc.version`
-  image label is interpreted with semver compatibility (decision 0004): a CLI
+  image label is interpreted with semver compatibility (see current architecture): a CLI
   proceeds against an image whose major and minor match, regardless of patch. The
   protocol — the `dcc-ctl` verbs (`mode`, `stop`, `stop-now`, `wait-ready`), the
   `dcc-exec` registration contract, and exit codes 252/253 — is therefore part of the

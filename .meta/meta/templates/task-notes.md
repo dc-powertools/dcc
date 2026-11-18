@@ -1,13 +1,13 @@
 # Task Notes
 
-Use for long-running, risky, paused, or parallel execution. The task catalog links this
-note and remains the owner of outcome, status, dependencies, task-specific approval or
-blocker, next safe action, and result.
+Use optional supporting notes for long-running, risky, paused or parallel execution.
+The task README links this evidence and remains authoritative for task state. Keep the
+checkpoint here only if the README links it as its checkpoint owner.
 
 ## Task Identity
 
 - Task ID:
-- Catalog: `.meta/tasks/README.md`
+- Authoritative task README: `README.md`
 - Brief or acceptance source:
 - Started:
 - Last updated:
@@ -39,9 +39,8 @@ blocker, next safe action, and result.
 
 ## Parked Approval Detail
 
-The catalog owns the approval ID, status, bound revision, and this detail link. Persist
-the approval source, exact action, and boundary here; missing fields cannot authorize
-work.
+The task README owns the complete approval fields and may link supporting evidence
+here. Missing source, action, boundary, status or bound revision cannot authorize work.
 
 | ID | Task Revision | Approval Source | Action And Boundary | Dependent Work |
 | --- | --- | --- | --- | --- |

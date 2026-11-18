@@ -1,85 +1,60 @@
 # Project State
 
-Read this file at the start of every session. It is the bounded project-wide cursor and
-documentation index, not a task list or history log.
+Read this bounded cursor at session start, then the current-task index and selected
+README. Current project/framework documentation owns applicable requirements;
+archives supply targeted historical evidence.
 
-## Task Cursor
+## Task Cursor and Global Control
 
-- Task catalog: `.meta/tasks/README.md`
+- Current tasks: `.meta/tasks/README.md`
 - Primary task: T-0108
-- Primary details: `.meta/tasks/0108-persistence-image-ownership.md`
+- Primary details: `.meta/tasks/0108-persistence-image-ownership/README.md`
+- Scheduling: Running
+- Global pause source or reason: None
 
-The task catalog owns outcomes, status, dependencies, task-specific approvals or
-blockers, next actions, detail links, and results. Do not copy them here.
+Task READMEs own lifecycle, revision, authority, dependencies, task approvals/blockers,
+next action and results. Neither discovery index owns those fields.
 
 ## Global Parked Approvals
 
-| ID | Gated Action | Status | Affected Tasks | Decision Record |
+| ID | Gated Action | Status | Affected Tasks | Evidence |
 | --- | --- | --- | --- | --- |
 | None | | | | |
 
 ## Known Global Dead Ends
 
-- Baking startup hook scripts (`postStartCommand`) into the image — blocked because
-  `apply_substitutions` resolves `${localEnv:VAR}` in `lifecycle` from the invoking `dcc`
-  process's environment, so hook text is only fully resolvable at run time. Baking would
-  either freeze the builder's environment into the image or require a second substitution
-  engine inside the container. See
-  `.meta/decisions/0004-embed-supervisor-in-image.md` Q3.
-- Baking a seed store into the image (extra build stage staging state tarballs) — rejected
-  for image overhead; the image already holds the data at its natural path. See
-  `.meta/decisions/0001-state-seeding-from-image.md`.
-- Moving payload from an earlier image layer does not reclaim those earlier bytes.
-  T-0108 permits same-installation-layer relocation with preserved original-path
-  symlinks; decision 0010 supersedes the old blanket relocation warning in 0001.
-
+- Startup hooks require invoking-process environment substitution at run time;
+  do not bake `postStartCommand` into the image. See current architecture guidance.
+- Do not bake a duplicate seed store into an image or assume moving payload from an
+  earlier layer reclaims its bytes. Same-installation-layer relocation with preserved
+  original-path symlinks is allowed by the current persistence contract.
 
 ## Recently Completed
 
 | Date | Outcome | Durable Record |
 | --- | --- | --- |
-| 2026-11-17 | Fixed readiness regression UID portability and diagnostics; actual host UIDs 1000/0/1001 and all 35 Docker smokes passed, with independent review (T-0117). | `.meta/quality/0117-readiness-fixture-uid-portability.md` |
-| 2026-11-17 | Fixed readiness FIFO ownership by running wait controls as the supervisor user; regular checks and all 34 Docker smoke tests passed (T-0112). | `.meta/quality/0112-readiness-fifo-ownership.md` |
-| 2026-09-28 | Bumped the package version to 0.2.1 after the TLS stub fix; required checks passed (T-0099). | `.meta/tasks/README.md#tasks` |
-| 2026-09-28 | Updated the TLS smoke-test Docker stub for the build preflight; missing/wrong CA regression and standard checks passed (T-0098). | `.meta/tasks/README.md#tasks` |
-| 2026-09-28 | Designed the container-owned socat relay, frozen configuration reuse, failure handling, and migration (T-0096); implementation remains separate. | `.meta/tasks/0096-container-relay-design.md`; `.meta/quality/0096-container-relay-design.md` |
-| 2026-09-28 | Completed the relay placement and behavior discussion, including supervisor ownership, configuration snapshots, recovery, environment support, and explicit migration (T-0095). | `.meta/decisions/0008-relay-in-development-container.md`; `.meta/decisions/0009-warn-and-defer-running-config-changes.md` |
-| 2026-09-28 | Diagnosed concurrent foreground sessions colliding over per-process port-forwarding listeners during attach (T-0094); source inspection only. | `.meta/tasks/0094-attach-port-collision.md` |
-| 2026-09-28 | Bumped the patch version from 0.1.8 to 0.1.9 after Feature validation (T-0093). | `.meta/tasks/README.md#tasks` |
-| 2026-09-28 | Added offline Feature publication validation with a pinned schema, upstream-only mode, and shared project/Feature mount parsing that preserves string readonly flags (T-0092). | `.meta/quality/0092-feature-validation.md` |
+| 2026-11-18 | Task-directory migration, separate discovery/archive and random-ID policy completed (T-0120). | `.meta/archive/tasks/0120-task-directory-migration/README.md` |
+| 2026-11-17 | Readiness regression UID portability and diagnostics verified with actual host UIDs 1000/0/1001 and 35 Docker smokes (T-0117). | `.meta/archive/tasks/0117-readiness-fixture-uid-portability/README.md` |
+| 2026-11-17 | Readiness controls run as supervisor user; regular checks and 34 Docker smokes passed (T-0112). | `.meta/archive/tasks/0112-readiness-fifo-ownership/README.md` |
 
 ## Documentation Map
 
 - Reusable framework: `.meta/meta/README.md`
-- Task catalog: `.meta/tasks/README.md`
-- Persistence/image ownership contract: `.meta/decisions/0010-persistence-image-ownership.md`
-- Historical state seeding decision: `.meta/decisions/0001-state-seeding-from-image.md`
-- UID remap decision: `.meta/decisions/0002-update-remote-user-uid-in-build-stage.md`
-- Remove image fast path decision: `.meta/decisions/0003-remove-image-fast-path.md`
-- Supervisor delivery model decision: `.meta/decisions/0004-embed-supervisor-in-image.md`
-- Relay placement decision: `.meta/decisions/0008-relay-in-development-container.md`
-- Running configuration drift policy: `.meta/decisions/0009-warn-and-defer-running-config-changes.md`
-- Current `containerEnv` substitution decision: `.meta/decisions/0006-require-missing-container-env-default.md`
-- Superseded `containerEnv` compatibility decision: `.meta/decisions/0005-container-env-substitution.md`
-- Rewrite quality record: `.meta/quality/0004-dcc-rewrite-quality.md`
-- UID remap quality record: `.meta/quality/0026-update-remote-user-uid-quality.md`
-- Runtime threat model: `.meta/threat-models/0004-dcc-runtime.md`
-- CI ref and fixture threat model: `.meta/threat-models/0062-ci-ref-and-fixture.md`
-- Release CI reuse threat model: `.meta/threat-models/0063-release-ci-reuse.md`
+- Current task discovery: `.meta/tasks/README.md`
+- Historical task discovery: `.meta/archive/tasks/README.md` (targeted lookups)
+- Current architecture and decision evolution: `.meta/project/architecture.md`
+- Current security/trust requirements: `.meta/project/security.md`
 - Product brief: `.meta/project/brief.md`
 - Implementation context: `.meta/project/context.md`
-- Project standards and command catalog: `.meta/project/standards.md`
-- Detailed architecture: `.meta/project/architecture.md`
-- Detailed development guide: `.meta/project/development.md`
-- Detailed Rust style guide: `.meta/project/rust-style.md`
-- Source map: `.meta/project/source-map.md`
-- Glossary: `.meta/project/glossary.md`
+- Standards and verified command catalog: `.meta/project/standards.md`
+- Agent development guide: `.meta/project/development.md`
+- Rust style: `.meta/project/rust-style.md`
+- Sources and terms: `.meta/project/source-map.md`; `.meta/project/glossary.md`
 
 ## Hygiene
 
-- Last consistency and pruning pass: 2026-09-08
-- Completed repository-changing tasks since that pass: 11
-- Next pass due: 2026-10-08 or after 10 completed repository-changing tasks, whichever
-  occurs first.
-- Incomplete maintenance actions: Scheduled consistency/pruning pass is due at the
-  10-change threshold; deferred outside the scoped TLS test-stub fix.
+- Last general consistency/pruning pass: 2026-09-08
+- Completed repository-changing tasks since that pass: 12 (including T-0120)
+- General pass due: 2026-10-08 or after 10 changes; still due.
+- T-0120 performs scoped migration consistency and pruning, not a new application or
+  general project-freshness audit. Preserve the broader overdue maintenance action.

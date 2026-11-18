@@ -9,7 +9,7 @@ whether a rule earned its context cost.
 Consider a framework change when:
 
 - the product owner repeats an instruction across tasks;
-- `.meta/learning/retrospectives.md` or its archives show the same correction or
+- current learning or targeted historical task evidence shows the same correction or
   process failure more than once;
 - a review, incident, near miss, escaped defect, failed release, or repeated failed run
   reveals a missing guardrail;
@@ -33,8 +33,9 @@ Evidence level informs judgment; it is not a numeric score. Name the decisive ev
 
 ## Change Lifecycle
 
-1. **Find the signal.** Search the retrospective log, decisions, changelog, and current
-   framework before adding guidance. Record new concrete learning in the retrospective.
+1. **Find the signal.** Search current requirements and framework policy plus targeted historical task
+   rationale and learning before adding guidance. Record new concrete learning in the
+   originating task evidence.
 2. **Screen the proposal.** Apply the hard rejects below. For a material change, state
    the problem, before/after behavior, affected canonical owners, context cost,
    verification, and possible sunset.
@@ -42,10 +43,11 @@ Evidence level informs judgment; it is not a numeric score. Name the decisive ev
    and constraints. Direct user decisions and level-4 findings may be Adopted; reversible
    level-2 or level-3 defaults should usually be Pilots.
 4. **Change the smallest owner.** Routine reversible edits can be applied directly.
-   Create a decision record for significant process, safety, authority, or ownership
-   choices. Keep templates aligned.
-5. **Log every framework edit.** Append status, evidence, change, success signal, and
-   review or sunset trigger to `.meta/learning/framework-changelog.md`.
+   Update the current framework owner for significant process, safety, authority or
+   ownership choices and preserve rationale/alternatives in task evidence. Keep templates aligned.
+5. **Log every framework edit.** Record status, evidence, before/after change, affected owners, success signal and
+   review/sunset trigger in the originating task README or linked evidence. This is the
+   framework audit record; no separate changelog or decision-record system is required.
 6. **Verify and close.** Run link, template, consistency, line-budget, and request review
    as applicable. All required checks must pass before Done.
 
@@ -110,7 +112,7 @@ maintenance.
 At the end of substantial work, ask whether something slowed the work, was caught late,
 had to be inferred, supplied confidence, or exposed a missing check. When the answer is
 a concrete cross-session learning, search for an earlier occurrence and append the
-three-field entry to `.meta/learning/retrospectives.md`. A repeated signal invokes
+learning in the originating task evidence with signal, consequence and follow-up. A repeated signal invokes
 the improvement lifecycle; an isolated observation can remain evidence without forcing
 a new rule.
 
@@ -120,7 +122,7 @@ Before closing framework edits, confirm:
 
 - root entrypoints and state point to the right owners;
 - new guidance has one home and removed copies leave working links;
-- templates match process docs and remain within the twelve-template catalog;
+- templates match process docs and the published template catalog;
 - significant choices and every framework edit are recorded;
 - optional harness adapters remain thin, removable, schema-valid, and subordinate to
   their canonical Markdown owners;
